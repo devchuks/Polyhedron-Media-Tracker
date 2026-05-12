@@ -59,7 +59,7 @@ export const Dashboard = () => {
         <div className="bg-info/5 border border-info/20 p-6 flex flex-col gap-4 items-start">
           <div>
             <h2 className="text-sm font-black uppercase tracking-widest text-info mb-1">Guest Mode Playground</h2>
-            <p className="text-xs font-mono text-base-content/70">Your local library is empty. You can populate it with 40 random demo entries to safely test the dashboard, library filters and diary logs (located in the search bar). Or you can search for stuff yourself, add to library, log and test functionality without the random demo entries. To clear this data, go to Settings in the top right menu. These entries will clear upon refresh or logging out.</p>
+            <p className="text-xs font-mono text-base-content/70">Your local library is empty. You can populate it with 40 random demo entries to safely test the dashboard, library filters and diary logs (located in the search bar). Or you can search for stuff yourself, add to library, log and test functionality without the random demo entries. To clear this data, go to Settings in the top right menu. These entries will clear upon logging out but will remain here until you clear your cache.</p>
           </div>
           <button
             onClick={() => populateDemoData(useMediaStore.getState(), setPopLog, setIsPopulating)}
