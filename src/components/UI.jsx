@@ -275,7 +275,7 @@ export const GlobalDiaryModal = () => {
       e.stopPropagation();
     }
     if (!status) return; // Prevent saving purely blank states
-    const s = dateStarted ? new Date(dateStarted).getTime() : null;
+    const s = (type !== 'movies' && dateStarted) ? new Date(dateStarted).getTime() : null;
     const c = dateCompleted ? new Date(dateCompleted).getTime() : null;
     
     let r = targetItem?.rewatchCount || 0;
@@ -540,13 +540,15 @@ export const GlobalDiaryModal = () => {
           {/* Review & Dates Area */}
           {showReviewSection && (
             <div className="flex flex-col gap-4 border-t border-base-200 pt-5 sm:border-0 sm:pt-0">
-              <div className="grid grid-cols-2 gap-4 ">
+              <div className={`grid ${type === 'movies' ? 'grid-cols-1' : 'grid-cols-2'} gap-4`}>
+                 {type !== 'movies' && (
+                   <div className="flex flex-col gap-1">
+                     <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest flex items-center gap-1 pl-1"><Calendar className="w-3 h-3"/> Started</label>
+                     <input type="date" value={dateStarted} onChange={e => setDateStarted(e.target.value)} className="w-full font-mono text-xs rounded-none border border-base-300 bg-base-100 h-10 min-h-[40px] focus:outline-none focus:border-primary px-2 cursor-pointer" />
+                   </div>
+                 )}
                  <div className="flex flex-col gap-1">
-                   <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest flex items-center gap-1 pl-1"><Calendar className="w-3 h-3"/> Started</label>
-                   <input type="date" value={dateStarted} onChange={e => setDateStarted(e.target.value)} className="w-full font-mono text-xs rounded-none border border-base-300 bg-base-100 h-10 min-h-[40px] focus:outline-none focus:border-primary px-2 cursor-pointer" />
-                 </div>
-                 <div className="flex flex-col gap-1">
-                   <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest flex items-center gap-1 pl-1"><Calendar className="w-3 h-3"/> Finished</label>
+                   <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest flex items-center gap-1 pl-1"><Calendar className="w-3 h-3"/> {type === 'movies' ? 'Watched' : 'Finished'}</label>
                    <input type="date" value={dateCompleted} onChange={e => setDateCompleted(e.target.value)} className="w-full font-mono text-xs rounded-none border border-base-300 bg-base-100 h-10 min-h-[40px] focus:outline-none focus:border-primary px-2 cursor-pointer" />
                  </div>
               </div>
