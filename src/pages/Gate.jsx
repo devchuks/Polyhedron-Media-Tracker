@@ -140,9 +140,9 @@ export const Gate = () => {
 
       {/* Theme Switcher */}
       <div className="absolute bottom-4 left-4 sm:bottom-6 sm:left-6 z-20 dropdown dropdown-top">
-        <button tabIndex={0} className="flex items-center justify-center w-10 h-10 bg-base-100 border border-base-300 hover:border-primary text-base-content/70 hover:text-primary rounded-none transition-colors appearance-none shadow-xl">
+        <div role="button" tabIndex={0} className="flex items-center justify-center w-10 h-10 bg-base-100 border border-base-300 hover:border-primary text-base-content/70 hover:text-primary rounded-none transition-colors appearance-none shadow-xl cursor-pointer">
           <Palette className="w-4 h-4" />
-        </button>
+        </div>
         <ul tabIndex={0} className="dropdown-content z-[60] menu p-2 shadow-2xl bg-base-100 border border-base-300 w-48 mb-2 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest max-h-64 overflow-y-auto custom-scrollbar flex flex-col gap-0.5">
           <li className="menu-title text-[9px] opacity-50 px-2 py-1 mb-1">Theme</li>
           {THEMES.map(t => (
