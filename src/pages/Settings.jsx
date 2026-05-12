@@ -52,7 +52,7 @@ const DEMO_QUERIES = {
     "Baccano!", "Durarara!!", "Monogatari Series", "Welcome to the NHK", "March Comes in Like a Lion",
     "Legend of the Galactic Heroes", "Ashita no Joe", "Rainbow", "Kaiji", "Akagi",
     "Trigun Stampede", "86", "Vivy: Fluorite Eye's Song", "Summertime Rendering", "Link Click",
-    "Blue Giant", "Look Back", "The Apothecary Diaries", "Orb: On the Movements of the Earth", "Dungeon Meshi",
+    "Blue Giant", "Naruto", "The Apothecary Diaries", "Orb: On the Movements of the Earth", "Dungeon Meshi",
     "Berserk 1997", "Gunbuster", "Diebuster", "FLCL", "Wolf's Rain"
   ],
 
@@ -72,10 +72,10 @@ const DEMO_QUERIES = {
   vn: [
     "Wonderful Everyday", "Tsui no Sora", "Muramasa", "White Album 2", "Tsukihime -A piece of blue glass moon-",
     "Mahoutsukai no Yoru", "Full Metal Daemon Muramasa", "Subahibi", "Raging Loop", "428: Shibuya Scramble",
-    "The Sekimeiya", "PARANORMASIGHT", "Slow Damage", "Sweet Pool", "Hashihime of the Old Book Town",
+    "The Sekimeiya", "PARANORMASIGHT", "Slow Damage", "Ever17", "Hashihime of the Old Book Town",
     "Flowers", "SeaBed", "Adabana Odd Tales", "Aokana", "Cyanotype Daydream",
-    "Musicus!", "Nukitashi", "Meteor World Actor", "Hello Lady!", "Aiyoku no Eustia",
-    "Baldr Sky", "Tokyo Necro", "Sorcery Jokers", "Dies irae", "Kajiri Kamui Kagura",
+    "Danganronpa", "Nukitashi", "Meteor World Actor", "Hello Lady!", "Aiyoku no Eustia",
+    "Virtue's Last Reward", "Tokyo Necro", "Sorcery Jokers", "Dies irae", "Kajiri Kamui Kagura",
     "Kikokugai", "Saya no Uta", "Chaos;Child", "Steins;Gate 0", "Anonymous;Code",
     "MAMIYA", "Fatal Twelve", "The Shell Part I: Inferno", "Cartagra", "Kara no Shoujo 2",
     "Muv-Luv", "Totono", "YOU and ME and HER", "ATRI", "Harmonia",

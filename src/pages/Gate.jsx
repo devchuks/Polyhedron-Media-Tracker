@@ -32,6 +32,7 @@ export const Gate = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [showLoginForm, setShowLoginForm] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [isThemeOpen, setIsThemeOpen] = useState(false);
 
   const [theme, setTheme] = useState(() => {
     const saved = localStorage.getItem('theme');
@@ -82,7 +83,7 @@ export const Gate = () => {
             <PolyhedronLogo />
             <h1 className="text-3xl font-black uppercase tracking-widest mb-2 relative z-10 flex items-center gap-2">Polyhedron<span className="w-3 h-5 bg-primary-content animate-pulse"></span></h1>
             <p className="text-xs font-mono uppercase tracking-widest opacity-90 relative z-10 leading-relaxed">
-              Unified personal media databank. Track, rate and log movies, TV shows, games, anime, manga, visual novels, books and comics all in one place.
+Unified media tracker. Log and keep track of movies, TV shows, games, anime, manga, visual novels, books and comics *catches breath* all_in_one_place.
             </p>
           </div>
         )}
@@ -97,7 +98,7 @@ export const Gate = () => {
               </button>
               <button onClick={() => setShowLoginForm(true)} className="flex items-center justify-center gap-2 w-full h-14 bg-transparent border border-base-300 hover:border-primary hover:text-primary rounded-none appearance-none font-mono font-bold uppercase tracking-widest text-sm transition-colors">
                 <LogIn className="w-5 h-5" />
-                Admin Login
+                Admin Login (no try am)
               </button>
               <p className="text-[10px] text-center text-base-content/50 mt-4 leading-relaxed font-mono uppercase tracking-widest">
                 Guest mode stores data locally in your browser and will not sync. Purely for testing/showcase purposes
@@ -139,20 +140,27 @@ export const Gate = () => {
       </div>
 
       {/* Theme Switcher */}
-      <div className="absolute bottom-4 left-4 sm:bottom-6 sm:left-6 z-20 dropdown dropdown-top">
-        <div role="button" tabIndex={0} className="flex items-center justify-center w-10 h-10 bg-base-100 border border-base-300 hover:border-primary text-base-content/70 hover:text-primary rounded-none transition-colors appearance-none shadow-xl cursor-pointer">
+      <div className="absolute bottom-4 left-4 sm:bottom-6 sm:left-6 z-20">
+        <div role="button" tabIndex={0} onClick={() => setIsThemeOpen(!isThemeOpen)} className="flex items-center justify-center w-10 h-10 bg-base-100 border border-base-300 hover:border-primary text-base-content/70 hover:text-primary rounded-none transition-colors appearance-none shadow-xl cursor-pointer relative z-[61]">
           <Palette className="w-4 h-4" />
         </div>
-        <ul tabIndex={0} className="dropdown-content z-[60] menu p-2 shadow-2xl bg-base-100 border border-base-300 w-48 mb-2 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest max-h-64 overflow-y-auto custom-scrollbar flex flex-col gap-0.5">
-          <li className="menu-title text-[9px] opacity-50 px-2 py-1 mb-1">Theme</li>
-          {THEMES.map(t => (
-            <li key={t}>
-              <a onClick={() => { setTheme(t); document.activeElement?.blur?.(); }} className={theme === t ? 'text-primary bg-base-200' : ''}>
-                {t.charAt(0).toUpperCase() + t.slice(1)}
-              </a>
-            </li>
-          ))}
-        </ul>
+        {isThemeOpen && (
+          <>
+            <div className="fixed inset-0 z-[50]" onClick={() => setIsThemeOpen(false)}></div>
+            <div className="absolute bottom-full left-0 mb-2 z-[60] shadow-2xl bg-base-100 border border-base-300 w-64 sm:w-80 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest animate-in slide-in-from-bottom-2 duration-150 overflow-hidden flex flex-col">
+              <div className="p-2 sm:p-3 flex flex-col max-h-[60vh] sm:max-h-[70vh]">
+                <div className="text-[9px] opacity-50 px-1 mb-2 shrink-0">Theme</div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1 overflow-y-auto custom-scrollbar pr-1 pb-1">
+                  {THEMES.map(t => (
+                    <button type="button" key={t} onClick={() => { setTheme(t); setIsThemeOpen(false); }} className={`flex items-center justify-start px-2 py-1.5 min-h-0 text-[9px] font-mono uppercase tracking-wider text-left rounded-none border transition-colors ${theme === t ? 'bg-primary text-primary-content border-primary' : 'bg-base-200 border-base-300 text-base-content/70 hover:bg-base-300 hover:text-base-content hover:border-primary/50'}`}>
+                      <span className="truncate">{t}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
     </div>

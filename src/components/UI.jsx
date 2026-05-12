@@ -24,7 +24,7 @@ export const getDynamicStatusLabel = (status, type, isMenu = false) => {
   const isList = status === 'planned';
   const listName = ['games', 'vn'].includes(type) ? 'Backlog' : ['manga', 'books', 'comics'].includes(type) ? 'Reading List' : 'Watchlist';
   const activeName = ['games', 'vn'].includes(type) ? 'Playing' : ['manga', 'books', 'comics'].includes(type) ? 'Reading' : 'Watching';
-  const completeName = ['games', 'vn'].includes(type) ? 'Played' : ['manga', 'books', 'comics'].includes(type) ? 'Read' : 'Watched';
+  const completeName = ['games', 'vn'].includes(type) ? 'Played' : ['manga', 'books', 'comics'].includes(type) ? 'Read' : type === 'movies' ? 'Watched' : 'Completed';
   if (isList) return isMenu ? `Add to ${listName}` : `In ${listName}`;
   if (status === 'in progress') return `Currently ${activeName}`;
   if (status === 'completed') return completeName;
@@ -94,7 +94,7 @@ export const resolveMediaImage = (item, type, size = 'md') => {
   } else if (type === 'games') {
     const imgId = raw.cover?.image_id;
     if (size === 'banner') return raw.artworks?.[0]?.image_id ? `https://images.igdb.com/igdb/image/upload/t_1080p/${raw.artworks[0].image_id}.jpg` : (raw.screenshots?.[0]?.image_id ? `https://images.igdb.com/igdb/image/upload/t_1080p/${raw.screenshots[0].image_id}.jpg` : null);
-    if (imgId) return `https://images.igdb.com/igdb/image/upload/${size === 'thumb' ? 't_cover_small' : size === 'lg' ? 't_720p' : size === 'original' ? 't_original' : 't_cover_big'}/${imgId}.jpg`;
+    if (imgId) return `https://images.igdb.com/igdb/image/upload/${size === 'thumb' ? 't_cover_small' : size === 'original' ? 't_original' : 't_720p'}/${imgId}.jpg`;
   } else if (type === 'vn') {
     if (size === 'banner') return raw.screenshots?.[0]?.url || null;
     // Uses fallback image below
@@ -461,7 +461,7 @@ export const GlobalDiaryModal = () => {
                       <div className="grid grid-cols-2 divide-x divide-base-200">
                         <ul className="menu p-0 flex flex-col">
                           {[1,2,3,4,5].map((i) => (
-                            <li key={i}><a onClick={() => { setRating(i); setIsRatingDropdownOpen(false); }} className="rounded-none py-2.5 px-3 flex justify-between items-center border-b border-base-200">
+                            <li key={i}><a onClick={() => { setRating(i); setIsRatingDropdownOpen(false); }} className="rounded-none py-1.5 px-3 min-h-0 flex justify-between items-center border-b border-base-200">
                               <span className="font-mono text-[10px] font-bold">{i}/10</span>
                               <div className="flex gap-[1px] text-warning">
                                  {[...Array(Math.floor(i/2))].map((_, j) => <Star key={j} className="w-3 h-3 fill-warning" />)}
@@ -472,7 +472,7 @@ export const GlobalDiaryModal = () => {
                         </ul>
                         <ul className="menu p-0 flex flex-col">
                           {[6,7,8,9,10].map((i) => (
-                            <li key={i}><a onClick={() => { setRating(i); setIsRatingDropdownOpen(false); }} className="rounded-none py-2.5 px-3 flex justify-between items-center border-b border-base-200">
+                            <li key={i}><a onClick={() => { setRating(i); setIsRatingDropdownOpen(false); }} className="rounded-none py-1.5 px-3 min-h-0 flex justify-between items-center border-b border-base-200">
                               <span className="font-mono text-[10px] font-bold">{i}/10</span>
                               <div className="flex gap-[1px] text-warning">
                                  {[...Array(Math.floor(i/2))].map((_, j) => <Star key={j} className="w-3 h-3 fill-warning" />)}
@@ -725,6 +725,39 @@ export const MediaListRow = ({ item }) => {
   );
 };
 
+const SearchModalItem = ({ item, type, onSelect, handleQuickAdd }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const thumbImage = resolveMediaImage(item, type, 'thumb') || item.image;
+  
+  return (
+    <div onClick={() => onSelect(item)} tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') onSelect(item); }} className="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 hover:bg-base-200 focus:bg-base-200 focus:outline-none transition-colors group cursor-pointer border-b border-base-300 last:border-b-0 relative">
+      <div className="w-10 h-14 sm:w-12 sm:h-16 flex-shrink-0 bg-base-300 border border-base-300 overflow-hidden relative">
+        <ImageWithFallback src={thumbImage} alt={item.title} className="grayscale-[20%] group-hover:grayscale-0 object-cover" />
+      </div>
+      <div className="flex-1 min-w-0 flex flex-col">
+        <h3 className="text-sm font-bold uppercase tracking-wide truncate group-hover:text-primary transition-colors font-sans">{item.title}</h3>
+        <div className="flex items-center gap-2 mt-1"><span className="text-[9px] font-mono font-bold bg-base-100 border border-base-300 text-base-content px-1.5 py-0.5 uppercase tracking-widest">{item.year || 'UNKNOWN'}</span><span className="text-[9px] font-mono font-bold text-base-content/50 uppercase tracking-widest truncate">{item.subtitle || item.description?.substring(0, 50) + '...'}</span></div>
+      </div>
+      <div className="relative" onClick={e => e.stopPropagation()}>
+        <div role="button" tabIndex={0} onClick={() => setIsOpen(!isOpen)} className="flex items-center justify-center w-8 h-8 bg-transparent border border-base-300 text-primary hover:bg-base-300 rounded-none appearance-none opacity-100 sm:opacity-50 sm:group-hover:opacity-100 transition-all shrink-0 cursor-pointer relative z-10"><Plus className="w-4 h-4" /></div>
+        {isOpen && (
+          <>
+            <div className="fixed inset-0 z-[190]" onClick={(e) => { e.stopPropagation(); setIsOpen(false); }}></div>
+            <div className="absolute top-full right-0 mt-2 z-[200] shadow-2xl bg-base-100 border border-base-300 w-44 rounded-none text-[9px] sm:text-[10px] font-mono uppercase font-bold tracking-widest animate-in slide-in-from-top-2 duration-150">
+              <div className="p-1.5 flex flex-col gap-0.5">
+                <div className="text-[8px] sm:text-[9px] opacity-50 px-2 py-1 pb-1.5">Quick Add</div>
+                <button type="button" className="text-left px-2 py-1.5 bg-transparent hover:bg-base-200 hover:text-primary transition-colors min-h-0 appearance-none" onClick={(e) => { setIsOpen(false); handleQuickAdd(e, item, 'planned'); }}>To {['games', 'vn'].includes(type) ? 'Backlog' : ['movies', 'tv', 'anime'].includes(type) ? 'Watchlist' : 'Reading List'}</button>
+                <button type="button" className="text-left px-2 py-1.5 bg-transparent hover:bg-base-200 hover:text-primary transition-colors min-h-0 appearance-none" onClick={(e) => { setIsOpen(false); handleQuickAdd(e, item, 'in progress'); }}>Currently {['games', 'vn'].includes(type) ? 'Playing' : ['movies', 'tv', 'anime'].includes(type) ? 'Watching' : 'Reading'}</button>
+                <button type="button" className="text-left px-2 py-1.5 bg-transparent hover:bg-base-200 hover:text-primary transition-colors min-h-0 appearance-none" onClick={(e) => { setIsOpen(false); handleQuickAdd(e, item, 'completed'); }}>Mark as {['games', 'vn'].includes(type) ? 'Played' : ['movies', 'tv', 'anime'].includes(type) ? 'Watched' : 'Read'}</button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
 export const SearchModal = ({ isOpen, onClose, results, isLoading, query, type, onSelect, page, totalPages, onPageChange }) => {
   const { openDiaryModal } = useMediaStore();
 
@@ -747,21 +780,9 @@ export const SearchModal = ({ isOpen, onClose, results, isLoading, query, type, 
           {isLoading ? (
             <div className="flex flex-col items-center justify-center p-16 text-primary"><Loader2 className="w-8 h-8 animate-spin mb-4" /><span className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] animate-pulse">Searching...</span></div>
           ) : results.length > 0 ? (
-            <div className="flex flex-col divide-y divide-base-300">
+            <div className="flex flex-col divide-y divide-base-300 pb-32">
               {results.map((item, idx) => (
-                <div key={item.id || idx} onClick={() => onSelect(item)} tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') onSelect(item); }} className="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 hover:bg-base-200 focus:bg-base-200 focus:outline-none transition-colors group cursor-pointer border-b border-base-300 last:border-b-0">
-                  <div className="w-10 h-14 sm:w-12 sm:h-16 flex-shrink-0 bg-base-300 border border-base-300 overflow-hidden relative"><ImageWithFallback src={item.image} alt={item.title} className="grayscale-[20%] group-hover:grayscale-0 object-cover" /></div>
-                  <div className="flex-1 min-w-0 flex flex-col"><h3 className="text-sm font-bold uppercase tracking-wide truncate group-hover:text-primary transition-colors font-sans">{item.title}</h3><div className="flex items-center gap-2 mt-1"><span className="text-[9px] font-mono font-bold bg-base-100 border border-base-300 text-base-content px-1.5 py-0.5 uppercase tracking-widest">{item.year || 'UNKNOWN'}</span><span className="text-[9px] font-mono font-bold text-base-content/50 uppercase tracking-widest truncate">{item.subtitle || item.description?.substring(0, 50) + '...'}</span></div></div>
-                  <div className="dropdown dropdown-end dropdown-left sm:dropdown-bottom sm:dropdown-end" onClick={e => e.stopPropagation()}>
-                    <div role="button" tabIndex={0} className="flex items-center justify-center w-8 h-8 bg-transparent border border-base-300 text-primary hover:bg-base-300 rounded-none appearance-none opacity-100 sm:opacity-50 sm:group-hover:opacity-100 transition-all shrink-0 cursor-pointer"><Plus className="w-4 h-4" /></div>
-                    <ul tabIndex={0} className="dropdown-content z-[200] menu p-2 shadow-2xl bg-base-100 border border-base-300 w-48 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest mt-1 sm:mt-2">
-                      <li className="menu-title text-[9px] opacity-50 px-2 py-1">Quick Add</li>
-                      <li><a onClick={(e) => handleQuickAdd(e, item, 'planned')}>To {['games', 'vn'].includes(type) ? 'Backlog' : ['movies', 'tv', 'anime'].includes(type) ? 'Watchlist' : 'Reading List'}</a></li>
-                      <li><a onClick={(e) => handleQuickAdd(e, item, 'in progress')}>Currently {['games', 'vn'].includes(type) ? 'Playing' : ['movies', 'tv', 'anime'].includes(type) ? 'Watching' : 'Reading'}</a></li>
-                      <li><a onClick={(e) => handleQuickAdd(e, item, 'completed')}>Mark as {['games', 'vn'].includes(type) ? 'Played' : ['movies', 'tv', 'anime'].includes(type) ? 'Watched' : 'Read'}</a></li>
-                    </ul>
-                  </div>
-                </div>
+                <SearchModalItem key={item.id || idx} item={item} type={type} onSelect={onSelect} handleQuickAdd={handleQuickAdd} />
               ))}
             </div>
           ) : (

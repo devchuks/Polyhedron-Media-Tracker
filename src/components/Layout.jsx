@@ -129,25 +129,23 @@ export const Header = ({ onSearch, theme, setTheme }) => {
         <div tabIndex={0} role="button" className="h-full border-l border-base-300 flex items-center px-4 sm:px-6 cursor-pointer hover:bg-base-200 transition-colors shrink-0">
           <User className="w-5 h-5 text-base-content/70" />
         </div>
-        <ul tabIndex={0} className="dropdown-content z-[60] menu p-2 shadow-2xl bg-base-100 border border-base-300 w-56 mt-0 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest">
+        <ul tabIndex={0} className="dropdown-content z-[60] menu p-2 shadow-2xl bg-base-100 border border-base-300 w-56 mt-0 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest max-h-[85vh] overflow-y-auto overscroll-contain custom-scrollbar flex-nowrap">
           <li className="menu-title text-[9px] opacity-50 px-4 py-2 border-b border-base-300 mb-1">Account</li>
-          <li><a>Profile</a></li>
-          <li><Link to="/settings" onClick={() => document.activeElement.blur()}>Settings</Link></li>
+          <li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight">Profile</a></li>
+          <li><Link to="/settings" onClick={() => document.activeElement.blur()} className="py-1.5 px-3 min-h-0 text-[10px] leading-tight">Settings</Link></li>
         {authMode === 'admin' && (
-          <li><Link to="/import" onClick={() => document.activeElement.blur()} className="text-primary">Terminal (Import)</Link></li>
+          <li><Link to="/import" onClick={() => document.activeElement.blur()} className="text-primary py-1.5 px-3 min-h-0 text-[10px] leading-tight">Terminal (Import)</Link></li>
         )}
-          <li><a onClick={async () => { await supabase.auth.signOut(); useMediaStore.getState().setAuthMode(null); navigate('/'); document.activeElement.blur(); }} className="text-error mt-2">Logout</a></li>
+          <li><a onClick={async () => { await supabase.auth.signOut(); useMediaStore.getState().setAuthMode(null); navigate('/'); document.activeElement.blur(); }} className="text-error mt-2 py-1.5 px-3 min-h-0 text-[10px] leading-tight">Logout</a></li>
           <div className="divider my-0 opacity-50"></div>
           <li className="menu-title text-[9px] opacity-50 px-4 py-2 border-b border-base-300 mb-1">Theme</li>
-          <div className="max-h-64 overflow-y-auto custom-scrollbar flex flex-col gap-0.5">
             {THEMES.map(t => (
               <li key={t}>
-                <a onClick={() => { setTheme(t); document.activeElement.blur(); }} className={theme === t ? 'text-primary bg-base-200' : ''}>
+                <a onClick={() => { setTheme(t); document.activeElement.blur(); }} className={`py-1.5 px-3 min-h-0 text-[10px] leading-tight ${theme === t ? 'text-primary bg-base-200' : ''}`}>
                   {t.charAt(0).toUpperCase() + t.slice(1)}
                 </a>
               </li>
             ))}
-          </div>
         </ul>
       </div>
     </header>

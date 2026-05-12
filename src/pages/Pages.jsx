@@ -59,7 +59,7 @@ export const Dashboard = () => {
         <div className="bg-info/5 border border-info/20 p-6 flex flex-col gap-4 items-start">
           <div>
             <h2 className="text-sm font-black uppercase tracking-widest text-info mb-1">Guest Mode Playground</h2>
-            <p className="text-xs font-mono text-base-content/70">Your local volatile library is empty. You can populate it with 40 random demo entries to safely test the dashboard, library filters, and diary logs. To clear this data later, go to Settings in the top right menu.</p>
+            <p className="text-xs font-mono text-base-content/70">Your local library is empty. You can populate it with 40 random demo entries to safely test the dashboard, library filters and diary logs (located in the search bar). Or you can search for stuff yourself, add to library, log and test functionality without the random demo entries. To clear this data, go to Settings in the top right menu. These entries will clear upon refresh or logging out.</p>
           </div>
           <button
             onClick={() => populateDemoData(useMediaStore.getState(), setPopLog, setIsPopulating)}
@@ -120,11 +120,11 @@ export const MediaCategory = () => {
           </div>
           <div className="dropdown dropdown-bottom sm:dropdown-end flex-1 sm:flex-none min-w-0">
             <div role="button" tabIndex={0} className="w-full h-8 rounded-none border border-base-300 bg-base-100 hover:bg-base-200 hover:border-primary text-[10px] font-mono uppercase font-bold tracking-widest flex px-2 sm:px-3 justify-between items-center cursor-pointer appearance-none transition-colors"><div className="flex items-center min-w-0"><Filter className="w-3 h-3 mr-1 shrink-0" /> <span className="truncate">{filter === 'all' ? 'Filter' : 'Filtered'}</span></div></div>
-            <ul tabIndex={0} className="dropdown-content z-50 menu p-2 shadow-xl bg-base-100 border border-base-300 w-52 mt-1 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest"><li><a onClick={() => { setFilter('all'); document.activeElement.blur(); }}>All Entries</a></li>{['planned', 'in progress', 'completed', 'dropped'].map(s => (<li key={s}><a onClick={() => { setFilter(s); document.activeElement.blur(); }}>{s}</a></li>))}</ul>
+            <ul tabIndex={0} className="dropdown-content z-50 menu p-2 shadow-xl bg-base-100 border border-base-300 w-52 mt-1 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest"><li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setFilter('all'); document.activeElement.blur(); }}>All Entries</a></li>{['planned', 'in progress', 'completed', 'dropped'].map(s => (<li key={s}><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setFilter(s); document.activeElement.blur(); }}>{s}</a></li>))}</ul>
           </div>
           <div className="dropdown dropdown-bottom sm:dropdown-end flex-1 sm:flex-none min-w-0">
             <div role="button" tabIndex={0} className="w-full h-8 rounded-none border border-base-300 bg-base-100 hover:bg-base-200 hover:border-primary text-[10px] font-mono uppercase font-bold tracking-widest flex px-2 sm:px-3 justify-between items-center cursor-pointer appearance-none transition-colors"><span className="truncate">Sort: {sort}</span></div>
-            <ul tabIndex={0} className="dropdown-content z-50 menu p-2 shadow-xl bg-base-100 border border-base-300 w-52 mt-1 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest"><li><a onClick={() => { setSort('dateAdded'); document.activeElement.blur(); }}>Date Added</a></li><li><a onClick={() => { setSort('rating'); document.activeElement.blur(); }}>Rating</a></li><li><a onClick={() => { setSort('title'); document.activeElement.blur(); }}>Title (A-Z)</a></li></ul>
+            <ul tabIndex={0} className="dropdown-content z-50 menu p-2 shadow-xl bg-base-100 border border-base-300 w-52 mt-1 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest"><li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setSort('dateAdded'); document.activeElement.blur(); }}>Date Added</a></li><li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setSort('rating'); document.activeElement.blur(); }}>Rating</a></li><li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setSort('title'); document.activeElement.blur(); }}>Title (A-Z)</a></li></ul>
           </div>
         </div>
       </header>
@@ -215,14 +215,14 @@ export const DetailView = () => {
   const mediaAssets = (() => {
     if (type === 'comics') return { thumbnails: [], originals: [] };
     if (type === 'games') {
-      const originals = (raw.screenshots || []).map(s => `https://images.igdb.com/igdb/image/upload/t_1080p/${s.image_id}.jpg`);
-      const thumbnails = (raw.screenshots || []).map(s => `https://images.igdb.com/igdb/image/upload/t_screenshot_med/${s.image_id}.jpg`);
+      const originals = (raw.screenshots || []).map(s => `https://images.igdb.com/igdb/image/upload/t_original/${s.image_id}.jpg`);
+      const thumbnails = (raw.screenshots || []).map(s => `https://images.igdb.com/igdb/image/upload/t_720p/${s.image_id}.jpg`);
       return { thumbnails, originals };
     }
     if (type === 'vn') { const fullUrls = (raw.screenshots || []).map(s => s.url); return { thumbnails: fullUrls, originals: fullUrls }; }
     if (type === 'movies' || type === 'tv') {
-      const fullUrls = raw.images?.backdrops?.length ? raw.images.backdrops.map(b => `https://image.tmdb.org/t/p/w1280${b.file_path}`) : raw.backdrop_path ? [`https://image.tmdb.org/t/p/w1280${raw.backdrop_path}`] : [];
-      return { thumbnails: fullUrls.map(u => u.replace('/w1280', '/w300')), originals: fullUrls };
+      const fullUrls = raw.images?.backdrops?.length ? raw.images.backdrops.map(b => `https://image.tmdb.org/t/p/original${b.file_path}`) : raw.backdrop_path ? [`https://image.tmdb.org/t/p/original${raw.backdrop_path}`] : [];
+      return { thumbnails: fullUrls.map(u => u.replace('/original', '/w780')), originals: fullUrls };
     }
     return { thumbnails: [], originals: [] };
   })();
