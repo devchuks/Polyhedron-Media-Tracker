@@ -7,7 +7,7 @@ import { useMediaStore } from '../store/useMediaStore';
 import { Gate } from '../pages/Gate';
 import { supabase } from '../services/supabase';
 
-const THEMES = [
+export const THEMES = [
   'light', 'dark', 'cupcake', 'bumblebee', 'emerald', 'corporate', 'synthwave', 'retro',
   'cyberpunk', 'valentine', 'halloween', 'garden', 'forest', 'aqua', 'lofi', 'pastel',
   'fantasy', 'wireframe', 'black', 'luxury', 'dracula', 'cmyk', 'autumn', 'business',

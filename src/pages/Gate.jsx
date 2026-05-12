@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { User, LogIn, ArrowLeft, ShieldAlert, Loader2, Eye, EyeOff, TerminalSquare } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { User, LogIn, ArrowLeft, ShieldAlert, Loader2, Eye, EyeOff, Palette } from 'lucide-react';
 import { useMediaStore } from '../store/useMediaStore';
 import { supabase } from '../services/supabase';
+import { THEMES } from '../components/Layout';
 
 const PolyhedronLogo = () => (
   <div className="w-16 h-16 mb-4 relative z-10 flex items-center justify-center text-primary-content">
@@ -32,6 +33,16 @@ export const Gate = () => {
   const [showLoginForm, setShowLoginForm] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
+  const [theme, setTheme] = useState(() => {
+    const saved = localStorage.getItem('theme');
+    return saved && THEMES.includes(saved) ? saved : 'light';
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
   const handleAdminLogin = async (e) => {
     e.preventDefault();
     setIsLoading(true);
@@ -60,12 +71,6 @@ export const Gate = () => {
         }
       `}</style>
       
-      {/* Status Bar */}
-      <div className="absolute top-4 left-4 sm:top-6 sm:left-6 z-20 flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-base-content/60">
-        <div className="w-2 h-2 bg-success rounded-full animate-pulse shadow-[0_0_8px_currentColor] text-success"></div>
-        SYS.ONLINE
-      </div>
-
       {/* Subtle Circuit Board Background */}
       <div className="absolute inset-0 opacity-10 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 2px 2px, currentColor 1px, transparent 0)', backgroundSize: '24px 24px', animation: 'slide-bg 6s linear infinite' }}></div>
       <div className="absolute inset-0 opacity-20 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 2px 2px, currentColor 1.5px, transparent 0)', backgroundSize: '48px 48px', animation: 'slide-bg 8s linear infinite reverse' }}></div>
@@ -131,6 +136,23 @@ export const Gate = () => {
             </form>
           )}
         </div>
+      </div>
+
+      {/* Theme Switcher */}
+      <div className="absolute bottom-4 left-4 sm:bottom-6 sm:left-6 z-20 dropdown dropdown-top">
+        <button tabIndex={0} className="flex items-center justify-center w-10 h-10 bg-base-100 border border-base-300 hover:border-primary text-base-content/70 hover:text-primary rounded-none transition-colors appearance-none shadow-xl">
+          <Palette className="w-4 h-4" />
+        </button>
+        <ul tabIndex={0} className="dropdown-content z-[60] menu p-2 shadow-2xl bg-base-100 border border-base-300 w-48 mb-2 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest max-h-64 overflow-y-auto custom-scrollbar flex flex-col gap-0.5">
+          <li className="menu-title text-[9px] opacity-50 px-2 py-1 mb-1">Theme</li>
+          {THEMES.map(t => (
+            <li key={t}>
+              <a onClick={() => { setTheme(t); document.activeElement?.blur?.(); }} className={theme === t ? 'text-primary bg-base-200' : ''}>
+                {t.charAt(0).toUpperCase() + t.slice(1)}
+              </a>
+            </li>
+          ))}
+        </ul>
       </div>
 
     </div>
