@@ -100,8 +100,8 @@ export const resolveMediaImage = (item, type, size = 'md') => {
     // Uses fallback image below
   } else if (type === 'anime' || type === 'manga') {
     if (size === 'banner') return raw.bannerImage || null;
-    if (size === 'thumb') return raw.coverImage?.medium || image;
-    if (size === 'md') return raw.coverImage?.large || image;
+    if (size === 'thumb') return raw.coverImage?.large || raw.coverImage?.medium || image;
+    if (size === 'md') return raw.coverImage?.extraLarge || raw.coverImage?.large || image;
     if (size === 'lg' || size === 'original') return raw.coverImage?.extraLarge || raw.coverImage?.large || image;
   } else if (type === 'books' && raw.cover_i) {
     return `https://covers.openlibrary.org/b/id/${raw.cover_i}-${size === 'thumb' ? 'S' : size === 'md' ? 'M' : 'L'}.jpg`;
@@ -140,7 +140,7 @@ export const GlobalDiaryModal = () => {
       if (activeDiaryModal.targetStatus) initialStatus = activeDiaryModal.targetStatus;
       
       setStatus(initialStatus);
-      setRating(targetItem?.rating || 0);
+      setRating(isPreview ? 0 : (targetItem?.rating || 0));
 
       let initProgress = newProgressOverride || targetItem?.progress || '';
       setProgress(initProgress);
@@ -649,8 +649,8 @@ export const StarRating = ({ rating = 0, onChange, readOnly = false }) => {
           const starValue = (i + 1) * 2;
           let StarComponent = Star;
           let fillClass = "text-base-content/20 fill-transparent";
-          if (displayValue >= starValue) fillClass = "text-warning fill-warning";
-          else if (displayValue === starValue - 1) { StarComponent = StarHalf; fillClass = "text-warning fill-warning"; }
+          if (displayValue >= starValue) fillClass = "text-info fill-info";
+          else if (displayValue === starValue - 1) { StarComponent = StarHalf; fillClass = "text-info fill-info"; }
           return (
             <div key={i} className={readOnly ? 'p-0.5' : 'cursor-pointer transition-transform hover:scale-110 p-3 sm:p-1'} onMouseMove={(e) => handleMouseMove(e, i)} onClick={() => !readOnly && onChange(hoverRating)}>
               <StarComponent className={`w-5 h-5 sm:w-6 sm:h-6 ${fillClass}`} />
@@ -693,7 +693,7 @@ export const MediaCard = ({ item }) => {
           
           {item.rating > 0 && (
             <div className="flex items-center gap-1 text-[10px] font-bold text-base-content shrink-0 ml-2 bg-base-200 px-1.5 py-0.5">
-              <Star className="w-3 h-3 text-warning fill-warning" /><span>{item.rating}.0</span>
+              <Star className="w-3 h-3 text-info fill-info" /><span>{item.rating}.0</span>
             </div>
           )}
         </div>
@@ -717,7 +717,7 @@ export const MediaListRow = ({ item }) => {
           <span>{item.apiData?.year || '----'}</span>
           <span className={`font-black ${getStatusColorCard(item.status)}`}>{item.status}</span>
           {formatProgressLabel(item.progress, item.type) && <span className="hidden sm:inline-block">{formatProgressLabel(item.progress, item.type)}</span>}
-          {item.rating > 0 && <span className="flex items-center gap-0.5 text-warning bg-base-200 px-1.5 py-0.5"><Star className="w-3 h-3 fill-warning"/>{item.rating}.0</span>}
+          {item.rating > 0 && <span className="flex items-center gap-0.5 text-info bg-base-200 px-1.5 py-0.5"><Star className="w-3 h-3 fill-info"/>{item.rating}.0</span>}
         </div>
       </div>
       <div className="hidden sm:flex px-4 items-center justify-center">

@@ -246,6 +246,11 @@ export const useMediaStore = create(
       autoSearchOnTypeSelect: true,
       setAutoSearchOnTypeSelect: (val) => set({ autoSearchOnTypeSelect: val }),
 
+      discoveryCache: {},
+      setDiscoveryCache: (type, data) => set(state => ({
+        discoveryCache: { ...state.discoveryCache, [type]: { data, timestamp: Date.now() } }
+      })),
+
       media: initialMediaState,
       importQueue: [], 
       mediaLogs: [],
@@ -482,7 +487,7 @@ export const useMediaStore = create(
         }
       },
       partialize: (state) => {
-        const { _hasHydrated, isAutoProcessing, isBatchCommitting, isCloudSyncing, realtimeSubscription, ...stateToSave } = state;
+        const { _hasHydrated, isAutoProcessing, isBatchCommitting, isCloudSyncing, realtimeSubscription, activeDiaryModal, ...stateToSave } = state;
         const slimMedia = {};
         for (const key in stateToSave.media) {
           slimMedia[key] = stateToSave.media[key].map(item => {

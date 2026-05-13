@@ -6,6 +6,7 @@ import Settings from './pages/Settings';
 import { Diary } from './pages/Diary';
 import { ImportTerminal } from './pages/ImportTerminal';
 import { NotFound } from './pages/NotFound';
+import { Discovery } from './pages/Discovery';
 
 function App() {
   return (
@@ -13,6 +14,7 @@ function App() {
       <Routes>
         <Route path="/" element={<AppLayout />}>
           <Route index element={<Dashboard />} />
+          <Route path="discovery" element={<Discovery />} />
           <Route path="diary" element={<Diary />} />
           <Route path="import" element={<ImportTerminal />} />
           <Route path="settings" element={<Settings />} />

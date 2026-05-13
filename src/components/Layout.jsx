@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Menu, Search, User, Home, Tv, Film, Gamepad2, Eye, Star, BookOpen, Book, Image as ImageIcon, CalendarDays, X, Loader2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Menu, Search, User, Home, Tv, Film, Gamepad2, Eye, Star, BookOpen, Book, Image as ImageIcon, CalendarDays, X, Loader2, Compass } from 'lucide-react';
 import { SearchModal, ToastContainer, GlobalDiaryModal } from './UI'; // Added GlobalDiaryModal
 import { apiRegistry } from '../services/apiRegistry';
 import { useMediaStore } from '../store/useMediaStore';
@@ -181,6 +181,7 @@ export const Sidebar = () => {
         <div className="flex-1 flex flex-col w-full overflow-y-auto custom-scrollbar" onClick={closeDrawer}>
           <div className="px-6 py-3 mt-2 text-[9px] font-mono font-bold uppercase tracking-[0.2em] text-base-content/40 shrink-0">Library</div>
           <Link to="/" className={getNavClass('/')}><Home className="w-4 h-4 shrink-0" /> Dashboard</Link>
+          <Link to="/discovery" className={getNavClass('/discovery')}><Compass className="w-4 h-4 shrink-0" /> Discovery</Link>
           <Link to="/tv" className={getNavClass('/tv')}><Tv className="w-4 h-4 shrink-0" /> TV Shows</Link>
           <Link to="/movies" className={getNavClass('/movies')}><Film className="w-4 h-4 shrink-0" /> Movies</Link>
           <Link to="/games" className={getNavClass('/games')}><Gamepad2 className="w-4 h-4 shrink-0" /> Games</Link>

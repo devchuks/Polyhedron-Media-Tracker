@@ -42,12 +42,11 @@ export const Dashboard = () => {
   const authMode = useMediaStore((state) => state.authMode);
   const media = useMediaStore((state) => state.media);
   
-  const { upcomingItems, recentlyAddedItems, allItemsLength } = React.useMemo(() => {
+  const { recentlyAddedItems, allItemsLength } = React.useMemo(() => {
     const allItems = Object.values(media).flat();
     const getAddedTime = (item) => item.addedAt || item.dateAdded || 0;
-    const upcoming = allItems.filter(item => item.status === 'planned' && isFutureRelease(item)).sort((a, b) => getAddedTime(b) - getAddedTime(a)).slice(0, 5);
-    const recent = allItems.filter(item => !upcoming.includes(item)).sort((a, b) => getAddedTime(b) - getAddedTime(a)).slice(0, 10);
-    return { upcomingItems: upcoming, recentlyAddedItems: recent, allItemsLength: allItems.length };
+    const recent = allItems.sort((a, b) => getAddedTime(b) - getAddedTime(a)).slice(0, 10);
+    return { recentlyAddedItems: recent, allItemsLength: allItems.length };
   }, [media]);
   
   const [isPopulating, setIsPopulating] = useState(false);
@@ -76,7 +75,6 @@ export const Dashboard = () => {
           )}
         </div>
       )}
-      <DashSection title="Upcoming Releases" items={upcomingItems} />
       <DashSection title="Recently Added" items={recentlyAddedItems} />
     </div>
   );
