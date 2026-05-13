@@ -335,17 +335,32 @@ export const Discovery = () => {
             `/issue/?store_date_range_after=${futureStart}&page_size=50`
           );
 
-          const normalizeIssues = (items) => (items || []).filter(item => item.image && item.series).slice(0, 15).map(item => ({
-            id: item.series.id, // route to series page
-            title: item.series.name || 'Unknown',
-            year: item.store_date ? item.store_date.substring(0, 4) : 'TBA',
-            apiRating: '0.0', 
-            description: stripHtml(item.desc) || 'No descriptive data available.',
-            image: `https://wsrv.nl/?url=${encodeURIComponent(item.image)}&w=400&output=webp`,
-            backdrop: `https://wsrv.nl/?url=${encodeURIComponent(item.image)}&w=800&output=webp`,
-            type: activeTab, subtitle: `Issue #${item.number}`,
-            apiData: { raw: { ...item, id: item.series.id } } // mask ID to force detail view to fetch the series
-          }));
+          const normalizeIssues = (items) => (items || []).filter(item => item.image && item.series).slice(0, 15).map(item => {
+            // Construct a clean, mocked Series object to prevent polluting the library with Issue data
+            const seriesObj = {
+              id: item.series.id,
+              name: item.series.name,
+              volume: item.series.volume,
+              year_began: item.series.year_began,
+              desc: item.series.desc || item.desc,
+              image: item.image,
+              issue_count: item.series.issue_count || 0,
+              issuesCount: item.series.issue_count || 0
+            };
+            
+            return {
+              id: item.series.id, // route to series page
+              title: item.series.name || 'Unknown',
+              year: item.series.year_began?.toString() || item.store_date?.substring(0, 4) || 'TBA',
+              apiRating: '0.0', 
+              description: stripHtml(item.series.desc || item.desc) || 'No descriptive data available.',
+              image: `https://wsrv.nl/?url=${encodeURIComponent(item.image)}&w=400&output=webp`,
+              backdrop: `https://wsrv.nl/?url=${encodeURIComponent(item.image)}&w=800&output=webp`,
+              type: activeTab, 
+              subtitle: `Issue #${item.number}`, // Keep the issue number as the cool subtitle!
+              apiData: { image: item.image, raw: seriesObj } 
+            };
+          });
 
           let finalTrending = normalizeIssues(trending);
           let finalUpcoming = normalizeIssues(upcoming);
