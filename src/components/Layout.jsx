@@ -179,15 +179,18 @@ export const Sidebar = () => {
         </div>
         
         <div className="flex-1 flex flex-col w-full overflow-y-auto custom-scrollbar" onClick={closeDrawer}>
-          <div className="px-6 py-3 mt-2 text-[9px] font-mono font-bold uppercase tracking-[0.2em] text-base-content/40 shrink-0">Library</div>
+          <div className="px-6 py-3 mt-2 text-[9px] font-mono font-bold uppercase tracking-[0.2em] text-base-content/40 shrink-0">Menu</div>
           <Link to="/" className={getNavClass('/')}><Home className="w-4 h-4 shrink-0" /> Dashboard</Link>
           <Link to="/discovery" className={getNavClass('/discovery')}><Compass className="w-4 h-4 shrink-0" /> Discovery</Link>
+          
+          <div className="px-6 py-3 mt-4 text-[9px] font-mono font-bold uppercase tracking-[0.2em] text-base-content/40 border-t border-base-300 shrink-0">Your Library</div>
           <Link to="/tv" className={getNavClass('/tv')}><Tv className="w-4 h-4 shrink-0" /> TV Shows</Link>
           <Link to="/movies" className={getNavClass('/movies')}><Film className="w-4 h-4 shrink-0" /> Movies</Link>
           <Link to="/games" className={getNavClass('/games')}><Gamepad2 className="w-4 h-4 shrink-0" /> Games</Link>
           <Link to="/vn" className={getNavClass('/vn')}><Eye className="w-4 h-4 shrink-0" /> Visual Novels</Link>
           <Link to="/anime" className={getNavClass('/anime')}><Star className="w-4 h-4 shrink-0" /> Anime</Link>
           <Link to="/manga" className={getNavClass('/manga')}><BookOpen className="w-4 h-4 shrink-0" /> Manga</Link>
+          <Link to="/books" className={getNavClass('/books')}><Book className="w-4 h-4 shrink-0" /> Books</Link>
           <Link to="/books" className={getNavClass('/books')}><Book className="w-4 h-4 shrink-0" /> Books</Link>
           <Link to="/comics" className={getNavClass('/comics')}><ImageIcon className="w-4 h-4 shrink-0" /> Comics</Link>
           <div className="px-6 py-3 mt-4 text-[9px] font-mono font-bold uppercase tracking-[0.2em] text-base-content/40 border-t border-base-300 shrink-0">Activity</div>

@@ -208,10 +208,10 @@ const Settings = () => {
   const handleClearStorage = () => {
     if (window.confirm('Delete ALL local data? This cannot be undone.')) {
       setIsClearing(true);
-      const req = indexedDB.deleteDatabase('polyhedron-db');
-      req.onsuccess = () => window.location.reload();
-      req.onerror = () => window.location.reload();
-      setTimeout(() => window.location.reload(), 1500); // Safety fallback
+      localStorage.clear();
+      sessionStorage.clear();
+      useMediaStore.persist.clearStorage(); // Safely clear Zustand's persist cache without locking the DB
+      setTimeout(() => window.location.reload(), 500);
     }
   };
 

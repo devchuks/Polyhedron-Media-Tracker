@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Compass, Flame, CalendarClock, Star, ArrowRight, LayoutTemplate, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Flame, CalendarClock, Star, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { ImageWithFallback, getMediaTypeColors, getSubtype, stripHtml } from '../components/UI';
 import { supabase } from '../services/supabase';
 import { useMediaStore } from '../store/useMediaStore';
 
-const TABS = ['movies', 'tv', 'games', 'anime', 'manga', 'comics', 'books', 'vn'];
+const TABS = ['movies', 'tv', 'games', 'anime', 'manga', 'comics'];
 
 // Helper to determine AniList Seasons dynamically
 const getAniListSeason = (isNext = false) => {
@@ -23,21 +23,6 @@ const getAniListSeason = (isNext = false) => {
   return { season: seasons[seasonIndex], seasonYear: year };
 };
 
-// Dummy data generator
-const generateDummyData = (type) => Array.from({ length: 15 }).map((_, i) => {
-  const isTall = Math.random() > 0.5;
-  return {
-    id: `dummy_${type}_${i}`,
-    title: `Sample ${type.toUpperCase()} Title ${i + 1}`,
-    year: 2024 + Math.floor(Math.random() * 2),
-    apiRating: (Math.random() * 4 + 6).toFixed(1),
-    description: "A thrilling adventure full of unexpected twists, deep character development, and breathtaking visuals. It will leave you completely speechless.",
-    aspectClass: type === 'comics' ? 'aspect-[2/3]' : type === 'tv' && !isTall ? 'aspect-video' : 'aspect-[2/3]',
-    image: null,
-    type
-  }
-});
-
 const DiscoverySkeleton = () => (
   <div className="flex flex-col gap-6 sm:gap-8 w-full animate-pulse mt-2">
     {[1, 2, 3].map(section => (
@@ -51,42 +36,24 @@ const DiscoverySkeleton = () => (
   </div>
 );
 
-// Date helpers for Metron
-const getMonday = (date = new Date()) => {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  d.setDate(diff);
-  d.setHours(0, 0, 0, 0);
-  return d;
-};
-
-const addDays = (date, days) => {
-  const result = new Date(date);
-  result.setDate(result.getDate() + days);
-  return result;
-};
-
-const formatYMD = (date) => date.toISOString().split('T')[0];
-
 export const Discovery = () => {
   const { discoveryCache, setDiscoveryCache } = useMediaStore();
   const [activeTab, setActiveTab] = useState(() => sessionStorage.getItem('discoveryTab') || 'movies');
-  const [isLoading, setIsLoading] = useState(!discoveryCache[activeTab]);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [isLoading, setIsLoading] = useState(!discoveryCache?.[activeTab]);
 
   useEffect(() => {
     let isMounted = true;
     
     const loadData = async () => {
-      // Check if cache exists and is less than 12 hours old
-      const cached = useMediaStore.getState().discoveryCache[activeTab];
-      
-      // Force a re-fetch if the cache contains dummy data but the API is now implemented
-      const isDummy = cached?.data?.trending?.length > 0 && String(cached.data.trending[0]?.id).startsWith('dummy_');
+      const cached = useMediaStore.getState().discoveryCache?.[activeTab];
       const isEmpty = !cached?.data?.trending || cached.data.trending.length === 0;
-      const isImplemented = ['movies', 'tv', 'anime', 'manga', 'games', 'vn', 'comics'].includes(activeTab);
+      const isImplemented = ['movies', 'tv', 'anime', 'manga', 'games', 'comics'].includes(activeTab);
       
-      if (cached && (Date.now() - cached.timestamp < 43200000) && !(isImplemented && (isDummy || isEmpty))) {
+      const cacheTTL = 43200000; // 12 hours
+      const isStale = !cached || (Date.now() - cached.timestamp >= cacheTTL) || cached.data?._version !== 1;
+      
+      if (!isStale && !(isImplemented && isEmpty)) {
         if (isMounted) setIsLoading(false);
         return;
       }
@@ -95,11 +62,21 @@ export const Discovery = () => {
       try {
         let data;
         if (activeTab === 'movies' || activeTab === 'tv') {
-          // ... TMDB code untouched ...
           const tmdbType = activeTab === 'movies' ? 'movie' : 'tv';
           const fetchTMDB = async (endpoint) => {
-            const { data, error } = await supabase.functions.invoke('tmdb', { body: { path: endpoint } });
-            return data || { results: [] };
+            try {
+              const sep = endpoint.includes('?') ? '&' : '?';
+              // Fetch 2 pages at once so the Load More button has 40 items to reveal
+              const [res1, res2] = await Promise.all([
+                supabase.functions.invoke('tmdb', { body: { path: `${endpoint}${sep}page=1` } }),
+                supabase.functions.invoke('tmdb', { body: { path: `${endpoint}${sep}page=2` } })
+              ]);
+              if (res1.error || res2.error) throw res1.error || res2.error;
+              return { results: [...(res1.data?.results || []), ...(res2.data?.results || [])] };
+            } catch (err) {
+              console.error("TMDB Fetch Error:", err);
+              return { results: [] };
+            }
           };
 
           const [trending, upcoming, topRated] = await Promise.all([
@@ -108,13 +85,13 @@ export const Discovery = () => {
             fetchTMDB(`/${tmdbType}/popular`)
           ]);
 
-          const normalize = (items) => (items || []).filter(i => i.poster_path).slice(0, 15).map(item => ({
+          const normalize = (items) => (items || []).filter(i => i.poster_path).map(item => ({
             id: item.id,
             title: item.title || item.name,
             year: (item.release_date || item.first_air_date || 'TBA').substring(0, 4),
             apiRating: item.vote_average ? item.vote_average.toFixed(1) : '0.0',
             description: item.overview || 'No transmission data available.',
-            image: `https://image.tmdb.org/t/p/w500${item.poster_path}`,
+            image: `https://image.tmdb.org/t/p/w342${item.poster_path}`,
             backdrop: item.backdrop_path ? `https://image.tmdb.org/t/p/w780${item.backdrop_path}` : null,
             type: activeTab,
             subtitle: null,
@@ -123,39 +100,44 @@ export const Discovery = () => {
 
           data = { trending: normalize(trending.results), upcoming: normalize(upcoming.results), topRated: normalize(topRated.results) };
         } else if (activeTab === 'anime' || activeTab === 'manga') {
-          // ... AniList code untouched ...
           const typeArg = activeTab === 'anime' ? 'ANIME' : 'MANGA';
           const fetchAniList = async (sort, status, useSeason = false, isNext = false) => {
-            const query = `
-              query ($type: MediaType, $sort: [MediaSort], $status: MediaStatus, $season: MediaSeason, $seasonYear: Int) {
-                Page(page: 1, perPage: 15) {
-                  media(type: $type, sort: $sort, status: $status, season: $season, seasonYear: $seasonYear) {
-                    id
-                    title { english romaji }
-                    startDate { year }
-                    averageScore
-                    description(asHtml: false)
-                    coverImage { extraLarge large }
-                    bannerImage
+            try {
+              const query = `
+                query ($type: MediaType, $sort: [MediaSort], $status: MediaStatus, $season: MediaSeason, $seasonYear: Int) {
+                  Page(page: 1, perPage: 40) {
+                    media(type: $type, sort: $sort, status: $status, season: $season, seasonYear: $seasonYear) {
+                      id
+                      title { english romaji }
+                      startDate { year }
+                      averageScore
+                      description(asHtml: false)
+                      coverImage { large medium }
+                      bannerImage
+                    }
                   }
                 }
+              `;
+              const variables = { type: typeArg, sort: [sort] };
+              if (status) variables.status = status;
+              if (useSeason) {
+                const s = getAniListSeason(isNext);
+                variables.season = s.season;
+                variables.seasonYear = s.seasonYear;
               }
-            `;
-            const variables = { type: typeArg, sort: [sort] };
-            if (status) variables.status = status;
-            if (useSeason) {
-              const s = getAniListSeason(isNext);
-              variables.season = s.season;
-              variables.seasonYear = s.seasonYear;
+              
+              const res = await fetch('https://graphql.anilist.co', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                body: JSON.stringify({ query, variables })
+              });
+              const json = await res.json();
+              if (json.errors) throw new Error(json.errors[0].message);
+              return json.data?.Page?.media || [];
+            } catch (err) {
+              console.error("AniList Fetch Error:", err);
+              return [];
             }
-            
-            const res = await fetch('https://graphql.anilist.co', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-              body: JSON.stringify({ query, variables })
-            });
-            const json = await res.json();
-            return json.data?.Page?.media || [];
           };
 
           const isAnime = activeTab === 'anime';
@@ -171,7 +153,7 @@ export const Discovery = () => {
             year: item.startDate?.year?.toString() || 'TBA',
             apiRating: item.averageScore ? (item.averageScore / 10).toFixed(1) : '0.0',
             description: stripHtml(item.description) || 'No descriptive data available.',
-            image: item.coverImage?.extraLarge || item.coverImage?.large,
+            image: item.coverImage?.large || item.coverImage?.medium,
             backdrop: item.bannerImage || null,
             type: activeTab,
             subtitle: item.season && item.seasonYear ? `${item.season} ${item.seasonYear}` : null,
@@ -180,19 +162,13 @@ export const Discovery = () => {
 
           data = { trending: normalize(trending), upcoming: normalize(upcoming), topRated: normalize(topRated) };
         } else if (activeTab === 'games') {
-          // ... IGDB code untouched ...
           const fetchIGDB = async (query) => {
             try {
-              console.log(`[IGDB Debug] Sending Query:`, query);
               const { data, error } = await supabase.functions.invoke('igdb', { 
                 body: { endpoint: 'games', query } 
               });
-              
-              console.log(`[IGDB Debug] Raw Response:`, { data, error });
-              
               if (error) throw error;
               if (data?.error || data?.message) throw new Error(data.error || data.message || JSON.stringify(data));
-              
               return Array.isArray(data) ? data : data?.data || data?.results || [];
             } catch (err) {
               console.error(`[IGDB Debug] CRITICAL FAILURE:`, err);
@@ -203,106 +179,31 @@ export const Discovery = () => {
           const now = Math.floor(Date.now() / 1000);
           const sixMonthsAgo = now - 15552000;
           const [trending, upcoming, topRated] = await Promise.all([
-            fetchIGDB(`fields id, name, first_release_date, total_rating, rating, summary, cover.image_id, artworks.image_id; where first_release_date >= ${sixMonthsAgo} & first_release_date <= ${now} & parent_game = null & total_rating_count > 0; sort total_rating_count desc; limit 30;`),
-            fetchIGDB(`fields id, name, first_release_date, total_rating, rating, summary, cover.image_id, artworks.image_id; where first_release_date > ${now} & parent_game = null & hypes > 0; sort hypes desc; limit 30;`),
-            fetchIGDB(`fields id, name, first_release_date, total_rating, rating, summary, cover.image_id, artworks.image_id; where total_rating_count > 500 & parent_game = null; sort total_rating desc; limit 30;`)
+            fetchIGDB(`fields id, name, first_release_date, total_rating, rating, summary, cover.image_id, artworks.image_id; where first_release_date >= ${sixMonthsAgo} & first_release_date <= ${now} & parent_game = null & total_rating_count > 0; sort total_rating_count desc; limit 40;`),
+            fetchIGDB(`fields id, name, first_release_date, total_rating, rating, summary, cover.image_id, artworks.image_id; where first_release_date > ${now} & parent_game = null & hypes > 0; sort hypes desc; limit 40;`),
+            fetchIGDB(`fields id, name, first_release_date, total_rating, rating, summary, cover.image_id, artworks.image_id; where total_rating_count > 500 & parent_game = null; sort total_rating desc; limit 40;`)
           ]);
 
           const normalize = (items) => (items || [])
             .filter(item => item.cover?.image_id)
-            .slice(0, 15)
             .map(item => ({
             id: `igdb_${item.id}`, title: item.name, year: item.first_release_date ? new Date(item.first_release_date * 1000).getFullYear().toString() : 'TBA',
             apiRating: item.total_rating ? (item.total_rating / 10).toFixed(1) : (item.rating ? (item.rating / 10).toFixed(1) : '0.0'),
             description: item.summary || 'No descriptive data available.',
-            image: `https://images.igdb.com/igdb/image/upload/t_720p/${item.cover.image_id}.jpg`,
+            image: `https://images.igdb.com/igdb/image/upload/t_cover_big/${item.cover.image_id}.jpg`,
             backdrop: item.artworks?.[0]?.image_id ? `https://images.igdb.com/igdb/image/upload/t_1080p/${item.artworks[0].image_id}.jpg` : null,
             type: activeTab, apiData: { raw: item }
           }));
           
-          let finalTrending = normalize(trending);
-          let finalUpcoming = normalize(upcoming);
-          let finalTopRated = normalize(topRated);
-
-          if (finalTrending.length === 0) finalTrending = generateDummyData(activeTab);
-          if (finalUpcoming.length === 0) finalUpcoming = generateDummyData(activeTab);
-          if (finalTopRated.length === 0) finalTopRated = generateDummyData(activeTab);
-          
-          data = { trending: finalTrending, upcoming: finalUpcoming, topRated: finalTopRated };
-        } else if (activeTab === 'vn') {
-  const fetchVNDB = async (sort, reverse, filters = []) => {
-    try {
-      const body = {
-        filters: filters.length > 1 ? ["and", ...filters] : (filters.length === 1 ? filters[0] : ["id", ">=", "v1"]),
-        fields: "id, title, released, rating, description, image.url, screenshots.url",
-        sort, reverse, results: 20
-      };
-      const res = await fetch('https://api.vndb.org/kana/vn', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      const json = await res.json();
-      return json.results || [];
-    } catch (err) {
-      console.error("VNDB Fetch Error:", err);
-      return [];
-    }
-  };
-
-  // Correct date calculations without mutation
-  const today = new Date();
-  const todayStr = today.toISOString().split('T')[0];
-  const lastYear = new Date(today);
-  lastYear.setFullYear(lastYear.getFullYear() - 1);
-  const lastYearStr = lastYear.toISOString().split('T')[0];
-
-  const [trending, upcoming, topRated] = await Promise.all([
-    // Trending: popular VNs from the last year
-    fetchVNDB('votecount', true, [["released", ">=", lastYearStr], ["released", "<=", todayStr]]),
-    // Upcoming: future releases sorted by release date (ascending)
-    fetchVNDB('released', false, [["released", ">=", todayStr]]),
-    // Top Rated: highest rated with at least 500 votes
-    fetchVNDB('rating', true, [["votecount", ">=", 500]])
-  ]);
-
-  const normalize = (items) => (items || [])
-    .filter(item => item.image?.url || item.screenshots?.[0]?.url)
-    .slice(0, 15)
-    .map(item => ({
-      id: `vndb_${item.id}`,
-      title: item.title,
-      year: item.released ? item.released.substring(0, 4) : 'TBA',
-      apiRating: item.rating ? (item.rating / 10).toFixed(1) : '0.0',
-      description: stripHtml(item.description) || 'No descriptive data available.',
-      image: item.image?.url || item.screenshots?.[0]?.url,
-      backdrop: item.screenshots?.[0]?.url || item.image?.url,
-      type: activeTab,
-      apiData: { raw: item }
-    }));
-
-  let finalTrending = normalize(trending);
-  let finalUpcoming = normalize(upcoming);
-  let finalTopRated = normalize(topRated);
-
-  if (finalTrending.length === 0) finalTrending = generateDummyData(activeTab);
-  if (finalUpcoming.length === 0) finalUpcoming = generateDummyData(activeTab);
-  if (finalTopRated.length === 0) finalTopRated = generateDummyData(activeTab);
-
-  data = { trending: finalTrending, upcoming: finalUpcoming, topRated: finalTopRated };
+          data = { trending: normalize(trending), upcoming: normalize(upcoming), topRated: normalize(topRated) };
 } else if (activeTab === 'comics') {
           const fetchMetron = async (endpoint) => {
             try {
-              console.log(`[Metron Debug] Sending:`, endpoint);
               const { data, error } = await supabase.functions.invoke('metron', { 
                 body: { endpoint, path: endpoint, method: 'GET' } 
               });
-              
-              console.log(`[Metron Debug] Raw Response:`, { data, error });
-              
               if (error) throw error;
               if (data?.error || data?.message) throw new Error(data.error || data.message || JSON.stringify(data));
-              
               return Array.isArray(data) ? data : data?.results || data?.data || [];
             } catch (err) {
               console.error("[Metron Debug] CRITICAL FAILURE:", err);
@@ -310,13 +211,27 @@ export const Discovery = () => {
             }
           };
 
-          // Compute date ranges
+          const getMonday = (date = new Date()) => {
+            const d = new Date(date);
+            const day = d.getDay();
+            const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+            d.setDate(diff);
+            d.setHours(0, 0, 0, 0);
+            return d;
+          };
+          const addDays = (date, days) => {
+            const result = new Date(date);
+            result.setDate(result.getDate() + days);
+            return result;
+          };
+          const formatYMD = (date) => date.toISOString().split('T')[0];
+
           const now = new Date();
           const thisMonday = getMonday(now);
           const thisSunday = addDays(thisMonday, 6);
           const nextMonday = addDays(thisMonday, 7);
           const nextSunday = addDays(nextMonday, 6);
-          const futureMonday = addDays(nextMonday, 7); // start of week after next
+          const futureMonday = addDays(nextMonday, 7);
 
           const thisWeekStart = formatYMD(thisMonday);
           const thisWeekEnd = formatYMD(thisSunday);
@@ -324,19 +239,14 @@ export const Discovery = () => {
           const nextWeekEnd = formatYMD(nextSunday);
           const futureStart = formatYMD(futureMonday);
 
-          // Fetch with date ranges
-          const trending = await fetchMetron(
-            `/issue/?store_date_range_after=${thisWeekStart}&store_date_range_before=${thisWeekEnd}&page_size=50`
-          );
-          const upcoming = await fetchMetron(
-            `/issue/?store_date_range_after=${nextWeekStart}&store_date_range_before=${nextWeekEnd}&page_size=50`
-          );
-          const topRated = await fetchMetron(
-            `/issue/?store_date_range_after=${futureStart}&page_size=50`
-          );
+          const trending = await fetchMetron(`/issue/?store_date_range_after=${thisWeekStart}&store_date_range_before=${thisWeekEnd}&page_size=50`);
+          const upcoming = await fetchMetron(`/issue/?store_date_range_after=${nextWeekStart}&store_date_range_before=${nextWeekEnd}&page_size=50`);
+          const topRated = await fetchMetron(`/issue/?store_date_range_after=${futureStart}&page_size=50`);
 
-          const normalizeIssues = (items) => (items || []).filter(item => item.image && item.series).slice(0, 15).map(item => {
-            // Construct a clean, mocked Series object to prevent polluting the library with Issue data
+          const normalizeIssues = (items) => {
+            const valid = (items || []).filter(item => item.image && item.series);
+            valid.sort((a, b) => (b.series?.issue_count || 0) - (a.series?.issue_count || 0)); // Sort by popularity
+            return valid.map(item => {
             const seriesObj = {
               id: item.series.id,
               name: item.series.name,
@@ -349,34 +259,27 @@ export const Discovery = () => {
             };
             
             return {
-              id: item.series.id, // route to series page
+              uniqueKey: `issue_${item.id}`,
+              id: item.series.id,
               title: item.series.name || 'Unknown',
-              year: item.series.year_began?.toString() || item.store_date?.substring(0, 4) || 'TBA',
+              year: item.store_date ? new Date(item.store_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : (item.series.year_began?.toString() || 'TBA'),
               apiRating: '0.0', 
               description: stripHtml(item.series.desc || item.desc) || 'No descriptive data available.',
-              image: `https://wsrv.nl/?url=${encodeURIComponent(item.image)}&w=400&output=webp`,
+              image: `https://wsrv.nl/?url=${encodeURIComponent(item.image)}&w=300&output=webp`,
               backdrop: `https://wsrv.nl/?url=${encodeURIComponent(item.image)}&w=800&output=webp`,
               type: activeTab, 
-              subtitle: `Issue #${item.number}`, // Keep the issue number as the cool subtitle!
+              subtitle: `Issue #${item.number}`, 
               apiData: { image: item.image, raw: seriesObj } 
             };
-          });
+            });
+          };
 
-          let finalTrending = normalizeIssues(trending);
-          let finalUpcoming = normalizeIssues(upcoming);
-          let finalTopRated = normalizeIssues(topRated);
-
-          if (finalTrending.length === 0) finalTrending = generateDummyData(activeTab);
-          if (finalUpcoming.length === 0) finalUpcoming = generateDummyData(activeTab);
-          if (finalTopRated.length === 0) finalTopRated = generateDummyData(activeTab);
-
-          data = { trending: finalTrending, upcoming: finalUpcoming, topRated: finalTopRated };
+          data = { trending: normalizeIssues(trending), upcoming: normalizeIssues(upcoming), topRated: normalizeIssues(topRated) };
         } else {
-          const dummy = generateDummyData(activeTab);
-          data = { trending: dummy, upcoming: dummy, topRated: dummy };
+          data = { trending: [], upcoming: [], topRated: [] };
         }
         
-        if (isMounted) setDiscoveryCache(activeTab, data);
+        if (isMounted) setDiscoveryCache(activeTab, { ...data, _version: 1 });
       } catch (err) {
         console.error('Discovery fetch error:', err);
       } finally {
@@ -386,34 +289,52 @@ export const Discovery = () => {
 
     loadData();
     return () => { isMounted = false; };
-  }, [activeTab, setDiscoveryCache]);
+  }, [activeTab, setDiscoveryCache, refreshTrigger]);
 
-  const currentData = discoveryCache[activeTab]?.data || { trending: [], upcoming: [], topRated: [] };
+  const currentData = discoveryCache?.[activeTab]?.data || { trending: [], upcoming: [], topRated: [] };
 
   const handleTabChange = (tab) => {
-    if (!discoveryCache[tab] || (Date.now() - discoveryCache[tab].timestamp >= 43200000)) setIsLoading(true);
+    const cached = discoveryCache?.[tab];
+    const isEmpty = !cached?.data?.trending || cached.data.trending.length === 0;
+    const isImplemented = ['movies', 'tv', 'anime', 'manga', 'games', 'comics'].includes(tab);
+    
+    const cacheTTL = 43200000; // 12 hours
+    const isStale = !cached || (Date.now() - cached.timestamp >= cacheTTL) || cached.data?._version !== 1;
+    
+    if (isStale || (isImplemented && isEmpty)) setIsLoading(true);
     setActiveTab(tab);
     sessionStorage.setItem('discoveryTab', tab);
   };
 
-  // Dynamic section titles for comics
+  const handleForceRefresh = () => {
+    useMediaStore.setState(state => {
+      const newCache = { ...state.discoveryCache };
+      delete newCache[activeTab];
+      return { discoveryCache: newCache };
+    });
+    setIsLoading(true);
+    setRefreshTrigger(prev => prev + 1);
+  };
+
+  const getTitles = (tab) => {
+    switch (tab) {
+      case 'movies': return ['Trending this Week', 'Upcoming', 'Popular'];
+      case 'tv': return ['Trending this Week', 'On The Air', 'Popular'];
+      case 'anime': return ['Trending', 'Upcoming Next Season', 'All Time Popular'];
+      case 'manga': return ['Trending', 'Upcoming', 'All Time Popular'];
+      case 'games': return ['Recently Released', 'Most Anticipated', 'Top Rated'];
+      case 'comics': return ['This Week', 'Next Week', 'Future'];
+      default: return ['Trending', 'Upcoming', 'Popular'];
+    }
+  };
+  
   const isComics = activeTab === 'comics';
-  const section1Title = isComics ? 'This Week' : 'Trending Spotlight';
-  const section2Title = isComics ? 'Next Week' : 'Anticipated Releases';
-  const section3Title = isComics ? 'Future' : 'Popular';
+  const [section1Title, section2Title, section3Title] = getTitles(activeTab);
 
   return (
     <div className="flex flex-col gap-6 animate-in fade-in duration-300 pb-10 min-h-screen text-base-content overflow-x-hidden">
-      
-      {/* Streamlined Header */}
-      <header className="border-b border-base-300 pb-4">
-        <h1 className="text-2xl font-black uppercase tracking-widest font-sans flex items-center gap-2">
-          <Compass className="w-6 h-6 text-primary" /> Discovery
-        </h1>
-      </header>
-
       {/* Wrapping Tabs */}
-      <div className="flex flex-wrap pb-2 border-b border-base-300 gap-1.5 sm:gap-2">
+      <div className="flex flex-wrap pt-2 pb-2 border-b border-base-300 gap-1.5 sm:gap-2 items-center">
         {TABS.map(tab => (
           <button 
             key={tab} 
@@ -427,93 +348,30 @@ export const Discovery = () => {
             {tab}
           </button>
         ))}
+        
+        <button onClick={handleForceRefresh} disabled={isLoading} className="btn btn-ghost btn-square btn-sm ml-auto" title="Force Refresh">
+          <RefreshCw className={`w-4 h-4 text-base-content/50 ${isLoading ? 'animate-spin text-primary' : ''}`} />
+        </button>
       </div>
 
       {isLoading ? <DiscoverySkeleton /> : (
       <div className="flex flex-col gap-6 sm:gap-8 animate-in fade-in duration-500">
-        
-        {/* 1. THIS WEEK / TRENDING */}
         <CarouselSection title={section1Title} icon={<Flame className="w-4 h-4 text-warning" />} items={currentData.trending} type={activeTab} showRank={!isComics} categoryKey="trending" />
-
-        {/* 2. NEXT WEEK / ANTICIPATED */}
         <CarouselSection title={section2Title} icon={<CalendarClock className="w-4 h-4 text-info" />} items={currentData.upcoming} type={activeTab} categoryKey="upcoming" />
-
-        {/* 3. FUTURE / POPULAR */}
         <CarouselSection title={section3Title} icon={<Star className="w-4 h-4 text-success" />} items={currentData.topRated} type={activeTab} showRank={!isComics} categoryKey="popular" />
-
       </div>
       )}
     </div>
   );
 };
 
-/* -------------------------------------------------------------------------- */
-/* TRENDING CAROUSEL SECTION (1:1 Hero + Standard 2:3 Items)                  */
-/* -------------------------------------------------------------------------- */
-const TrendingCarouselSection = ({ title, items, type }) => {
-  const scrollRef = useRef(null);
-  if (!items || items.length === 0) return null;
-  const heroItem = items[0];
-  const standardItems = items.slice(1, 15); 
-  const colors = getMediaTypeColors(type);
-  const heroRating = heroItem.apiRating || heroItem.rating;
-
-  const scroll = (direction) => {
-    if (scrollRef.current) {
-      const { current } = scrollRef;
-      const scrollAmount = direction === 'left' ? -current.offsetWidth * 0.75 : current.offsetWidth * 0.75;
-      current.scrollBy({ left: scrollAmount, behavior: 'smooth' });
-    }
-  };
-
-  return (
-    <section className="flex flex-col gap-3">
-      <div className="flex items-center justify-between border-b border-base-300/50 pb-2">
-        <h2 className="text-sm font-black uppercase tracking-widest font-sans flex items-center gap-2">
-          <Flame className="w-4 h-4 text-warning" /> {title}
-        </h2>
-      </div>
-
-      <div className="relative group/carousel">
-        <button onClick={() => scroll('left')} className="absolute left-2 top-1/2 -translate-y-[calc(50%+8px)] z-40 bg-base-100/90 hover:bg-primary text-base-content hover:text-primary-content w-10 h-10 items-center justify-center hidden md:group-hover/carousel:flex backdrop-blur-md transition-all border border-base-300 shadow-2xl rounded-full">
-          <ChevronLeft className="w-6 h-6" />
-        </button>
-
-        <div ref={scrollRef} className="flex items-stretch overflow-x-auto gap-2 sm:gap-4 snap-x pb-4 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
-          {/* Hero Item */}
-          <Link to={`/media/${type}/${heroItem.id}`} state={{ previewData: heroItem }} className={`group flex-shrink-0 w-[calc(66.666%-0.17rem)] sm:w-[22rem] md:w-[28rem] lg:w-[36rem] xl:w-[44rem] flex flex-col justify-end p-3 sm:p-5 cursor-pointer snap-start relative bg-black overflow-hidden transition-all duration-300 shadow-xl hover:ring-2 hover:ring-primary hover:ring-offset-2 hover:ring-offset-base-100`}>
-            <div className="absolute inset-0 z-0"><ImageWithFallback src={heroItem.backdrop || heroItem.image} alt={heroItem.title} className="w-full h-full object-cover grayscale-[20%] group-hover:grayscale-0 transition-transform duration-700 group-hover:scale-105 opacity-60 group-hover:opacity-80" /></div>
-            <div className={`absolute top-0 right-0 w-full h-1 ${colors.bg} opacity-50 group-hover:opacity-100 transition-opacity z-20`}></div>
-            <div className={`absolute top-0 left-0 bg-base-100/90 text-base-content font-black font-mono px-2 py-0.5 text-[10px] sm:text-xs border-r border-b border-base-300 z-10 shadow-sm`}><span className="w-1.5 h-1.5 bg-black rounded-full animate-pulse"></span> #1</div>
-            <div className="relative z-20 flex flex-col gap-1 sm:gap-2 mt-auto">
-              <h3 className="text-lg sm:text-2xl md:text-3xl font-black font-sans uppercase tracking-tight text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] group-hover:text-primary transition-colors line-clamp-2 leading-tight">{heroItem.title}</h3>
-              <div className="flex items-center gap-3 text-[9px] sm:text-[10px] font-mono font-bold text-white/60 uppercase tracking-widest sm:mt-2 drop-shadow-md">
-                <span className="flex items-center gap-1"><Star className="w-3 h-3 text-warning fill-warning" /> {heroItem.apiRating}</span>
-                <span>{heroItem.year}</span>
-              </div>
-            </div>
-          </Link>
-
-          {/* Standard Items */}
-          {standardItems.map((item, i) => (
-            <CarouselCard key={item.id} item={item} type={type} rank={i + 2} />
-          ))}
-        </div>
-
-        <button onClick={() => scroll('right')} className="absolute right-2 top-1/2 -translate-y-[calc(50%+8px)] z-40 bg-base-100/90 hover:bg-primary text-base-content hover:text-primary-content w-10 h-10 items-center justify-center hidden md:group-hover/carousel:flex backdrop-blur-md transition-all border border-base-300 shadow-2xl rounded-full">
-          <ChevronRight className="w-6 h-6" />
-        </button>
-      </div>
-    </section>
-  );
-};
-
-/* -------------------------------------------------------------------------- */
-/* FUTURISTIC CAROUSEL SECTION (NO SCROLLBARS)                                */
-/* -------------------------------------------------------------------------- */
 const CarouselSection = ({ title, icon, items, type, showRank = false }) => {
   const scrollRef = useRef(null);
+  const [limit, setLimit] = useState(15);
   if (!items || items.length === 0) return null;
+
+  const visibleItems = items.slice(0, limit);
+  const hasMore = limit < items.length;
 
   const scroll = (direction) => {
     if (scrollRef.current) {
@@ -536,9 +394,22 @@ const CarouselSection = ({ title, icon, items, type, showRank = false }) => {
           <ChevronLeft className="w-6 h-6" />
         </button>
 
-        {/* Hide Scrollbar via Tailwind arbitrarily-injected CSS */}
         <div ref={scrollRef} className="flex overflow-x-auto gap-2 sm:gap-4 snap-x pb-4 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
-          {items.map((item, i) => <CarouselCard key={item.id} item={item} type={type} rank={showRank ? i + 1 : null} />)}
+          {visibleItems.map((item, i) => <CarouselCard key={item.uniqueKey || item.id || i} item={item} type={type} rank={showRank ? i + 1 : null} />)}
+          
+          {hasMore && (
+            <div 
+              onClick={() => { setLimit(l => l + 15); setTimeout(() => scroll('right'), 100); }}
+              className="group flex-shrink-0 w-[calc(33.333%-0.34rem)] sm:w-36 md:w-44 flex flex-col cursor-pointer snap-start relative bg-base-200/50 hover:bg-base-200 border-y border-r border-base-300 border-l-4 border-l-transparent hover:border-l-primary transition-all duration-200"
+            >
+              <div className="flex flex-col items-center justify-center h-full min-h-[200px] gap-3 text-base-content/50 group-hover:text-primary transition-colors">
+                <div className="w-10 h-10 rounded-full bg-base-100 border border-base-300 flex items-center justify-center shadow-sm group-hover:shadow-md transition-all">
+                  <ChevronRight className="w-5 h-5" />
+                </div>
+                <span className="font-mono font-bold text-[10px] uppercase tracking-widest">Load More</span>
+              </div>
+            </div>
+          )}
         </div>
 
         <button onClick={() => scroll('right')} className="absolute right-2 top-1/2 -translate-y-[calc(50%+8px)] z-40 bg-base-100/90 hover:bg-primary text-base-content hover:text-primary-content w-10 h-10 items-center justify-center hidden md:group-hover/carousel:flex backdrop-blur-md transition-all border border-base-300 shadow-2xl rounded-full">
@@ -550,12 +421,15 @@ const CarouselSection = ({ title, icon, items, type, showRank = false }) => {
 };
 
 const CarouselCard = ({ item, type, rank }) => {
-  if (!item) return null; // Prevent render crashes if cache is corrupted
+  if (!item) return null;
   const colors = getMediaTypeColors(type);
   const displayRating = item.apiRating || item.rating;
+  const isClickable = type !== 'comics';
+  const Wrapper = isClickable ? Link : 'div';
+  const wrapperProps = isClickable ? { to: `/media/${type}/${item.id}`, state: { previewData: item } } : {};
   
   return (
-    <Link to={`/media/${type}/${item.id}`} state={{ previewData: item }} className={`group flex-shrink-0 w-[calc(33.333%-0.34rem)] sm:w-36 md:w-44 flex flex-col cursor-pointer snap-start relative bg-base-100 border-y border-r border-base-300 border-l-4 border-l-transparent ${colors.hoverBorder} transition-all duration-200 hover:shadow-md h-full`}>
+    <Wrapper {...wrapperProps} className={`group flex-shrink-0 w-[calc(33.333%-0.34rem)] sm:w-36 md:w-44 flex flex-col ${isClickable ? 'cursor-pointer' : 'cursor-default'} snap-start relative bg-base-100 border-y border-r border-base-300 border-l-4 border-l-transparent ${colors.hoverBorder} transition-all duration-200 hover:shadow-md h-full`}>
       <figure className="relative aspect-[2/3] w-full overflow-hidden bg-base-200 border-b border-base-300">
          <ImageWithFallback src={item.image} alt={item.title} className="grayscale-[20%] group-hover:grayscale-0 object-cover w-full h-full" />
          {rank && (
@@ -572,6 +446,6 @@ const CarouselCard = ({ item, type, rank }) => {
           {Number(displayRating) > 0 && <div className="flex items-center gap-1 text-[9px] sm:text-[10px] font-bold text-base-content shrink-0 ml-2"><Star className="w-3 h-3 text-warning fill-warning" /><span>{displayRating}</span></div>}
         </div>
       </div>
-    </Link>
+    </Wrapper>
   );
 };

@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { useMediaStore, useUIStore } from '../store/useMediaStore';
 import { MediaCard, MediaListRow, StarRating, getMediaTypeColors, SectionWrapper, TextBlockSkeleton, PillSkeleton, MetaItem, EpisodeCard, ImageWithFallback, getSubtype, CreativeTeamSection, UserActivitySection, GalleryAndLinks, ComicIssuesSection, formatFancyDate, getDynamicStatusLabel, getStatusColor, stripHtml, resolveMediaImage } from '../components/UI';
-import { Star, ArrowLeft, Loader2, Filter, PlayCircle, X, ExternalLink, ChevronLeft, ChevronRight, Edit3, Plus, ChevronDown, ChevronUp, Download, LayoutGrid, List } from 'lucide-react';
+import { Star, ArrowLeft, Loader2, Filter, PlayCircle, X, ExternalLink, ChevronLeft, ChevronRight, Edit3, Plus, ChevronDown, ChevronUp, Download, LayoutGrid, List, Compass } from 'lucide-react';
 import { apiRegistry } from '../services/apiRegistry';
 import { processDetailRaw } from '../utils/normalizers';
 import { NotFound } from './NotFound';
@@ -60,14 +60,22 @@ export const Dashboard = () => {
             <h2 className="text-sm font-black uppercase tracking-widest text-info mb-1">Guest Mode Playground</h2>
             <p className="text-xs font-mono text-base-content/70">Your local library is empty. You can populate it with 40 random demo entries to safely test the dashboard, library filters and diary logs (located in the search bar). Or you can search for stuff yourself, add to library, log and test functionality without the random demo entries. To clear this data, go to Settings in the top right menu. These entries will clear upon logging out but will remain here until you clear your cache.</p>
           </div>
-          <button
-            onClick={() => populateDemoData(useMediaStore.getState(), setPopLog, setIsPopulating)}
-            disabled={isPopulating}
-            className="flex items-center justify-center h-8 px-3 bg-transparent border border-info text-info hover:bg-info hover:text-info-content rounded-none appearance-none font-mono text-xs uppercase tracking-widest gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isPopulating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-            Populate Demo Data
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <Link
+              to="/discovery"
+              className="flex items-center justify-center h-8 px-4 bg-primary text-primary-content hover:bg-primary/90 rounded-none appearance-none font-mono text-xs font-bold uppercase tracking-widest gap-2 transition-colors shadow-md shadow-primary/20"
+            >
+              <Compass className="w-4 h-4" /> Go to Discovery Section
+            </Link>
+            <button
+              onClick={() => populateDemoData(useMediaStore.getState(), setPopLog, setIsPopulating)}
+              disabled={isPopulating}
+              className="flex items-center justify-center h-8 px-3 bg-transparent border border-info text-info hover:bg-info hover:text-info-content rounded-none appearance-none font-mono text-xs uppercase tracking-widest gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isPopulating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+              Populate Demo Data
+            </button>
+          </div>
           {popLog && (
             <pre className="text-[10px] font-mono bg-base-300 p-3 max-h-40 overflow-y-auto whitespace-pre-wrap w-full text-left">
               {popLog}
@@ -163,7 +171,10 @@ export const DetailView = () => {
   
   if (!VALID_CATEGORIES.includes(type)) return <NotFound />;
   
-  const storeItem = useMediaStore((state) => state.media[type]?.find(m => String(m.id) === String(id)));
+  const storeItem = useMediaStore((state) => state.media[type]?.find(m => 
+    String(m.id) === String(id) || 
+    (type === 'comics' && String(id).startsWith('series_') && String(m.apiData?.raw?.id) === String(id).replace('series_', ''))
+  ));
   const addMediaItem = useMediaStore((state) => state.addMediaItem);
   const toggleIssueRead = useMediaStore((state) => state.toggleIssueRead);
   const setGlobalLightbox = useMediaStore((state) => state.setGlobalLightbox);

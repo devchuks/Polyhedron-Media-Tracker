@@ -1,6 +1,6 @@
 # `Project Polyhedron` - Universal Media Tracking Dashboard
 
-**Live Demo:** Project Polyhedron
+**Live Demo:** [https://project-polyhedron.netlify.app](https://project-polyhedron.netlify.app)
 
 Polyhedron is a unified, multi-faceted media tracking dashboard. It allows users to search, log, and track their progress across a massive variety of entertainment mediums in a single interface. 
 
@@ -14,7 +14,7 @@ Originally a Vanilla JS prototype, Polyhedron is now a robust, full-stack React 
 *   **Cloud Sync & Local Storage:** "Admin" users securely sync their libraries to a Supabase PostgreSQL database in real-time, while "Guest" mode safely persists collections locally via IndexedDB.
 
 ## 🔌 Integrated APIs (via Supabase Edge Functions)
-To securely manage API keys and bypass browser CORS limitations, all external requests are proxied through secure Deno Edge Functions:
+To securely manage API keys and bypass browser CORS limitations, most external requests are proxied through secure Deno Edge Functions:
 *   **TMDB API:** Movies and TV Shows.
 *   **IGDB API (Twitch):** Video Games.
 *   **AniList API (GraphQL):** Anime and Manga.

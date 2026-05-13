@@ -282,6 +282,9 @@ export const apiRegistry = {
           if (issueData?.series?.id) seriesId = issueData.series.id;
           else throw new Error('Could not resolve series from issue');
         }
+        if (typeof seriesId === 'string' && seriesId.startsWith('series_')) {
+          seriesId = seriesId.replace('series_', '');
+        }
         const seriesData = await fetchMetron(`/api/series/${seriesId}/`);
         if (seriesData && seriesData.id) {
           try {
