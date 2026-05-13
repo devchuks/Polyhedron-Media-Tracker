@@ -191,7 +191,6 @@ export const Sidebar = () => {
           <Link to="/anime" className={getNavClass('/anime')}><Star className="w-4 h-4 shrink-0" /> Anime</Link>
           <Link to="/manga" className={getNavClass('/manga')}><BookOpen className="w-4 h-4 shrink-0" /> Manga</Link>
           <Link to="/books" className={getNavClass('/books')}><Book className="w-4 h-4 shrink-0" /> Books</Link>
-          <Link to="/books" className={getNavClass('/books')}><Book className="w-4 h-4 shrink-0" /> Books</Link>
           <Link to="/comics" className={getNavClass('/comics')}><ImageIcon className="w-4 h-4 shrink-0" /> Comics</Link>
           <div className="px-6 py-3 mt-4 text-[9px] font-mono font-bold uppercase tracking-[0.2em] text-base-content/40 border-t border-base-300 shrink-0">Activity</div>
           <Link to="/diary" className={getNavClass('/diary')}><CalendarDays className="w-4 h-4 shrink-0" /> Diary</Link>
