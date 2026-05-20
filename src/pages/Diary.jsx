@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { useMediaStore } from '../store/useMediaStore';
 import { ImageWithFallback, getMediaTypeColors, formatFancyDate, resolveMediaImage } from '../components/UI';
 import { Link } from 'react-router-dom';
-import { Clock, Trash2, Edit3, Save, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Clock, Trash2, Edit3, Save, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 
 const ExpandableReview = ({ text }) => {
   const [expanded, setExpanded] = useState(false);
@@ -28,6 +28,7 @@ const ExpandableReview = ({ text }) => {
 
 export const Diary = () => {
   const { mediaLogs, media, removeDiaryLog, removeMediaItem, updateDiaryLog } = useMediaStore();
+  const isLoading = useMediaStore((state) => state.isLoading);
   const [editingId, setEditingId] = useState(null);
   const [editDate, setEditDate] = useState('');
   const [editNote, setEditNote] = useState('');
@@ -141,7 +142,11 @@ export const Diary = () => {
         </div>
       </header>
 
-      {groupKeys.length === 0 ? (
+      {isLoading ? (
+        <div className="w-full bg-base-100 border border-base-300 p-8 flex items-center justify-center text-[10px] font-mono text-base-content/50 uppercase tracking-widest gap-2 rounded-none">
+          <Loader2 className="w-4 h-4 animate-spin text-primary" /> Loading...
+        </div>
+      ) : groupKeys.length === 0 ? (
         <div className="w-full bg-base-100 border border-base-300 p-8 flex items-center justify-center text-[10px] font-mono text-base-content/40 uppercase tracking-widest rounded-none">No records found.</div>
       ) : (
         <div className="flex flex-col">
@@ -247,7 +252,7 @@ export const Diary = () => {
         </div>
       )}
 
-      {totalPages > 1 && (
+      {!isLoading && totalPages > 1 && (
         <div className="flex justify-between items-center mt-4 pt-4 border-t border-base-300 relative z-20">
           <button disabled={currentPage === 1} onClick={() => { setCurrentPage(p => p - 1); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="btn btn-sm btn-ghost rounded-none font-mono uppercase tracking-widest text-[10px]"><ChevronLeft className="w-4 h-4 mr-1" /> Prev</button>
           <span className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest">Page {currentPage} of {totalPages}</span>

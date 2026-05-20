@@ -9,6 +9,7 @@ import {
   normalizeIGDB,
 } from '../utils/normalizers';
 import { supabase } from './supabase';
+import { FunctionsHttpError } from '@supabase/supabase-js';
 
 const withRetry = async (fn, retries = 1, delay = 1000) => {
   try {
@@ -25,7 +26,20 @@ const withRetry = async (fn, retries = 1, delay = 1000) => {
 const invokeFunction = async (name, body) => {
   return withRetry(async () => {
     const { data, error } = await supabase.functions.invoke(name, { body });
-    if (error) throw error;
+    if (error) {
+      if (error instanceof FunctionsHttpError) {
+        const text = await error.context.text().catch(() => 'Unknown Edge Function Error');
+        let errorMessage;
+        try {
+          errorMessage = JSON.parse(text);
+        } catch {
+          errorMessage = { error: text };
+        }
+        console.error(`🔴 [${name} Edge Function] HTTP Error:`, errorMessage);
+        throw new Error(typeof errorMessage === 'string' ? errorMessage : JSON.stringify(errorMessage));
+      }
+      throw error;
+    }
     if (data?.error) throw new Error(data.error);
     return data;
   });
@@ -95,13 +109,13 @@ const sessionCache = {
 export const apiRegistry = {
   searchMovies: async (query, page = 1) => {
     try {
-      const data = await invokeFunction('tmdb', { path: `/search/movie?query=${encodeURIComponent(query)}&page=${page}` });
+      const data = await invokeFunction('tmdb', { path: '/search/movie', query: { query, page } });
       return { results: data.results.map((item) => normalizeTMDB(item, 'movies')), totalPages: data.total_pages || 1 };
     } catch (err) { reportApiError(err, 'TMDB (Movies)'); return { results: [], totalPages: 1 }; }
   },
   searchTV: async (query, page = 1) => {
     try {
-      const data = await invokeFunction('tmdb', { path: `/search/tv?query=${encodeURIComponent(query)}&page=${page}` });
+      const data = await invokeFunction('tmdb', { path: '/search/tv', query: { query, page } });
       return { results: data.results.map((item) => normalizeTMDB(item, 'tv')), totalPages: data.total_pages || 1 };
     } catch (err) { reportApiError(err, 'TMDB (TV)'); return { results: [], totalPages: 1 }; }
   },
@@ -256,8 +270,9 @@ export const apiRegistry = {
 
     try {
       let result = null;
-      if (type === 'movies') result = await invokeFunction('tmdb', { path: `/movie/${cleanId}?append_to_response=credits,watch/providers,images,videos&include_image_language=en,null` });
-      else if (type === 'tv') result = await invokeFunction('tmdb', { path: `/tv/${cleanId}?append_to_response=credits,watch/providers,images,videos&include_image_language=en,null` });
+      const queryParams = { append_to_response: 'credits,watch/providers,images,videos', include_image_language: 'en,null' };
+      if (type === 'movies') result = await invokeFunction('tmdb', { path: `/movie/${cleanId}`, query: queryParams });
+      else if (type === 'tv') result = await invokeFunction('tmdb', { path: `/tv/${cleanId}`, query: queryParams });
       else if (type === 'games') {
         const realId = String(cleanId).replace('igdb_', '');
         const data = await invokeFunction('igdb', { endpoint: 'games', query: `fields name, slug, cover.image_id, genres.name, first_release_date, summary, storyline, total_rating, url, websites.type, websites.url, platforms.name, artworks.image_id, screenshots.image_id, videos.video_id, involved_companies.company.name, involved_companies.developer, involved_companies.publisher, collections.name, collections.games.name, collections.games.cover.image_id, collections.games.first_release_date, game_status; where id = ${realId};` });
@@ -319,8 +334,8 @@ export const apiRegistry = {
 
     try {
       let result = [];
-      if (type === 'movies') result = (await invokeFunction('tmdb', { path: `/movie/${id}/recommendations?page=1` })).results.slice(0, 6).map(i => normalizeTMDB(i, 'movies'));
-      else if (type === 'tv') result = (await invokeFunction('tmdb', { path: `/tv/${id}/recommendations?page=1` })).results.slice(0, 6).map(i => normalizeTMDB(i, 'tv'));
+      if (type === 'movies') result = (await invokeFunction('tmdb', { path: `/movie/${id}/recommendations`, query: { page: 1 } })).results.slice(0, 6).map(i => normalizeTMDB(i, 'movies'));
+      else if (type === 'tv') result = (await invokeFunction('tmdb', { path: `/tv/${id}/recommendations`, query: { page: 1 } })).results.slice(0, 6).map(i => normalizeTMDB(i, 'tv'));
       else if (type === 'games') {
         const realId = String(id).replace('igdb_', '');
         const data = await invokeFunction('igdb', { endpoint: 'games', query: `fields similar_games.name, similar_games.cover.image_id, similar_games.first_release_date, similar_games.genres.name, similar_games.slug, similar_games.summary, similar_games.total_rating, similar_games.url; where id = ${realId};` });

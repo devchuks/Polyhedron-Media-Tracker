@@ -3,7 +3,7 @@ import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { useMediaStore, useUIStore } from '../store/useMediaStore';
 import { MediaCard, MediaListRow, StarRating, getMediaTypeColors, SectionWrapper, TextBlockSkeleton, PillSkeleton, MetaItem, EpisodeCard, ImageWithFallback, getSubtype, CreativeTeamSection, UserActivitySection, GalleryAndLinks, ComicIssuesSection, formatFancyDate, getDynamicStatusLabel, getStatusColor, stripHtml, resolveMediaImage } from '../components/UI';
-import { Star, ArrowLeft, Loader2, Filter, PlayCircle, X, ExternalLink, ChevronLeft, ChevronRight, Edit3, Plus, ChevronDown, ChevronUp, Download, LayoutGrid, List, Compass } from 'lucide-react';
+import { Star, ArrowLeft, Loader2, Filter, PlayCircle, X, ExternalLink, ChevronLeft, ChevronRight, Edit3, Plus, ChevronDown, ChevronUp, Download, LayoutGrid, List, Compass, Search } from 'lucide-react';
 import { apiRegistry } from '../services/apiRegistry';
 import { processDetailRaw } from '../utils/normalizers';
 import { NotFound } from './NotFound';
@@ -25,13 +25,18 @@ const isFutureRelease = (item) => {
   return !isNaN(yearNum) && yearNum > new Date().getFullYear();
 };
 
-const DashSection = ({ title, items }) => (
+const DashSection = ({ title, items, isLoading, headerRight }) => (
   <section className="mb-4">
-    <div className="flex items-center justify-between border-b border-base-300 pb-2 mb-4">
+    <div className="flex flex-col sm:flex-row items-start sm:items-end justify-between border-b border-base-300 pb-2 mb-4 gap-3">
       <h2 className="text-sm font-black uppercase tracking-widest font-sans text-base-content">{title}</h2>
+      {headerRight && <div className="w-full sm:w-auto">{headerRight}</div>}
     </div>
-    {items.length > 0 ? (
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">{items.map(item => <MediaCard key={item.id} item={item} />)}</div>
+    {isLoading ? (
+      <div className="w-full bg-base-100 border border-base-300 p-8 flex items-center justify-center text-[10px] font-mono text-base-content/50 uppercase tracking-widest gap-2">
+        <Loader2 className="w-4 h-4 animate-spin text-primary" /> Loading...
+      </div>
+    ) : items.length > 0 ? (
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-7 min-[2000px]:grid-cols-8 gap-3">{items.map(item => <MediaCard key={item.id} item={item} />)}</div>
     ) : (
       <div className="w-full bg-base-100 border border-base-300 p-8 flex items-center justify-center text-[10px] font-mono text-base-content/40 uppercase tracking-widest">No records found.</div>
     )}
@@ -41,19 +46,55 @@ const DashSection = ({ title, items }) => (
 export const Dashboard = () => {
   const authMode = useMediaStore((state) => state.authMode);
   const media = useMediaStore((state) => state.media);
+  const isLoading = useMediaStore((state) => state.isLoading);
   
+  const [searchQuery, setSearchQuery] = useState('');
   const { recentlyAddedItems, allItemsLength } = React.useMemo(() => {
     const allItems = Object.values(media).flat();
     const getAddedTime = (item) => item.addedAt || item.dateAdded || 0;
-    const recent = allItems.sort((a, b) => getAddedTime(b) - getAddedTime(a)).slice(0, 10);
+    
+    let filtered = allItems;
+    if (searchQuery.trim()) {
+      const lowerQ = searchQuery.toLowerCase();
+      filtered = allItems.filter(item => item.title?.toLowerCase().includes(lowerQ));
+    }
+    
+    const recent = filtered.sort((a, b) => getAddedTime(b) - getAddedTime(a));
     return { recentlyAddedItems: recent, allItemsLength: allItems.length };
-  }, [media]);
+  }, [media, searchQuery]);
   
   const [isPopulating, setIsPopulating] = useState(false);
   const [popLog, setPopLog] = useState('');
 
+  const [itemsPerPage, setItemsPerPage] = useState(() => {
+    const w = typeof window !== 'undefined' ? window.innerWidth : 1024;
+    if (w >= 2000) return 24;
+    if (w >= 1536) return 21;
+    if (w >= 1280) return 15;
+    if (w >= 1024) return 12;
+    if (w >= 768) return 9;
+    return 6;
+  });
+  const [currentPage, setCurrentPage] = useState(1);
+  
+  useEffect(() => {
+    const handleResize = () => {
+      const w = window.innerWidth;
+      setItemsPerPage(w >= 2000 ? 24 : w >= 1536 ? 21 : w >= 1280 ? 15 : w >= 1024 ? 12 : w >= 768 ? 9 : 6);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => { window.scrollTo({ top: 0, behavior: 'smooth' }); }, [currentPage]);
+  useEffect(() => { setCurrentPage(1); }, [searchQuery]);
+  
+  const totalPages = Math.ceil(recentlyAddedItems.length / itemsPerPage) || 1;
+  useEffect(() => { if (currentPage > totalPages) setCurrentPage(totalPages); }, [totalPages, currentPage]);
+  const paginatedItems = recentlyAddedItems.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
   return (
-    <div className="flex flex-col gap-6 animate-in fade-in duration-300 min-h-screen">
+    <div className="flex flex-col gap-6 animate-in fade-in duration-300 min-h-screen pb-10">
       {authMode === 'guest' && (allItemsLength === 0 || isPopulating) && (
         <div className="bg-info/5 border border-info/20 p-6 flex flex-col gap-4 items-start">
           <div>
@@ -83,7 +124,37 @@ export const Dashboard = () => {
           )}
         </div>
       )}
-      <DashSection title="Recently Added" items={recentlyAddedItems} />
+      <DashSection 
+        title={searchQuery.trim() ? "Search Results" : "Recently Added"} 
+        items={paginatedItems} 
+        isLoading={isLoading || isPopulating} 
+        headerRight={
+          <div className="relative w-full sm:w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-base-content/50" />
+            <input 
+              type="text" 
+              placeholder="Search library..." 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full h-8 pl-9 pr-8 bg-base-100 border border-base-300 focus:border-primary focus:outline-none rounded-none text-xs font-mono placeholder:text-base-content/40 transition-colors appearance-none"
+            />
+            {searchQuery && (
+              <button onClick={() => setSearchQuery('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/50 hover:text-base-content appearance-none">
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+        }
+      />
+      
+      {!(isLoading || isPopulating) && totalPages > 1 && (
+        <div className="flex justify-between items-center mt-2 pt-4 border-t border-base-300">
+          <button disabled={currentPage === 1} onClick={() => { setCurrentPage(p => p - 1); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="flex items-center justify-center h-11 sm:h-8 px-3 bg-transparent hover:bg-base-300 text-base-content hover:text-base-content rounded-none appearance-none font-mono text-[10px] uppercase tracking-widest disabled:opacity-30 disabled:cursor-not-allowed transition-colors"><ChevronLeft className="w-4 h-4 mr-1" /> Prev</button>
+          <span className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest">Page {currentPage} of {totalPages}</span>
+          <button disabled={currentPage === totalPages} onClick={() => { setCurrentPage(p => p + 1); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="flex items-center justify-center h-11 sm:h-8 px-3 bg-transparent hover:bg-base-300 text-base-content hover:text-base-content rounded-none appearance-none font-mono text-[10px] uppercase tracking-widest disabled:opacity-30 disabled:cursor-not-allowed transition-colors">Next <ChevronRight className="w-4 h-4 ml-1" /></button>
+        </div>
+      )}
+      
     </div>
   );
 };
@@ -94,8 +165,10 @@ export const MediaCategory = () => {
   if (!VALID_CATEGORIES.includes(category)) return <NotFound />;
   
   const items = useMediaStore((state) => state.media[category]) || [];
+  const isLoading = useMediaStore((state) => state.isLoading);
   const viewMode = useUIStore((state) => state.viewMode);
   const setViewMode = useUIStore((state) => state.setViewMode);
+  const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [sort, setSort] = useState('dateAdded');
   
@@ -103,42 +176,113 @@ export const MediaCategory = () => {
   const [currentPage, setCurrentPage] = useState(1);
   
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'smooth' }); }, [currentPage]);
-  useEffect(() => { setCurrentPage(1); }, [category, filter, sort]);
+  useEffect(() => { setCurrentPage(1); }, [category, filter, sort, searchQuery]);
+
+  const getYear = (i) => {
+    if (i.year) return parseInt(i.year);
+    if (i.apiData?.year) return parseInt(i.apiData.year);
+    const raw = i.apiData?.raw || {};
+    if (raw.release_date) return parseInt(raw.release_date.substring(0,4));
+    if (raw.first_air_date) return parseInt(raw.first_air_date.substring(0,4));
+    if (raw.startDate?.year) return parseInt(raw.startDate.year);
+    if (raw.first_release_date) return new Date(raw.first_release_date * 1000).getFullYear();
+    if (raw.year_began) return parseInt(raw.year_began);
+    return 0;
+  };
 
   let displayItems = items.filter(item => filter === 'all' || item.status === filter);
+
+  if (searchQuery.trim()) {
+    const lowerQ = searchQuery.toLowerCase();
+    displayItems = displayItems.filter(item => item.title?.toLowerCase().includes(lowerQ));
+  }
+
   if (sort === 'dateAdded') displayItems.sort((a,b) => (b.addedAt || b.dateAdded || 0) - (a.addedAt || a.dateAdded || 0));
   else if (sort === 'dateStarted') displayItems.sort((a,b) => (b.dateStarted || 0) - (a.dateStarted || 0));
   else if (sort === 'dateFinished') displayItems.sort((a,b) => (b.dateCompleted || 0) - (a.dateCompleted || 0));
+  else if (sort === 'releaseYear') displayItems.sort((a,b) => getYear(b) - getYear(a));
+  else if (sort === 'releaseYearAsc') displayItems.sort((a,b) => getYear(a) - getYear(b));
   else if (sort === 'rating') displayItems.sort((a,b) => b.rating - a.rating);
   else if (sort === 'title') displayItems.sort((a,b) => a.title.localeCompare(b.title));
+
+  const sortLabels = {
+    dateAdded: 'Date Added',
+    dateStarted: 'Date Started',
+    dateFinished: 'Date Finished',
+    releaseYear: 'Year (New)',
+    releaseYearAsc: 'Year (Old)',
+    rating: 'Rating',
+    title: 'Title (A-Z)'
+  };
 
   const totalPages = Math.ceil(displayItems.length / ITEMS_PER_PAGE) || 1;
   const paginatedItems = displayItems.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
   return (
     <div className="flex flex-col gap-4 animate-in fade-in duration-300 pb-10 min-h-screen text-base-content">
-      <header className="border-b border-base-300 pb-3 flex flex-col sm:flex-row sm:items-end justify-between gap-3">
-        <div><h1 className="text-2xl font-black uppercase tracking-widest font-sans">{getSubtype(category)}</h1><p className="text-[10px] font-mono text-base-content/50 uppercase tracking-widest mt-1">{displayItems.length} found</p></div>
-        <div className="flex flex-row items-center gap-2 w-full sm:w-auto mt-3 sm:mt-0">
-          <div className="flex bg-base-100 border border-base-300 rounded-none h-8">
-            <button onClick={() => setViewMode('grid')} className={`flex-1 px-3 ${viewMode === 'grid' ? 'bg-primary text-primary-content' : 'text-base-content/50 hover:bg-base-200'}`}><LayoutGrid className="w-4 h-4"/></button>
-            <button onClick={() => setViewMode('list')} className={`flex-1 px-3 ${viewMode === 'list' ? 'bg-primary text-primary-content' : 'text-base-content/50 hover:bg-base-200'}`}><List className="w-4 h-4"/></button>
+      <header className="border-b border-base-300 pb-3 flex flex-col sm:flex-row sm:items-end justify-between gap-3 sm:gap-4">
+        <div className="flex-1 min-w-0">
+          <h1 className="text-2xl font-black uppercase tracking-widest font-sans">{getSubtype(category)}</h1>
+          <p className="text-[10px] font-mono text-base-content/50 uppercase tracking-widest mt-1">
+            {searchQuery.trim() ? `${displayItems.length} results for "${searchQuery}"` : `${displayItems.length} entries`}
+          </p>
+        </div>
+        
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto shrink-0">
+          <div className="relative w-full sm:w-48">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-base-content/50 pointer-events-none" />
+            <input 
+              type="text" 
+              placeholder="Search..." 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full h-8 pl-9 pr-8 bg-base-100 border border-base-300 focus:border-primary focus:outline-none rounded-none text-xs font-mono placeholder:text-base-content/40 transition-colors appearance-none"
+            />
+            {searchQuery && (
+              <button 
+                onClick={() => setSearchQuery('')} 
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/50 hover:text-base-content appearance-none"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
           </div>
-          <div className="dropdown dropdown-bottom sm:dropdown-end flex-1 sm:flex-none min-w-0">
-            <div role="button" tabIndex={0} className="w-full h-8 rounded-none border border-base-300 bg-base-100 hover:bg-base-200 hover:border-primary text-[10px] font-mono uppercase font-bold tracking-widest flex px-2 sm:px-3 justify-between items-center cursor-pointer appearance-none transition-colors"><div className="flex items-center min-w-0"><Filter className="w-3 h-3 mr-1 shrink-0" /> <span className="truncate">{filter === 'all' ? 'Filter' : 'Filtered'}</span></div></div>
-            <ul tabIndex={0} className="dropdown-content z-50 menu p-2 shadow-xl bg-base-100 border border-base-300 w-52 mt-1 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest"><li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setFilter('all'); document.activeElement.blur(); }}>All Entries</a></li>{['planned', 'in progress', 'completed', 'dropped'].map(s => (<li key={s}><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setFilter(s); document.activeElement.blur(); }}>{s}</a></li>))}</ul>
-          </div>
-          <div className="dropdown dropdown-bottom sm:dropdown-end flex-1 sm:flex-none min-w-0">
-            <div role="button" tabIndex={0} className="w-full h-8 rounded-none border border-base-300 bg-base-100 hover:bg-base-200 hover:border-primary text-[10px] font-mono uppercase font-bold tracking-widest flex px-2 sm:px-3 justify-between items-center cursor-pointer appearance-none transition-colors"><span className="truncate">Sort: {sort}</span></div>
-            <ul tabIndex={0} className="dropdown-content z-50 menu p-2 shadow-xl bg-base-100 border border-base-300 w-52 mt-1 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest"><li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setSort('dateAdded'); document.activeElement.blur(); }}>Date Added</a></li><li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setSort('rating'); document.activeElement.blur(); }}>Rating</a></li><li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setSort('title'); document.activeElement.blur(); }}>Title (A-Z)</a></li></ul>
+
+          <div className="flex items-center gap-2">
+            <div className="flex bg-base-100 border border-base-300 rounded-none h-8">
+              <button onClick={() => setViewMode('grid')} className={`flex-1 px-3 ${viewMode === 'grid' ? 'bg-primary text-primary-content' : 'text-base-content/50 hover:bg-base-200'}`}><LayoutGrid className="w-4 h-4"/></button>
+              <button onClick={() => setViewMode('list')} className={`flex-1 px-3 ${viewMode === 'list' ? 'bg-primary text-primary-content' : 'text-base-content/50 hover:bg-base-200'}`}><List className="w-4 h-4"/></button>
+            </div>
+            <div className="dropdown dropdown-bottom sm:dropdown-end flex-1 sm:flex-none min-w-0">
+              <div role="button" tabIndex={0} className="w-full h-8 rounded-none border border-base-300 bg-base-100 hover:bg-base-200 hover:border-primary text-[10px] font-mono uppercase font-bold tracking-widest flex px-2 sm:px-3 justify-between items-center cursor-pointer appearance-none transition-colors"><div className="flex items-center min-w-0"><Filter className="w-3 h-3 mr-1 shrink-0" /> <span className="truncate">{filter === 'all' ? 'Filter' : 'Filtered'}</span></div></div>
+              <ul tabIndex={0} className="dropdown-content z-50 menu p-2 shadow-xl bg-base-100 border border-base-300 w-52 mt-1 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest"><li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setFilter('all'); document.activeElement.blur(); }}>All Entries</a></li>{['planned', 'in progress', 'completed', 'dropped'].map(s => (<li key={s}><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setFilter(s); document.activeElement.blur(); }}>{s}</a></li>))}</ul>
+            </div>
+            <div className="dropdown dropdown-bottom sm:dropdown-end flex-1 sm:flex-none min-w-0">
+              <div role="button" tabIndex={0} className="w-full h-8 rounded-none border border-base-300 bg-base-100 hover:bg-base-200 hover:border-primary text-[10px] font-mono uppercase font-bold tracking-widest flex px-2 sm:px-3 justify-between items-center cursor-pointer appearance-none transition-colors"><span className="truncate">Sort: {sortLabels[sort] || 'Date Added'}</span></div>
+              <ul tabIndex={0} className="dropdown-content z-50 menu p-2 shadow-xl bg-base-100 border border-base-300 w-52 mt-1 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest">
+                <li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setSort('dateAdded'); document.activeElement.blur(); }}>Date Added</a></li>
+                <li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setSort('dateStarted'); document.activeElement.blur(); }}>Date Started</a></li>
+                <li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setSort('dateFinished'); document.activeElement.blur(); }}>Date Finished</a></li>
+                <li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setSort('releaseYear'); document.activeElement.blur(); }}>Release Year (Newest)</a></li>
+                <li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setSort('releaseYearAsc'); document.activeElement.blur(); }}>Release Year (Oldest)</a></li>
+                <li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setSort('rating'); document.activeElement.blur(); }}>Rating</a></li>
+                <li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setSort('title'); document.activeElement.blur(); }}>Title (A-Z)</a></li>
+              </ul>
+            </div>
           </div>
         </div>
       </header>
 
-      {displayItems.length > 0 ? (
+      {isLoading ? (
+        <div className="w-full min-h-[40vh] bg-base-100 flex items-center justify-center border border-base-300">
+          <div className="text-[10px] font-mono font-bold text-base-content/50 tracking-[0.3em] uppercase flex items-center gap-2">
+            <Loader2 className="w-4 h-4 animate-spin text-primary" /> Loading...
+          </div>
+        </div>
+      ) : displayItems.length > 0 ? (
         <>
           {viewMode === 'grid' ? (
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3" style={{ gridAutoRows: 'min-content' }}>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-7 min-[2000px]:grid-cols-8 gap-3" style={{ gridAutoRows: 'min-content' }}>
               {paginatedItems.map(item => <MediaCard key={item.id} item={item} />)}
             </div>
           ) : (
@@ -529,8 +673,8 @@ export const DetailView = () => {
             <SectionWrapper>
               <div className="flex flex-col gap-3">
                 <h3 className="text-lg font-black uppercase tracking-widest font-sans">{type === 'games' ? 'Suggested' : 'Recommended'}</h3>
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5 gap-3" style={{ gridAutoRows: 'min-content' }}>
-                  {loadingRecs ? Array.from({ length: 5 }).map((_, idx) => <div key={idx} className="aspect-[2/3] w-full bg-base-300 animate-pulse border border-base-300"></div>) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-7 min-[2000px]:grid-cols-8 gap-3" style={{ gridAutoRows: 'min-content' }}>
+                  {loadingRecs ? Array.from({ length: 8 }).map((_, idx) => <div key={idx} className="aspect-[2/3] w-full bg-base-300 animate-pulse border border-base-300"></div>) : (
                     recs.map(rec => (
                       <div key={rec.id} onClick={() => navigate(`/media/${type}/${rec.id}`, { state: { previewData: rec } })} className="border border-base-300 bg-base-100 hover:border-primary transition-colors flex flex-col group cursor-pointer h-full">
                         <figure className="aspect-[2/3] w-full bg-base-200 overflow-hidden relative shrink-0"><ImageWithFallback src={rec.image} alt={rec.title} className="grayscale-[20%] group-hover:grayscale-0 w-full h-full object-cover" /></figure>

@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { ImageWithFallback, getMediaTypeColors, getSubtype, stripHtml } from '../components/UI';
 import { supabase } from '../services/supabase';
 import { useMediaStore } from '../store/useMediaStore';
+import { FunctionsHttpError } from '@supabase/supabase-js';
 
 const TABS = ['movies', 'tv', 'games', 'anime', 'manga', 'comics'];
 
@@ -63,26 +64,28 @@ export const Discovery = () => {
         let data;
         if (activeTab === 'movies' || activeTab === 'tv') {
           const tmdbType = activeTab === 'movies' ? 'movie' : 'tv';
-          const fetchTMDB = async (endpoint) => {
+          const fetchTMDB = async (endpoint, page = 1) => {
             try {
-              const sep = endpoint.includes('?') ? '&' : '?';
-              // Fetch 2 pages at once so the Load More button has 40 items to reveal
-              const [res1, res2] = await Promise.all([
-                supabase.functions.invoke('tmdb', { body: { path: `${endpoint}${sep}page=1` } }),
-                supabase.functions.invoke('tmdb', { body: { path: `${endpoint}${sep}page=2` } })
-              ]);
-              if (res1.error || res2.error) throw res1.error || res2.error;
-              return { results: [...(res1.data?.results || []), ...(res2.data?.results || [])] };
+              const res = await supabase.functions.invoke('tmdb', { body: { path: endpoint, query: { page } } });
+              if (res.error) throw res.error;
+              return { results: res.data?.results || [] };
             } catch (err) {
-              console.error("TMDB Fetch Error:", err);
+              if (err instanceof FunctionsHttpError) {
+                const text = await err.context.text().catch(() => 'Unable to read error text');
+                let errorData;
+                try { errorData = JSON.parse(text); } catch { errorData = { error: text }; }
+                console.error("TMDB Function HTTP Error:", errorData);
+              } else {
+                console.error("TMDB Fetch Error:", err);
+              }
               return { results: [] };
             }
           };
 
-          const [trending, upcoming, topRated] = await Promise.all([
-            fetchTMDB(`/trending/${tmdbType}/week`),
-            fetchTMDB(activeTab === 'movies' ? `/movie/upcoming` : `/tv/on_the_air`),
-            fetchTMDB(`/${tmdbType}/popular`)
+          const [trending, upcoming, popular] = await Promise.all([
+            fetchTMDB(`/trending/${tmdbType}/week`, 1),
+            fetchTMDB(activeTab === 'movies' ? `/movie/upcoming` : `/tv/on_the_air`, 1),
+            fetchTMDB(`/${tmdbType}/popular`, 1)
           ]);
 
           const normalize = (items) => (items || []).filter(i => i.poster_path).map(item => ({
@@ -98,7 +101,7 @@ export const Discovery = () => {
             apiData: { raw: item }
           }));
 
-          data = { trending: normalize(trending.results), upcoming: normalize(upcoming.results), topRated: normalize(topRated.results) };
+          data = { trending: normalize(trending.results), upcoming: normalize(upcoming.results), popular: normalize(popular.results) };
         } else if (activeTab === 'anime' || activeTab === 'manga') {
           const typeArg = activeTab === 'anime' ? 'ANIME' : 'MANGA';
           const fetchAniList = async (sort, status, useSeason = false, isNext = false) => {
@@ -141,7 +144,7 @@ export const Discovery = () => {
           };
 
           const isAnime = activeTab === 'anime';
-          const [trending, upcoming, topRated] = await Promise.all([
+          const [trending, upcoming, popular] = await Promise.all([
             fetchAniList('TRENDING_DESC'),
             fetchAniList('POPULARITY_DESC', 'NOT_YET_RELEASED', isAnime, true),
             isAnime ? fetchAniList('POPULARITY_DESC', null, true, false) : fetchAniList('POPULARITY_DESC')
@@ -160,7 +163,7 @@ export const Discovery = () => {
             apiData: { raw: item }
           }));
 
-          data = { trending: normalize(trending), upcoming: normalize(upcoming), topRated: normalize(topRated) };
+          data = { trending: normalize(trending), upcoming: normalize(upcoming), popular: normalize(popular) };
         } else if (activeTab === 'games') {
           const fetchIGDB = async (query) => {
             try {
@@ -171,14 +174,21 @@ export const Discovery = () => {
               if (data?.error || data?.message) throw new Error(data.error || data.message || JSON.stringify(data));
               return Array.isArray(data) ? data : data?.data || data?.results || [];
             } catch (err) {
-              console.error(`[IGDB Debug] CRITICAL FAILURE:`, err);
+              if (err instanceof FunctionsHttpError) {
+                const text = await err.context.text().catch(() => 'Unable to read error text');
+                let errorData;
+                try { errorData = JSON.parse(text); } catch { errorData = { error: text }; }
+                console.error("[IGDB Function HTTP Error]:", errorData);
+              } else {
+                console.error(`[IGDB Debug] CRITICAL FAILURE:`, err);
+              }
               return [];
             }
           };
 
           const now = Math.floor(Date.now() / 1000);
           const sixMonthsAgo = now - 15552000;
-          const [trending, upcoming, topRated] = await Promise.all([
+          const [trending, upcoming, popular] = await Promise.all([
             fetchIGDB(`fields id, name, first_release_date, total_rating, rating, summary, cover.image_id, artworks.image_id; where first_release_date >= ${sixMonthsAgo} & first_release_date <= ${now} & parent_game = null & total_rating_count > 0; sort total_rating_count desc; limit 40;`),
             fetchIGDB(`fields id, name, first_release_date, total_rating, rating, summary, cover.image_id, artworks.image_id; where first_release_date > ${now} & parent_game = null & hypes > 0; sort hypes desc; limit 40;`),
             fetchIGDB(`fields id, name, first_release_date, total_rating, rating, summary, cover.image_id, artworks.image_id; where total_rating_count > 500 & parent_game = null; sort total_rating desc; limit 40;`)
@@ -195,7 +205,7 @@ export const Discovery = () => {
             type: activeTab, apiData: { raw: item }
           }));
           
-          data = { trending: normalize(trending), upcoming: normalize(upcoming), topRated: normalize(topRated) };
+          data = { trending: normalize(trending), upcoming: normalize(upcoming), popular: normalize(popular) };
 } else if (activeTab === 'comics') {
           const fetchMetron = async (endpoint) => {
             try {
@@ -206,7 +216,14 @@ export const Discovery = () => {
               if (data?.error || data?.message) throw new Error(data.error || data.message || JSON.stringify(data));
               return Array.isArray(data) ? data : data?.results || data?.data || [];
             } catch (err) {
-              console.error("[Metron Debug] CRITICAL FAILURE:", err);
+              if (err instanceof FunctionsHttpError) {
+                const text = await err.context.text().catch(() => 'Unable to read error text');
+                let errorData;
+                try { errorData = JSON.parse(text); } catch { errorData = { error: text }; }
+                console.error("[Metron Function HTTP Error]:", errorData);
+              } else {
+                console.error("[Metron Debug] CRITICAL FAILURE:", err);
+              }
               return [];
             }
           };
@@ -241,7 +258,7 @@ export const Discovery = () => {
 
           const trending = await fetchMetron(`/issue/?store_date_range_after=${thisWeekStart}&store_date_range_before=${thisWeekEnd}&page_size=50`);
           const upcoming = await fetchMetron(`/issue/?store_date_range_after=${nextWeekStart}&store_date_range_before=${nextWeekEnd}&page_size=50`);
-          const topRated = await fetchMetron(`/issue/?store_date_range_after=${futureStart}&page_size=50`);
+          const popular = await fetchMetron(`/issue/?store_date_range_after=${futureStart}&page_size=50`);
 
           const normalizeIssues = (items) => {
             const valid = (items || []).filter(item => item.image && item.series);
@@ -274,9 +291,9 @@ export const Discovery = () => {
             });
           };
 
-          data = { trending: normalizeIssues(trending), upcoming: normalizeIssues(upcoming), topRated: normalizeIssues(topRated) };
+          data = { trending: normalizeIssues(trending), upcoming: normalizeIssues(upcoming), popular: normalizeIssues(popular) };
         } else {
-          data = { trending: [], upcoming: [], topRated: [] };
+          data = { trending: [], upcoming: [], popular: [] };
         }
         
         if (isMounted) setDiscoveryCache(activeTab, { ...data, _version: 1 });
@@ -291,7 +308,46 @@ export const Discovery = () => {
     return () => { isMounted = false; };
   }, [activeTab, setDiscoveryCache, refreshTrigger]);
 
-  const currentData = discoveryCache?.[activeTab]?.data || { trending: [], upcoming: [], topRated: [] };
+  const handleLoadMoreItems = async (categoryKey, page) => {
+    if (activeTab !== 'movies' && activeTab !== 'tv') return;
+
+    const tmdbType = activeTab === 'movies' ? 'movie' : 'tv';
+    let endpoint = '';
+    if (categoryKey === 'trending') endpoint = `/trending/${tmdbType}/week`;
+    else if (categoryKey === 'upcoming') endpoint = activeTab === 'movies' ? `/movie/upcoming` : `/tv/on_the_air`;
+    else if (categoryKey === 'popular') endpoint = `/${tmdbType}/popular`;
+
+    try {
+      const res = await supabase.functions.invoke('tmdb', { body: { path: endpoint, query: { page } } });
+      if (res.error) throw res.error;
+      const results = res.data?.results || [];
+
+      const newItems = results.filter(i => i.poster_path).map(item => ({
+        id: item.id,
+        title: item.title || item.name,
+        year: (item.release_date || item.first_air_date || 'TBA').substring(0, 4),
+        apiRating: item.vote_average ? item.vote_average.toFixed(1) : '0.0',
+        description: item.overview || 'No transmission data available.',
+        image: `https://image.tmdb.org/t/p/w342${item.poster_path}`,
+        backdrop: item.backdrop_path ? `https://image.tmdb.org/t/p/w780${item.backdrop_path}` : null,
+        type: activeTab,
+        subtitle: null,
+        apiData: { raw: item }
+      }));
+
+      if (newItems.length > 0) {
+        const currentCache = useMediaStore.getState().discoveryCache?.[activeTab];
+        if (!currentCache || !currentCache.data) return;
+        
+        const existingIds = new Set(currentCache.data[categoryKey].map(i => i.id));
+        const uniqueNewItems = newItems.filter(i => !existingIds.has(i.id));
+
+        setDiscoveryCache(activeTab, { ...currentCache.data, [categoryKey]: [...currentCache.data[categoryKey], ...uniqueNewItems], _version: 1 });
+      }
+    } catch (err) { console.error("TMDB Load More Error:", err); }
+  };
+
+  const currentData = discoveryCache?.[activeTab]?.data || { trending: [], upcoming: [], popular: [] };
 
   const handleTabChange = (tab) => {
     const cached = discoveryCache?.[tab];
@@ -356,28 +412,49 @@ export const Discovery = () => {
 
       {isLoading ? <DiscoverySkeleton /> : (
       <div className="flex flex-col gap-6 sm:gap-8 animate-in fade-in duration-500">
-        <CarouselSection title={section1Title} icon={<Flame className="w-4 h-4 text-warning" />} items={currentData.trending} type={activeTab} showRank={!isComics} categoryKey="trending" />
-        <CarouselSection title={section2Title} icon={<CalendarClock className="w-4 h-4 text-info" />} items={currentData.upcoming} type={activeTab} categoryKey="upcoming" />
-        <CarouselSection title={section3Title} icon={<Star className="w-4 h-4 text-success" />} items={currentData.topRated} type={activeTab} showRank={!isComics} categoryKey="popular" />
+        <CarouselSection key={`${activeTab}-trending`} title={section1Title} icon={<Flame className="w-4 h-4 text-warning" />} items={currentData.trending} type={activeTab} showRank={!isComics} categoryKey="trending" onLoadMore={handleLoadMoreItems} />
+        <CarouselSection key={`${activeTab}-upcoming`} title={section2Title} icon={<CalendarClock className="w-4 h-4 text-info" />} items={currentData.upcoming} type={activeTab} categoryKey="upcoming" onLoadMore={handleLoadMoreItems} />
+        <CarouselSection key={`${activeTab}-popular`} title={section3Title} icon={<Star className="w-4 h-4 text-success" />} items={currentData.popular} type={activeTab} showRank={!isComics} categoryKey="popular" onLoadMore={handleLoadMoreItems} />
       </div>
       )}
     </div>
   );
 };
 
-const CarouselSection = ({ title, icon, items, type, showRank = false }) => {
+const CarouselSection = ({ title, icon, items, type, showRank = false, categoryKey, onLoadMore }) => {
   const scrollRef = useRef(null);
   const [limit, setLimit] = useState(15);
+  const [apiPage, setApiPage] = useState(1);
+  const [isFetching, setIsFetching] = useState(false);
+
   if (!items || items.length === 0) return null;
 
   const visibleItems = items.slice(0, limit);
-  const hasMore = limit < items.length;
+  const hasMoreLocal = limit < items.length;
+  const canFetchMore = (type === 'movies' || type === 'tv') && apiPage < 5 && onLoadMore;
+  const hasMore = hasMoreLocal || canFetchMore;
 
   const scroll = (direction) => {
     if (scrollRef.current) {
       const { current } = scrollRef;
       const scrollAmount = direction === 'left' ? -current.offsetWidth * 0.75 : current.offsetWidth * 0.75;
       current.scrollBy({ left: scrollAmount, behavior: 'smooth' });
+    }
+  };
+
+  const handleLoadMore = async () => {
+    if (isFetching) return;
+    if (hasMoreLocal) {
+      setLimit(l => l + 15);
+      setTimeout(() => scroll('right'), 100);
+    } else if (canFetchMore) {
+      setIsFetching(true);
+      const nextApiPage = apiPage + 1;
+      await onLoadMore(categoryKey, nextApiPage);
+      setApiPage(nextApiPage);
+      setLimit(l => l + 15);
+      setIsFetching(false);
+      setTimeout(() => scroll('right'), 100);
     }
   };
 
@@ -399,14 +476,14 @@ const CarouselSection = ({ title, icon, items, type, showRank = false }) => {
           
           {hasMore && (
             <div 
-              onClick={() => { setLimit(l => l + 15); setTimeout(() => scroll('right'), 100); }}
+              onClick={handleLoadMore}
               className="group flex-shrink-0 w-[calc(33.333%-0.34rem)] sm:w-36 md:w-44 flex flex-col cursor-pointer snap-start relative bg-base-200/50 hover:bg-base-200 border-y border-r border-base-300 border-l-4 border-l-transparent hover:border-l-primary transition-all duration-200"
             >
               <div className="flex flex-col items-center justify-center h-full min-h-[200px] gap-3 text-base-content/50 group-hover:text-primary transition-colors">
                 <div className="w-10 h-10 rounded-full bg-base-100 border border-base-300 flex items-center justify-center shadow-sm group-hover:shadow-md transition-all">
-                  <ChevronRight className="w-5 h-5" />
+                  {isFetching ? <RefreshCw className="w-5 h-5 animate-spin" /> : <ChevronRight className="w-5 h-5" />}
                 </div>
-                <span className="font-mono font-bold text-[10px] uppercase tracking-widest">Load More</span>
+                <span className="font-mono font-bold text-[10px] uppercase tracking-widest">{isFetching ? 'Loading...' : 'Load More'}</span>
               </div>
             </div>
           )}
