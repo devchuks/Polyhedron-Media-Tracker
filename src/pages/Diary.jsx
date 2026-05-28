@@ -42,9 +42,16 @@ export const Diary = () => {
   }, [currentPage, isJumping]);
 
   const enrichedLogs = useMemo(() => {
-    const allMedia = Object.values(media).flat();
+    const mediaMap = new Map();
+    for (const category in media) {
+      if (!media[category]) continue;
+      for (const item of media[category]) {
+        mediaMap.set(String(item.id), item);
+      }
+    }
+
     return mediaLogs.map(log => {
-      const mediaItem = allMedia.find(m => String(m.id) === String(log.media_id));
+      const mediaItem = mediaMap.get(String(log.media_id));
       return { ...log, mediaItem };
     }).filter(log => log.mediaItem);
   }, [mediaLogs, media]);
@@ -101,8 +108,8 @@ export const Diary = () => {
   };
 
   const handleDeleteLog = (log) => {
-    if (window.confirm(`Permanently delete ${log.mediaItem.title} from your diary and library?`)) {
-      removeMediaItem(log.media_id, log.media_type);
+    if (window.confirm(`Delete this diary log for ${log.mediaItem.title}?`)) {
+      removeDiaryLog(log.log_id);
       if (paginatedLogs.length === 1 && currentPage > 1) setCurrentPage(prev => prev - 1);
     }
   };

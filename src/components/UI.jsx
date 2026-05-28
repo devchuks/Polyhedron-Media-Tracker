@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Star, StarHalf, X, Loader2, ChevronLeft, ChevronRight, ChevronDown, Trash2, PlayCircle, CheckCircle, EyeOff, AlertCircle, Info, ExternalLink, Save, Edit3, Calendar, Plus } from 'lucide-react';
 import { useMediaStore, useUIStore } from '../store/useMediaStore';
 import { apiRegistry } from '../services/apiRegistry';
+import { extractMetronStaff } from '../utils/normalizers';
 
 // --- Restored Helpers ---
 export const formatFancyDate = (dateInput) => {
@@ -200,7 +201,7 @@ export const GlobalDiaryModal = () => {
   // TV Selector Logic
   const maxSeasons = raw.number_of_seasons || 1;
   const currentSeasonObj = raw.seasons?.find(s => s.season_number === inputSeason) || {};
-  const maxEpisodesInSeason = currentSeasonObj.episode_count || 999;
+  const maxEpisodesInSeason = currentSeasonObj.episode_count ?? 100;
 
   const handleClose = (e) => {
     if (e) {
@@ -672,7 +673,7 @@ export const MediaCard = ({ item }) => {
   const colors = getMediaTypeColors(item.type);
 
   return (
-    <Link to={`/media/${item.type}/${item.id}`} className={`group relative bg-base-100 border-y border-r border-base-300 border-l-4 border-l-transparent ${colors.hoverBorder} transition-all duration-200 hover:shadow-md cursor-pointer flex flex-col h-full`}>
+    <Link to={`/media/${item.type}/${item.id}`} state={{ previewData: item }} className={`group relative bg-base-100 border-y border-r border-base-300 border-l-4 border-l-transparent ${colors.hoverBorder} transition-all duration-200 hover:shadow-md cursor-pointer flex flex-col h-full`}>
       <figure className="relative aspect-[2/3] w-full overflow-hidden bg-base-200 border-b border-base-300">
         <ImageWithFallback src={image} alt={item.title} className="grayscale-[15%] group-hover:grayscale-0" />
         <div className="absolute top-0 right-0 z-10"><div className={`px-2 py-1 text-[9px] font-mono font-bold tracking-[0.15em] uppercase border-b border-l border-base-300 ${colors.bg} ${colors.textContent}`}>{item.subtype}</div></div>
@@ -685,15 +686,17 @@ export const MediaCard = ({ item }) => {
         
         <div className="flex items-end justify-between mt-3 font-mono border-t border-base-200 pt-3">
           <div className="flex flex-col text-left min-w-0 flex-1">
-            <span className={`text-[10px] font-black uppercase tracking-widest text-left truncate flex items-center gap-1 ${getStatusColorCard(item.status)}`}>
+            {item.status && <span className={`text-[10px] font-black uppercase tracking-widest text-left truncate flex items-center gap-1 ${getStatusColorCard(item.status)}`}>
               {item.status}
-            </span>
-            {formatProgressLabel(item.progress, item.type) && <span className="text-[8px] font-bold text-base-content/60 uppercase tracking-widest truncate mt-0.5">{formatProgressLabel(item.progress, item.type)}</span>}
+            </span>}
+            {item.roleLabel ? (
+              <span className="text-[8px] font-bold text-base-content/60 uppercase tracking-widest truncate mt-0.5">{item.roleLabel}</span>
+            ) : formatProgressLabel(item.progress, item.type) ? <span className="text-[8px] font-bold text-base-content/60 uppercase tracking-widest truncate mt-0.5">{formatProgressLabel(item.progress, item.type)}</span> : null}
           </div>
           
-          {item.rating > 0 && (
+          {(item.rating > 0 || item.apiRating > 0) && (
             <div className="flex items-center gap-1 text-[10px] font-bold text-base-content shrink-0 ml-2 bg-base-200 px-1.5 py-0.5">
-              <Star className="w-3 h-3 text-info fill-info" /><span>{item.rating}.0</span>
+              <Star className="w-3 h-3 text-info fill-info" /><span>{item.rating ? `${item.rating}.0` : item.apiRating}</span>
             </div>
           )}
         </div>
@@ -844,17 +847,26 @@ export const Section = ({ title, children, isLoading }) => {
   return <div className="flex flex-col gap-2 mt-1"><span className="text-[10px] font-mono font-bold text-base-content/40 uppercase tracking-widest border-b border-base-300 pb-0.5">{title}</span><div className="flex flex-wrap gap-2">{children}</div></div>;
 };
 
-export const Pill = ({ main, sub, normalText = false }) => (
-  <div className="text-[10px] font-mono bg-base-200 px-2 py-1 border border-base-300 inline-flex items-center">
-    <span className={`${normalText ? 'font-normal text-base-content/80' : 'font-bold text-base-content/90'}`}>{main}</span>
-    {sub && <span className="text-base-content/50 ml-1">({sub})</span>}
-  </div>
-);
-export const Tag = ({ text, isBg }) => (
-  <div className={`text-[10px] font-mono px-2 py-1 border border-base-300 inline-flex ${isBg ? 'bg-base-200' : ''}`}>
-    <span className="font-bold text-base-content/90 uppercase tracking-widest">{text}</span>
-  </div>
-);
+export const Pill = ({ main, sub, normalText = false, to }) => {
+  const Wrapper = to ? Link : 'div';
+  const safeMain = typeof main === 'object' && main !== null ? (main.name || main.title || 'Unknown') : main;
+  const safeSub = typeof sub === 'object' && sub !== null ? (sub.name || sub.title || 'Unknown') : sub;
+  return (
+    <Wrapper to={to} className={`text-[10px] font-mono bg-base-200 px-2 py-1 border border-base-300 inline-flex items-center ${to ? 'hover:border-primary hover:text-primary transition-colors cursor-pointer group hover:shadow-sm' : ''}`}>
+      <span className={`${normalText ? 'font-normal text-base-content/80' : 'font-bold text-base-content/90'} ${to ? 'text-primary group-hover:text-primary/70' : ''}`}>{safeMain}</span>
+      {safeSub && <span className="text-base-content/50 ml-1">({safeSub})</span>}
+    </Wrapper>
+  );
+};
+export const Tag = ({ text, isBg, to }) => {
+  const Wrapper = to ? Link : 'div';
+  const safeText = typeof text === 'object' && text !== null ? (text.name || text.title || 'Unknown') : text;
+  return (
+    <Wrapper to={to} className={`text-[10px] font-mono px-2 py-1 border border-base-300 inline-flex ${isBg ? 'bg-base-200' : ''} ${to ? 'hover:border-primary hover:text-primary transition-colors cursor-pointer group hover:shadow-sm' : ''}`}>
+      <span className={`font-bold uppercase tracking-widest ${to ? 'text-primary group-hover:text-primary/70' : 'text-base-content/90'}`}>{safeText}</span>
+    </Wrapper>
+  );
+};
 export const MetaItem = ({ label, value }) => value ? <span><span className="font-bold text-base-content">{label}:</span> {value}</span> : null;
 
 export const CreativeTeamSection = ({ type, raw, isDeepFetching, genres, platforms }) => {
@@ -864,14 +876,34 @@ export const CreativeTeamSection = ({ type, raw, isDeepFetching, genres, platfor
   const creators = type === 'tv' ? (raw.created_by || []).slice(0, 3) : crew.filter(c => c.job === 'Creator').slice(0, 2);
   const cast = raw.credits?.cast || [];
 
-  const animeStaff = raw.staff?.edges || [];
-  const animeDirectors = Array.from(new Set(animeStaff.filter(e => ['director', 'chief director', 'series director'].includes(e.role?.toLowerCase().trim())).map(e => e.node.name.full)));
-  const animeOriginalCreators = Array.from(new Set(animeStaff.filter(e => ['original creator', 'original story', 'original concept', 'story'].some(r => e.role?.toLowerCase().trim().includes(r))).map(e => e.node.name.full)));
+  const getUniqueStaff = (edges, rolesKeywords) => {
+    const map = new Map();
+    (edges || []).forEach(e => {
+      const r = e.role?.toLowerCase().trim() || '';
+      if (rolesKeywords.some(keyword => r.includes(keyword)) && !map.has(e.node.id)) {
+        map.set(e.node.id, { id: e.node.id, name: e.node.name.full });
+      }
+    });
+    return Array.from(map.values());
+  };
 
-  const mangaStaff = raw.staff?.edges || [];
-  const mangakaStory = mangaStaff.filter(e => e.role === 'Story' || e.role === 'Original Story').map(e => e.node.name.full);
-  const mangakaArt = mangaStaff.filter(e => e.role === 'Art' || e.role === 'Illustration').map(e => e.node.name.full);
-  const combinedRoles = mangaStaff.filter(e => e.role === 'Story & Art').map(e => e.node.name.full);
+  const animeDirectors = getUniqueStaff(raw.staff?.edges, ['director', 'chief director', 'series director']);
+  const animeOriginalCreators = getUniqueStaff(raw.staff?.edges, ['original creator', 'original story', 'original concept', 'story']);
+
+  const combinedRoles = getUniqueStaff(raw.staff?.edges, ['story & art']);
+  const combinedIds = new Set(combinedRoles.map(c => c.id));
+  const mangakaStory = getUniqueStaff(raw.staff?.edges, ['story', 'original story']).filter(c => !combinedIds.has(c.id));
+  const mangakaArt = getUniqueStaff(raw.staff?.edges, ['art', 'illustration']).filter(c => !combinedIds.has(c.id));
+
+  // Resolve comic staff dynamically to recover missing IDs from older caches
+  const comicStaff = type === 'comics' && raw.credits ? extractMetronStaff(raw.credits) : raw.staff;
+
+  const renderMetronPills = (staffList, prefix) => (staffList || []).map((c, i) => {
+    const cName = typeof c === 'object' && c !== null ? (c.name || 'Unknown') : c;
+    const cId = typeof c === 'object' && c !== null ? c.id : null;
+    const toLink = cId ? `/explore/metron/creator/${cId}?name=${encodeURIComponent(cName)}` : undefined;
+    return <Pill key={`${prefix}-${cName}-${i}`} main={cName} normalText to={toLink} />;
+  });
 
   return (
     <SectionWrapper>
@@ -879,41 +911,52 @@ export const CreativeTeamSection = ({ type, raw, isDeepFetching, genres, platfor
         {(type === 'movies' || type === 'tv') && (
           <>
             <div className="flex flex-row flex-wrap gap-x-8 gap-y-2">
-              <Section isLoading={isDeepFetching && !directors.length} title="Director">{directors.map(c => <Pill key={c.id} main={c.name} />)}</Section>
-              <Section isLoading={isDeepFetching && !creators.length} title="Creator">{creators.map(c => <Pill key={c.id} main={c.name} />)}</Section>
-              <Section isLoading={isDeepFetching && !writers.length} title="Writer">{writers.map(c => <Pill key={c.id} main={c.name} />)}</Section>
+              <Section isLoading={isDeepFetching && !directors.length} title="Director">{directors.map((c, i) => <Pill key={`${c.id}-${i}`} main={c.name} to={`/explore/tmdb/person/${c.id}`} />)}</Section>
+              <Section isLoading={isDeepFetching && !creators.length} title="Creator">{creators.map((c, i) => <Pill key={`${c.id}-${i}`} main={c.name} to={`/explore/tmdb/person/${c.id}`} />)}</Section>
+              <Section isLoading={isDeepFetching && !writers.length} title="Writer">{writers.map((c, i) => <Pill key={`${c.id}-${i}`} main={c.name} to={`/explore/tmdb/person/${c.id}`} />)}</Section>
             </div>
-            <Section isLoading={isDeepFetching && !cast.length} title="Primary Cast">{cast.slice(0, 12).map(c => <Pill key={c.id} main={c.name} sub={c.character} />)}</Section>
+            <Section isLoading={isDeepFetching && !cast.length} title="Primary Cast">{cast.slice(0, 12).map((c, i) => <Pill key={`${c.id}-${i}`} main={c.name} sub={c.character} to={`/explore/tmdb/person/${c.id}`} />)}</Section>
           </>
         )}
         {type === 'anime' && (
           <div className="flex flex-row flex-wrap gap-x-8 gap-y-2">
-            <Section isLoading={isDeepFetching && !animeDirectors.length} title="Director">{animeDirectors.map((n) => <Pill key={n} main={n} />)}</Section>
-            <Section isLoading={isDeepFetching && !animeOriginalCreators.length} title="Original Creator">{animeOriginalCreators.map((n) => <Pill key={n} main={n} />)}</Section>
+            <Section isLoading={isDeepFetching && !animeDirectors.length} title="Director">{animeDirectors.map((n) => <Pill key={n.id} main={n.name} to={`/explore/anilist/person/${n.id}`} />)}</Section>
+            <Section isLoading={isDeepFetching && !animeOriginalCreators.length} title="Original Creator">{animeOriginalCreators.map((n) => <Pill key={n.id} main={n.name} to={`/explore/anilist/person/${n.id}`} />)}</Section>
           </div>
         )}
-        {type === 'manga' && mangaStaff.length > 0 && (
+        {type === 'manga' && raw.staff?.edges?.length > 0 && (
           <Section isLoading={isDeepFetching && !combinedRoles.length && !mangakaStory.length && !mangakaArt.length} title="Mangaka">
-            {combinedRoles.map((n) => <Pill key={`c-${n}`} main={n} sub="Story & Art" />)}
-            {mangakaStory.map((n) => <Pill key={`s-${n}`} main={n} sub="Story" />)}
-            {mangakaArt.map((n) => <Pill key={`a-${n}`} main={n} sub="Art" />)}
+            {combinedRoles.map((n) => <Pill key={`c-${n.id}`} main={n.name} sub="Story & Art" to={`/explore/anilist/person/${n.id}`} />)}
+            {mangakaStory.map((n) => <Pill key={`s-${n.id}`} main={n.name} sub="Story" to={`/explore/anilist/person/${n.id}`} />)}
+            {mangakaArt.map((n) => <Pill key={`a-${n.id}`} main={n.name} sub="Art" to={`/explore/anilist/person/${n.id}`} />)}
           </Section>
         )}
         {type === 'comics' && (
           <div className="flex flex-row flex-wrap gap-x-8 gap-y-2">
-            <Section isLoading={isDeepFetching && !(raw.staff?.Writer?.length)} title="Writer">{(raw.staff?.Writer || []).map((name) => <Pill key={`w-${name}`} main={name} normalText />)}</Section>
-            <Section isLoading={isDeepFetching && !(raw.staff?.Penciller?.length)} title="Penciller">{(raw.staff?.Penciller || []).map((name) => <Pill key={`p-${name}`} main={name} normalText />)}</Section>
-            <Section isLoading={isDeepFetching && !(raw.staff?.Artist?.length)} title="Artist">{(raw.staff?.Artist || []).map((name) => <Pill key={`a-${name}`} main={name} normalText />)}</Section>
-            <Section isLoading={isDeepFetching && !(raw.staff?.Inker?.length)} title="Inker">{(raw.staff?.Inker || []).map((name) => <Pill key={`ink-${name}`} main={name} normalText />)}</Section>
-            <Section isLoading={isDeepFetching && !(raw.staff?.Colorist?.length)} title="Colorist">{(raw.staff?.Colorist || []).map((name) => <Pill key={`col-${name}`} main={name} normalText />)}</Section>
-            <Section isLoading={isDeepFetching && !(raw.staff?.Letterer?.length)} title="Letterer">{(raw.staff?.Letterer || []).map((name) => <Pill key={`let-${name}`} main={name} normalText />)}</Section>
-            <Section isLoading={isDeepFetching && !(raw.staff?.Editor?.length)} title="Editor">{(raw.staff?.Editor || []).map((name) => <Pill key={`ed-${name}`} main={name} normalText />)}</Section>
-            <Section isLoading={isDeepFetching && !(raw.staff?.["Cover Artist"]?.length)} title="Cover Artist">{(raw.staff?.["Cover Artist"] || []).map((name) => <Pill key={`cov-${name}`} main={name} normalText />)}</Section>
+            <Section isLoading={isDeepFetching && !(comicStaff?.Writer?.length)} title="Writer">{renderMetronPills(comicStaff?.Writer, 'w')}</Section>
+            <Section isLoading={isDeepFetching && !(comicStaff?.Penciller?.length)} title="Penciller">{renderMetronPills(comicStaff?.Penciller, 'p')}</Section>
+            <Section isLoading={isDeepFetching && !(comicStaff?.Artist?.length)} title="Artist">{renderMetronPills(comicStaff?.Artist, 'a')}</Section>
+            <Section isLoading={isDeepFetching && !(comicStaff?.Inker?.length)} title="Inker">{renderMetronPills(comicStaff?.Inker, 'ink')}</Section>
+            <Section isLoading={isDeepFetching && !(comicStaff?.Colorist?.length)} title="Colorist">{renderMetronPills(comicStaff?.Colorist, 'col')}</Section>
+            <Section isLoading={isDeepFetching && !(comicStaff?.Letterer?.length)} title="Letterer">{renderMetronPills(comicStaff?.Letterer, 'let')}</Section>
+            <Section isLoading={isDeepFetching && !(comicStaff?.Editor?.length)} title="Editor">{renderMetronPills(comicStaff?.Editor, 'ed')}</Section>
+            <Section isLoading={isDeepFetching && !(comicStaff?.["Cover Artist"]?.length)} title="Cover Artist">{renderMetronPills(comicStaff?.["Cover Artist"], 'cov')}</Section>
           </div>
         )}
-        {type === 'books' && <Section isLoading={isDeepFetching && !(raw.subjects?.length)} title="Subjects">{(raw.subjects || []).map((g) => <Tag key={`subj-${g}`} text={g} />)}</Section>}
-        {type !== 'books' && type !== 'comics' && <Section isLoading={isDeepFetching && !genres.length} title="Genres & Categories">{genres.map((g) => <Tag key={g.name || g} text={g.name || g} />)}</Section>}
-        <Section isLoading={isDeepFetching && !platforms.length} title="Available Platforms">{platforms.map((p) => <Tag key={p} text={p} isBg />)}</Section>
+        {type === 'books' && <Section isLoading={isDeepFetching && !(raw.subjects?.length)} title="Subjects">{(raw.subjects || []).map((g, i) => <Tag key={`subj-${g}-${i}`} text={g} />)}</Section>}
+        {type !== 'books' && type !== 'comics' && <Section isLoading={isDeepFetching && !genres.length} title="Genres & Categories">
+          {genres.map((g, i) => {
+            const isString = typeof g === 'string';
+            const gName = isString ? g : (g.name || g);
+            const gId = isString ? g : g.id;
+            const toLink = type === 'games' && gId ? `/explore/igdb/${g._isTheme ? 'theme' : 'genre'}/${gId}?name=${encodeURIComponent(gName)}&source=${type}`
+                         : (type === 'movies' || type === 'tv') && gId ? `/explore/tmdb/genre/${gId}?name=${encodeURIComponent(gName)}&source=${type}`
+                         : (type === 'anime' || type === 'manga') && gName ? `/explore/anilist/genre/${encodeURIComponent(gName)}?name=${encodeURIComponent(gName)}&source=${type}`
+                         : undefined;
+            return <Tag key={`${gName}-${i}`} text={gName} to={toLink} />
+          })}
+        </Section>}
+        <Section isLoading={isDeepFetching && !platforms.length} title="Available Platforms">{platforms.map((p, i) => <Tag key={`${p}-${i}`} text={p} isBg />)}</Section>
       </div>
     </SectionWrapper>
   );
@@ -957,7 +1000,7 @@ export const UserActivitySection = ({ logs }) => {
                 </div>
                 {/* Clicking Edit opens modal safely */}
                 <div className="flex opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => openDiaryModal({ targetItem: log.mediaItem, type: log.media_type, targetStatus: log.mediaItem?.status, isPreview: false, explicitAction: 'NOTE ADDED', apiData: log.mediaItem?.apiData })} className="btn btn-xs btn-square btn-ghost rounded-none shrink-0 text-base-content/50 hover:text-primary"><Edit3 className="w-4 h-4 sm:w-3 sm:h-3" /></button>
+                  <button onClick={() => openDiaryModal({ targetItem: log.mediaItem, type: log.media_type, targetStatus: log.mediaItem?.status, isPreview: false, explicitAction: 'NOTE ADDED', apiData: log.mediaItem?.apiData })} title="Add New Note" className="btn btn-xs btn-square btn-ghost rounded-none shrink-0 text-base-content/50 hover:text-primary"><Plus className="w-4 h-4 sm:w-3 sm:h-3" /></button>
                 </div>
               </div>
               <p className="text-xs font-sans leading-relaxed text-base-content/80 whitespace-pre-wrap border-l border-primary/20 pl-3">
@@ -1029,6 +1072,7 @@ export const GalleryAndLinks = ({ type, title, raw, apiData, isDeepFetching, thu
 
 export const ComicIssueModal = ({ isOpen, onClose, issue, details, isLoading, isRead, isPreview, onToggleRead, allIssues, onNavigatePrev, onNavigateNext, hasPrev, hasNext }) => {
   const { setGlobalLightbox } = useMediaStore();
+  const navigate = useNavigate();
   if (!isOpen || !issue) return null;
 
   return createPortal(
@@ -1092,10 +1136,20 @@ export const ComicIssueModal = ({ isOpen, onClose, issue, details, isLoading, is
                       <h4 className="text-[10px] font-mono font-bold text-base-content/40 uppercase tracking-widest mb-2 border-b border-base-300 pb-1">Creative Team</h4>
                       <div className="flex flex-wrap gap-1.5 max-h-[200px] overflow-y-auto custom-scrollbar">
                         {details.credits.map((c, i) => (
-                          <div key={i} className="text-[9px] font-mono bg-base-100 px-1.5 py-1 border border-base-300 w-full truncate">
-                            <span className="font-bold text-base-content/90">{c.creator?.name || c.creator}</span>
-                            <span className="text-base-content/50 ml-1">({Array.isArray(c.role) ? c.role.map(r => r.name || r).join(', ') : c.role?.name || c.role})</span>
-                          </div>
+                          <React.Fragment key={i}>
+                            {(() => {
+                              const cName = c.creator?.name || c.creator;
+                              const cId = c.creator?.id || c.id || c.creator_id;
+                              const Wrapper = cId && !isPreview ? Link : 'div';
+                              const toProps = cId && !isPreview ? { to: `/explore/metron/creator/${cId}?name=${encodeURIComponent(cName)}`, onClick: onClose } : {};
+                              return (
+                                <Wrapper {...toProps} className={`text-[9px] font-mono bg-base-100 px-1.5 py-1 border border-base-300 w-full truncate ${cId && !isPreview ? 'hover:border-primary hover:text-primary transition-colors cursor-pointer group' : ''}`}>
+                                  <span className={`font-bold text-base-content/90 ${cId && !isPreview ? 'group-hover:text-primary' : ''}`}>{cName}</span>
+                                  <span className="text-base-content/50 ml-1">({Array.isArray(c.role) ? c.role.map(r => r.name || r).join(', ') : c.role?.name || c.role})</span>
+                                </Wrapper>
+                              );
+                            })()}
+                          </React.Fragment>
                         ))}
                       </div>
                     </div>
@@ -1131,10 +1185,20 @@ export const ComicIssueModal = ({ isOpen, onClose, issue, details, isLoading, is
                       <h4 className="text-[10px] font-mono font-bold text-base-content/40 uppercase tracking-widest mb-3 border-b border-base-300 pb-1">Creative Team</h4>
                       <div className="flex flex-wrap gap-2">
                         {details.credits.map((c, i) => (
-                          <div key={i} className="text-[10px] font-mono bg-base-200 px-2 py-1 border border-base-300">
-                            <span className="font-bold text-base-content/90">{c.creator?.name || c.creator}</span>
-                            <span className="text-base-content/50 ml-1">({Array.isArray(c.role) ? c.role.map(r => r.name || r).join(', ') : c.role?.name || c.role})</span>
-                          </div>
+                              <React.Fragment key={i}>
+                                {(() => {
+                                  const cName = c.creator?.name || c.creator;
+                                  const cId = c.creator?.id || c.id || c.creator_id;
+                                  const Wrapper = cId && !isPreview ? Link : 'div';
+                                  const toProps = cId && !isPreview ? { to: `/explore/metron/creator/${cId}?name=${encodeURIComponent(cName)}`, onClick: onClose } : {};
+                                  return (
+                                    <Wrapper {...toProps} className={`text-[10px] font-mono bg-base-200 px-2 py-1 border border-base-300 ${cId && !isPreview ? 'hover:border-primary hover:text-primary transition-colors cursor-pointer group' : ''}`}>
+                                      <span className={`font-bold text-base-content/90 ${cId && !isPreview ? 'group-hover:text-primary' : ''}`}>{cName}</span>
+                                      <span className="text-base-content/50 ml-1">({Array.isArray(c.role) ? c.role.map(r => r.name || r).join(', ') : c.role?.name || c.role})</span>
+                                    </Wrapper>
+                                  );
+                                })()}
+                              </React.Fragment>
                         ))}
                       </div>
                     </div>

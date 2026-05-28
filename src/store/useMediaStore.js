@@ -288,7 +288,7 @@ export const useMediaStore = create(
             [category]: state.media[category].map((item) => {
               if (String(item.id) === String(id)) {
                 const now = Date.now();
-                const newDateCompleted = newStatus === 'completed' ? now : item.dateCompleted;
+                const newDateCompleted = newStatus === 'completed' ? now : null;
                 patchPayload = { status: newStatus, "dateCompleted": newDateCompleted };
                 return { ...item, status: newStatus, updatedAt: now, dateCompleted: newDateCompleted };
               }
@@ -435,7 +435,7 @@ export const useMediaStore = create(
           const existingIndex = state.mediaLogs.findIndex(l => 
             String(l.media_id) === String(logEntry.media_id) && 
             new Date(l.log_date).toISOString().split('T')[0] === logDateString &&
-            (!logEntry.season_label || l.season_label === logEntry.season_label)
+            ((l.season_label || null) === (logEntry.season_label || null))
           );
           let newLogs = [...state.mediaLogs];
           if (existingIndex !== -1) {
@@ -449,7 +449,7 @@ export const useMediaStore = create(
         const syncedLog = get().mediaLogs.find(l => 
           String(l.media_id) === String(logEntry.media_id) && 
           new Date(l.log_date).toISOString().split('T')[0] === logDateString &&
-          (!logEntry.season_label || l.season_label === logEntry.season_label)
+          ((l.season_label || null) === (logEntry.season_label || null))
         );
         if (syncedLog) get().syncLogToCloud(syncedLog);
       },

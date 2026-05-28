@@ -104,6 +104,14 @@ const sessionCache = {
   seasons: new Map(),
   comicIssues: new Map(),
   comicIssueDetails: new Map(),
+  people: new Map(),
+};
+
+const enforceCacheLimit = (map, limit = 50) => {
+  if (map.size >= limit) {
+    const firstKey = map.keys().next().value;
+    map.delete(firstKey);
+  }
 };
 
 export const apiRegistry = {
@@ -122,7 +130,7 @@ export const apiRegistry = {
   searchGames: async (query, page = 1) => {
     try {
       const limit = 20; const offset = (page - 1) * limit;
-      const data = await invokeFunction('igdb', { endpoint: 'games', query: `search "${query}"; fields name, slug, cover.image_id, genres.name, first_release_date, summary, total_rating, url, websites.type, websites.url; limit ${limit}; offset ${offset};` });
+      const data = await invokeFunction('igdb', { endpoint: 'games', query: `search "${query}"; fields name, slug, cover.image_id, genres.id, genres.name, themes.id, themes.name, first_release_date, summary, total_rating, url, websites.type, websites.url; limit ${limit}; offset ${offset};` });
       return { results: (data || []).map(normalizeIGDB), totalPages: 10 };
     } catch (err) { reportApiError(err, 'IGDB'); return { results: [], totalPages: 1 }; }
   },
@@ -178,7 +186,7 @@ export const apiRegistry = {
           media(search: $search, type: MANGA, sort: [SEARCH_MATCH]) {
             id
             title { romaji english native }
-            description(asHtml: false)
+            description(asHtml: true)
             coverImage { extraLarge large medium }
             startDate { year }
             chapters
@@ -238,6 +246,49 @@ export const apiRegistry = {
     }
   },
 
+  getMetronPublisherDetails: async (publisherId) => {
+    try {
+      return await fetchMetron(`/api/publisher/${publisherId}/`);
+    } catch (err) { reportApiError(err, 'Metron (Publisher)'); return null; }
+  },
+
+  getMetronCreatorDetails: async (creatorId) => {
+    try {
+      return await fetchMetron(`/api/creator/${creatorId}/`);
+    } catch (err) { reportApiError(err, 'Metron (Creator)'); return null; }
+  },
+
+  discoverMetron: async (filterType, filterId, page = 1) => {
+    try {
+      let endpoint = '';
+      if (filterType === 'publisher') {
+        endpoint = `/api/issue/?publisher_id=${filterId}&page=${page}&page_size=50`;
+      } else if (filterType === 'creator') {
+        endpoint = `/api/issue/?creator_id=${filterId}&page=${page}&page_size=50`;
+      } else {
+        return { results: [], totalPages: 1 };
+      }
+
+      const data = await fetchMetron(endpoint);
+      
+      // Group individual issues by series so the Explore page is cleaner
+      const seriesMap = new Map();
+      (data.results || []).forEach(issue => {
+        const sId = issue.series?.id || issue.series;
+        if (!sId) return;
+        if (!seriesMap.has(sId)) {
+          seriesMap.set(sId, { ...issue, isGroupedSeries: true, grouped_issue_count: 1 });
+        } else {
+          seriesMap.get(sId).grouped_issue_count++;
+        }
+      });
+
+      const results = Array.from(seriesMap.values()).map(normalizeMetron);
+      const totalPages = data.count ? Math.ceil(data.count / 50) : 1;
+      return { results, totalPages };
+    } catch (err) { reportApiError(err, 'Metron Discover'); return { results: [], totalPages: 1 }; }
+  },
+
   searchVNs: async (query, page = 1) => {
     try {
       const data = await safeApiClient('https://api.vndb.org/kana/vn', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filters: ['search', '=', query], fields: 'id, title, titles.lang, titles.title, titles.latin, released, image.url, image.thumbnail, developers.name, description', results: 10, page, count: true }) });
@@ -252,12 +303,142 @@ export const apiRegistry = {
     } catch (err) { reportApiError(err, 'OpenLibrary'); return { results: [], totalPages: 1 }; }
   },
 
+  getPersonDetails: async (personId) => {
+    const cacheKey = `person_${personId}`;
+    if (sessionCache.people.has(cacheKey)) return sessionCache.people.get(cacheKey);
+
+    try {
+      const result = await invokeFunction('tmdb', { path: `/person/${personId}`, query: { append_to_response: 'combined_credits,images' } });
+      if (result) {
+        enforceCacheLimit(sessionCache.people, 50);
+        sessionCache.people.set(cacheKey, result);
+      }
+      return result;
+    } catch (err) { reportApiError(err, 'TMDB (Person)'); return null; }
+  },
+
+  getCompanyDetails: async (companyId) => {
+    try { return await invokeFunction('tmdb', { path: `/company/${companyId}` }); }
+    catch (err) { return null; }
+  },
+  getNetworkDetails: async (networkId) => {
+    try { return await invokeFunction('tmdb', { path: `/network/${networkId}` }); }
+    catch (err) { return null; }
+  },
+
+  getIGDBCompanyDetails: async (companyId) => {
+    try {
+      const data = await invokeFunction('igdb', { endpoint: 'companies', query: `fields name, description, logo.image_id, start_date; where id = ${companyId};` });
+      return data?.[0] || null;
+    } catch (err) { return null; }
+  },
+
+  getAniListPersonDetails: async (personId) => {
+    const query = `query($id:Int){ Staff(id:$id){ id name{full} image{large} description dateOfBirth{year month day} dateOfDeath{year month day} primaryOccupations characterMedia(sort:[POPULARITY_DESC], perPage:200){ edges{ characterRole characters{ name{full} } node{ id type title{romaji english native} coverImage{large} startDate{year} averageScore popularity } } } staffMedia(sort:[POPULARITY_DESC], perPage:200){ edges{ staffRole node{ id type title{romaji english native} coverImage{large} startDate{year} averageScore popularity } } } } }`;
+    try {
+      const res = await fetchAniListGraphQL(query, { id: parseInt(personId) });
+      const staff = res?.Staff;
+      if (!staff) return null;
+      const formatAnidbDate = (d) => d?.year ? `${d.year}-${String(d.month||1).padStart(2,'0')}-${String(d.day||1).padStart(2,'0')}` : null;
+      return {
+        name: staff.name?.full,
+        profile_path_custom: staff.image?.large,
+        known_for_department: staff.primaryOccupations?.[0] || 'Staff',
+        biography: staff.description,
+        birthday: formatAnidbDate(staff.dateOfBirth),
+        deathday: formatAnidbDate(staff.dateOfDeath),
+        combined_credits: {
+          cast: staff.characterMedia?.edges?.map(e => ({ id: e.node.id, title: e.node.title?.english || e.node.title?.romaji || 'Unknown', custom_type: e.node.type === 'ANIME' ? 'anime' : 'manga', custom_subtype: e.node.type === 'ANIME' ? 'Anime' : 'Manga', poster_path_custom: e.node.coverImage?.large, release_date: e.node.startDate?.year ? `${e.node.startDate.year}-01-01` : null, vote_average: e.node.averageScore ? e.node.averageScore / 10 : 0, popularity: e.node.popularity, character: e.characters?.[0]?.name?.full || e.characterRole })) || [],
+          crew: staff.staffMedia?.edges?.map(e => ({ id: e.node.id, title: e.node.title?.english || e.node.title?.romaji || 'Unknown', custom_type: e.node.type === 'ANIME' ? 'anime' : 'manga', custom_subtype: e.node.type === 'ANIME' ? 'Anime' : 'Manga', poster_path_custom: e.node.coverImage?.large, release_date: e.node.startDate?.year ? `${e.node.startDate.year}-01-01` : null, vote_average: e.node.averageScore ? e.node.averageScore / 10 : 0, popularity: e.node.popularity, job: e.staffRole })) || []
+        }
+      };
+    } catch(e) { reportApiError(e, 'AniList Person'); return null; }
+  },
+
+  discoverAniList: async (filterType, filterId, mediaType, page = 1, sortOrder = 'popularity') => {
+    let sort = 'POPULARITY_DESC';
+    if (sortOrder === 'rating') sort = 'SCORE_DESC';
+    else if (sortOrder === 'new') sort = 'START_DATE_DESC';
+    else if (sortOrder === 'old') sort = 'START_DATE_ASC';
+    const typeArg = mediaType === 'anime' ? 'ANIME' : 'MANGA';
+    try {
+      if (filterType === 'studio') {
+        const query = `query($page:Int, $sort:[MediaSort], $id:Int){ Studio(id:$id){ media(page:$page, sort:$sort){ pageInfo{ lastPage } nodes{ id title{romaji english native} description(asHtml:true) coverImage{extraLarge large medium} startDate{year} averageScore popularity siteUrl status genres episodes chapters volumes studios(isMain:true){nodes{id name}} } } } }`;
+        const res = await fetchAniListGraphQL(query, { page, sort: [sort], id: parseInt(filterId) });
+        return { 
+          results: (res?.Studio?.media?.nodes || []).map(item => normalizeAniList(item, mediaType)), 
+          totalPages: res?.Studio?.media?.pageInfo?.lastPage || 1 
+        };
+      } else if (filterType === 'genre') {
+        const query = `query($page:Int, $type:MediaType, $sort:[MediaSort], $genre:String){ Page(page:$page, perPage:24){ pageInfo{ lastPage } media(type:$type, sort:$sort, genre:$genre){ id title{romaji english native} description(asHtml:true) coverImage{extraLarge large medium} startDate{year} averageScore popularity siteUrl status genres episodes chapters volumes studios(isMain:true){nodes{id name}} } } }`;
+        const res = await fetchAniListGraphQL(query, { page, type: typeArg, sort: [sort], genre: filterId });
+        return { 
+          results: (res?.Page?.media || []).map(item => normalizeAniList(item, mediaType)), 
+          totalPages: res?.Page?.pageInfo?.lastPage || 1 
+        };
+      }
+      return { results: [], totalPages: 1 };
+    } catch(e) { reportApiError(e, 'AniList Discover'); return { results: [], totalPages: 1 }; }
+  },
+
+  discoverIGDB: async (filterType, filterId, page = 1, sortOrder = 'popularity') => {
+    try {
+      let sortBy = 'id desc';
+      if (sortOrder === 'rating') sortBy = 'total_rating desc';
+      else if (sortOrder === 'new') sortBy = 'first_release_date desc';
+      else if (sortOrder === 'old') sortBy = 'first_release_date asc';
+
+      const limit = 24;
+      const offset = (page - 1) * limit;
+
+      let whereClause = '';
+      if (filterType === 'company') {
+        whereClause = `involved_companies.company = ${filterId}`;
+      } else if (filterType === 'genre') {
+        whereClause = `genres = ${filterId}`;
+      } else if (filterType === 'theme') {
+        whereClause = `themes = ${filterId}`;
+      }
+
+      if (sortOrder === 'new' || sortOrder === 'old') whereClause += (whereClause ? ' & ' : '') + `first_release_date != null`;
+      if (!whereClause) whereClause = 'id != null';
+
+      const data = await invokeFunction('igdb', { endpoint: 'games', query: `fields name, slug, cover.image_id, genres.id, genres.name, themes.id, themes.name, first_release_date, summary, total_rating, url; where ${whereClause}; sort ${sortBy}; limit ${limit}; offset ${offset};` });
+      const results = (data || []).map(normalizeIGDB);
+      return { results, totalPages: results.length === limit ? page + 1 : page };
+    } catch (err) { reportApiError(err, 'IGDB Discover'); return { results: [], totalPages: 1 }; }
+  },
+
+  discoverTMDB: async (filterType, filterId, mediaType, page = 1, sortOrder = 'popularity') => {
+    try {
+      let sortBy = 'popularity.desc';
+      if (sortOrder === 'rating') sortBy = 'vote_average.desc';
+      else if (sortOrder === 'new') sortBy = mediaType === 'tv' ? 'first_air_date.desc' : 'primary_release_date.desc';
+      else if (sortOrder === 'old') sortBy = mediaType === 'tv' ? 'first_air_date.asc' : 'primary_release_date.asc';
+
+      const query = { page, sort_by: sortBy };
+      if (sortOrder === 'rating') query['vote_count.gte'] = 50;
+
+      if (filterType === 'genre') query.with_genres = filterId;
+      else if (filterType === 'studio' || filterType === 'company') query.with_companies = filterId;
+      else if (filterType === 'network') query.with_networks = filterId;
+
+      const tmdbType = mediaType === 'movies' ? 'movie' : 'tv';
+      const data = await invokeFunction('tmdb', { path: `/discover/${tmdbType}`, query });
+      return {
+        results: (data.results || []).map(item => normalizeTMDB(item, mediaType)),
+        totalPages: data.total_pages || 1
+      };
+    } catch (err) { reportApiError(err, 'TMDB Discover'); return { results: [], totalPages: 1 }; }
+  },
+
   getTVSeason: async (tvId, seasonNumber) => {
     const cacheKey = `${tvId}_${seasonNumber}`;
     if (sessionCache.seasons.has(cacheKey)) return sessionCache.seasons.get(cacheKey);
 
     try { 
       const result = await invokeFunction('tmdb', { path: `/tv/${tvId}/season/${seasonNumber}` }); 
+      enforceCacheLimit(sessionCache.seasons, 50);
       sessionCache.seasons.set(cacheKey, result);
       return result;
     } catch (err) { reportApiError(err, 'TMDB (Season Data)'); return { episodes: [] }; }
@@ -275,12 +456,12 @@ export const apiRegistry = {
       else if (type === 'tv') result = await invokeFunction('tmdb', { path: `/tv/${cleanId}`, query: queryParams });
       else if (type === 'games') {
         const realId = String(cleanId).replace('igdb_', '');
-        const data = await invokeFunction('igdb', { endpoint: 'games', query: `fields name, slug, cover.image_id, genres.name, first_release_date, summary, storyline, total_rating, url, websites.type, websites.url, platforms.name, artworks.image_id, screenshots.image_id, videos.video_id, involved_companies.company.name, involved_companies.developer, involved_companies.publisher, collections.name, collections.games.name, collections.games.cover.image_id, collections.games.first_release_date, game_status; where id = ${realId};` });
+        const data = await invokeFunction('igdb', { endpoint: 'games', query: `fields name, slug, cover.image_id, genres.id, genres.name, themes.id, themes.name, first_release_date, summary, storyline, total_rating, url, websites.type, websites.url, platforms.name, artworks.image_id, screenshots.image_id, videos.video_id, involved_companies.company.id, involved_companies.company.name, involved_companies.developer, involved_companies.publisher, collections.name, collections.games.name, collections.games.cover.image_id, collections.games.first_release_date, game_status; where id = ${realId};` });
         result = data?.[0] || null;
         if (result && result.game_status !== undefined) result.status = getGameStatusLabel(result.game_status);
       }
-      else if (type === 'anime') result = (await fetchAniListGraphQL(`query ($id: Int) { Media(id: $id, type: ANIME) { id title { romaji english native } description(asHtml: false) trailer { id site } coverImage { extraLarge large medium } bannerImage startDate { year month day } episodes status averageScore siteUrl genres studios(isMain: true) { nodes { name } } staff(perPage: 50, sort: RELEVANCE) { edges { role node { name { full } } } } relations { edges { relationType node { id type title { romaji english } coverImage { large } } } } externalLinks { url site } } }`, { id: parseInt(cleanId) }))?.Media;
-      else if (type === 'manga') result = (await fetchAniListGraphQL(`query ($id: Int) { Media(id: $id, type: MANGA) { id title { romaji english native } description(asHtml: false) coverImage { extraLarge large medium } bannerImage startDate { year month day } chapters volumes status averageScore siteUrl genres staff(perPage: 50) { edges { role node { name { full } } } } relations { edges { relationType node { id type title { romaji english } coverImage { large } } } } externalLinks { url site } } }`, { id: parseInt(cleanId) }))?.Media;
+      else if (type === 'anime') result = (await fetchAniListGraphQL(`query ($id: Int) { Media(id: $id, type: ANIME) { id title { romaji english native } description(asHtml: true) trailer { id site } coverImage { extraLarge large medium } bannerImage startDate { year month day } episodes status averageScore siteUrl genres studios(isMain: true) { nodes { id name } } staff(perPage: 50, sort: RELEVANCE) { edges { role node { id name { full } } } } relations { edges { relationType node { id type title { romaji english } coverImage { large } } } } externalLinks { url site } } }`, { id: parseInt(cleanId) }))?.Media;
+      else if (type === 'manga') result = (await fetchAniListGraphQL(`query ($id: Int) { Media(id: $id, type: MANGA) { id title { romaji english native } description(asHtml: true) coverImage { extraLarge large medium } bannerImage startDate { year month day } chapters volumes status averageScore siteUrl genres staff(perPage: 50) { edges { role node { id name { full } } } } relations { edges { relationType node { id type title { romaji english } coverImage { large } } } } externalLinks { url site } } }`, { id: parseInt(cleanId) }))?.Media;
       else if (type === 'vn') result = (await safeApiClient('https://api.vndb.org/kana/vn', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filters: ['id', '=', cleanId], fields: 'id, title, titles.lang, titles.title, titles.latin, released, image.url, image.thumbnail, developers.name, description, length, tags.name, relations.relation, relations.id, relations.title, relations.image.url, screenshots.url, extlinks.url, extlinks.label' }) })).results?.[0];
       else if (type === 'books') {
         const workPath = String(cleanId).includes('/works/') ? cleanId : `/works/${cleanId}`;
@@ -323,7 +504,10 @@ export const apiRegistry = {
         result = seriesData;
       }
 
-      if (result) sessionCache.details.set(cacheKey, result);
+      if (result) {
+        enforceCacheLimit(sessionCache.details, 100);
+        sessionCache.details.set(cacheKey, result);
+      }
       return result;
     } catch (err) { reportApiError(err, `${type.toUpperCase()} Details`); return null; }
   },
@@ -360,7 +544,10 @@ export const apiRegistry = {
         });
       }
       
-      if (result.length > 0) sessionCache.recs.set(cacheKey, result);
+      if (result.length > 0) {
+        enforceCacheLimit(sessionCache.recs, 50);
+        sessionCache.recs.set(cacheKey, result);
+      }
       return result;
     } catch (err) { reportApiError(err, `${type.toUpperCase()} Recommendations`); return []; }
   },
@@ -371,6 +558,7 @@ export const apiRegistry = {
 
     try {
       const data = await fetchMetron(`/api/issue/${issueId}/`);
+      enforceCacheLimit(sessionCache.comicIssueDetails, 50);
       sessionCache.comicIssueDetails.set(cacheKey, data);
       return data;
     } catch (err) {
@@ -390,6 +578,7 @@ export const apiRegistry = {
         totalCount: data.count,
         page,
       };
+      enforceCacheLimit(sessionCache.comicIssues, 50);
       sessionCache.comicIssues.set(cacheKey, result);
       return result;
     } catch (err) {

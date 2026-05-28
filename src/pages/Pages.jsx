@@ -3,7 +3,7 @@ import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { useMediaStore, useUIStore } from '../store/useMediaStore';
 import { MediaCard, MediaListRow, StarRating, getMediaTypeColors, SectionWrapper, TextBlockSkeleton, PillSkeleton, MetaItem, EpisodeCard, ImageWithFallback, getSubtype, CreativeTeamSection, UserActivitySection, GalleryAndLinks, ComicIssuesSection, formatFancyDate, getDynamicStatusLabel, getStatusColor, stripHtml, resolveMediaImage } from '../components/UI';
-import { Star, ArrowLeft, Loader2, Filter, PlayCircle, X, ExternalLink, ChevronLeft, ChevronRight, Edit3, Plus, ChevronDown, ChevronUp, Download, LayoutGrid, List, Compass, Search } from 'lucide-react';
+import { Star, ArrowLeft, Loader2, Filter, PlayCircle, X, ExternalLink, ChevronLeft, ChevronRight, Edit3, Plus, ChevronDown, ChevronUp, Download, LayoutGrid, List, Compass, Search, CalendarDays } from 'lucide-react';
 import { apiRegistry } from '../services/apiRegistry';
 import { processDetailRaw } from '../utils/normalizers';
 import { NotFound } from './NotFound';
@@ -25,31 +25,108 @@ const isFutureRelease = (item) => {
   return !isNaN(yearNum) && yearNum > new Date().getFullYear();
 };
 
-const DashSection = ({ title, items, isLoading, headerRight }) => (
-  <section className="mb-4">
-    <div className="flex flex-col sm:flex-row items-start sm:items-end justify-between border-b border-base-300 pb-2 mb-4 gap-3">
-      <h2 className="text-sm font-black uppercase tracking-widest font-sans text-base-content">{title}</h2>
-      {headerRight && <div className="w-full sm:w-auto">{headerRight}</div>}
-    </div>
-    {isLoading ? (
-      <div className="w-full bg-base-100 border border-base-300 p-8 flex items-center justify-center text-[10px] font-mono text-base-content/50 uppercase tracking-widest gap-2">
-        <Loader2 className="w-4 h-4 animate-spin text-primary" /> Loading...
+const DashSection = ({ title, items, isLoading, headerRight, horizontalMobile, isCarousel }) => {
+  const scrollRef = useRef(null);
+  const [showLeftArrow, setShowLeftArrow] = useState(false);
+  const [showRightArrow, setShowRightArrow] = useState(false);
+
+  const handleScroll = () => {
+    if (scrollRef.current) {
+      const { scrollLeft, scrollWidth, clientWidth } = scrollRef.current;
+      setShowLeftArrow(scrollLeft > 5);
+      // Adjusted the math buffer slightly for pixel-perfect rounding
+      setShowRightArrow(Math.ceil(scrollLeft + clientWidth) < scrollWidth - 2);
+    }
+  };
+
+  useEffect(() => {
+    handleScroll();
+    // Give the browser a micro-tick to paint the DOM and calculate widths
+    const t1 = setTimeout(handleScroll, 100);
+    const t2 = setTimeout(handleScroll, 500);
+
+    // Robust layout tracking for dynamic resizing
+    let observer;
+    if (scrollRef.current && window.ResizeObserver) {
+      observer = new ResizeObserver(() => handleScroll());
+      observer.observe(scrollRef.current);
+    }
+
+    window.addEventListener('resize', handleScroll);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      window.removeEventListener('resize', handleScroll);
+      if (observer) observer.disconnect();
+    };
+  }, [items, isCarousel, horizontalMobile]);
+
+  const scroll = (direction) => {
+    if (scrollRef.current) {
+      const { current } = scrollRef;
+      const scrollAmount = direction === 'left' ? -current.offsetWidth * 0.75 : current.offsetWidth * 0.75;
+      current.scrollBy({ left: scrollAmount, behavior: 'smooth' });
+    }
+  };
+
+  const scrollClass = isCarousel 
+    ? "flex overflow-x-auto gap-3 pb-2 snap-x [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+    : horizontalMobile 
+      ? "flex overflow-x-auto gap-3 pb-2 sm:grid sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-6 min-[2000px]:grid-cols-7 snap-x [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" 
+      : "grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-7 min-[2000px]:grid-cols-8 gap-3";
+
+  return (
+    <section className="mb-4">
+      <div className="flex flex-col sm:flex-row items-start sm:items-end justify-between border-b border-base-300 pb-2 mb-3 gap-3">
+        <h2 className="text-sm font-black uppercase tracking-widest font-sans text-base-content flex items-center gap-2">{title}</h2>
+        {headerRight && <div className="w-full sm:w-auto">{headerRight}</div>}
       </div>
-    ) : items.length > 0 ? (
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-7 min-[2000px]:grid-cols-8 gap-3">{items.map(item => <MediaCard key={item.id} item={item} />)}</div>
-    ) : (
-      <div className="w-full bg-base-100 border border-base-300 p-8 flex items-center justify-center text-[10px] font-mono text-base-content/40 uppercase tracking-widest">No records found.</div>
-    )}
-  </section>
-);
+      {isLoading ? (
+        <div className="w-full bg-base-100 border border-base-300 p-8 flex items-center justify-center text-[10px] font-mono text-base-content/50 uppercase tracking-widest gap-2">
+          <Loader2 className="w-4 h-4 animate-spin text-primary" /> Loading...
+        </div>
+      ) : items.length > 0 ? (
+        <div className={`relative ${isCarousel || horizontalMobile ? 'group/carousel' : ''}`}>
+          {isCarousel && showLeftArrow && (
+            <button onClick={() => scroll('left')} className="absolute left-2 top-1/2 -translate-y-[calc(50%+8px)] z-40 bg-base-100/90 hover:bg-primary text-base-content hover:text-primary-content w-10 h-10 items-center justify-center hidden md:group-hover/carousel:flex backdrop-blur-md transition-all border border-base-300 shadow-2xl rounded-full">
+              <ChevronLeft className="w-6 h-6" />
+            </button>
+          )}
+          
+          <div 
+            ref={scrollRef}
+            onScroll={handleScroll}
+            className={scrollClass}
+            style={(isCarousel || horizontalMobile) && showRightArrow ? { WebkitMaskImage: 'linear-gradient(to right, black 85%, transparent 100%)', maskImage: 'linear-gradient(to right, black 85%, transparent 100%)' } : {}}
+          >
+            {items.map(item => (
+              <div key={item.id} className={isCarousel ? "w-[calc(50vw-22px)] sm:w-36 md:w-44 lg:w-48 xl:w-48 2xl:w-52 shrink-0 snap-start" : horizontalMobile ? "w-[calc(50vw-22px)] shrink-0 sm:w-auto snap-start" : ""}>
+                <MediaCard item={item} />
+              </div>
+            ))}
+          </div>
+
+          {isCarousel && showRightArrow && (
+            <button onClick={() => scroll('right')} className="absolute right-2 top-1/2 -translate-y-[calc(50%+8px)] z-40 bg-base-100/90 hover:bg-primary text-base-content hover:text-primary-content w-10 h-10 items-center justify-center hidden md:group-hover/carousel:flex backdrop-blur-md transition-all border border-base-300 shadow-2xl rounded-full">
+              <ChevronRight className="w-6 h-6" />
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="w-full bg-base-100 border border-base-300 p-8 flex items-center justify-center text-[10px] font-mono text-base-content/40 uppercase tracking-widest">No records found.</div>
+      )}
+    </section>
+  );
+};
 
 export const Dashboard = () => {
   const authMode = useMediaStore((state) => state.authMode);
   const media = useMediaStore((state) => state.media);
+  const mediaLogs = useMediaStore((state) => state.mediaLogs);
   const isLoading = useMediaStore((state) => state.isLoading);
   
   const [searchQuery, setSearchQuery] = useState('');
-  const { recentlyAddedItems, allItemsLength } = React.useMemo(() => {
+  const { recentlyAddedItems, allItemsLength, inProgress, recentActivity } = React.useMemo(() => {
     const allItems = Object.values(media).flat();
     const getAddedTime = (item) => item.addedAt || item.dateAdded || 0;
     
@@ -60,8 +137,19 @@ export const Dashboard = () => {
     }
     
     const recent = filtered.sort((a, b) => getAddedTime(b) - getAddedTime(a));
-    return { recentlyAddedItems: recent, allItemsLength: allItems.length };
-  }, [media, searchQuery]);
+    
+    const active = allItems
+      .filter(item => item.status === 'in progress')
+      .sort((a, b) => (b.updatedAt || b.addedAt || 0) - (a.updatedAt || a.addedAt || 0))
+      .slice(0, 20);
+
+    const recentLogs = (mediaLogs || []).slice(0, 5).map(log => {
+      const mediaItem = allItems.find(m => String(m.id) === String(log.media_id));
+      return { ...log, mediaItem };
+    }).filter(log => log.mediaItem);
+
+    return { recentlyAddedItems: recent, allItemsLength: allItems.length, inProgress: active, recentActivity: recentLogs };
+  }, [media, mediaLogs, searchQuery]);
   
   const [isPopulating, setIsPopulating] = useState(false);
   const [popLog, setPopLog] = useState('');
@@ -92,6 +180,9 @@ export const Dashboard = () => {
   const totalPages = Math.ceil(recentlyAddedItems.length / itemsPerPage) || 1;
   useEffect(() => { if (currentPage > totalPages) setCurrentPage(totalPages); }, [totalPages, currentPage]);
   const paginatedItems = recentlyAddedItems.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+  const hasJumpBackIn = !searchQuery.trim() && inProgress.length > 0;
+  const hasTimeline = !searchQuery.trim() && recentActivity.length > 0;
 
   return (
     <div className="flex flex-col gap-6 animate-in fade-in duration-300 min-h-screen pb-10">
@@ -124,37 +215,72 @@ export const Dashboard = () => {
           )}
         </div>
       )}
-      <DashSection 
-        title={searchQuery.trim() ? "Search Results" : "Recently Added"} 
-        items={paginatedItems} 
-        isLoading={isLoading || isPopulating} 
-        headerRight={
-          <div className="relative w-full sm:w-64">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-base-content/50" />
-            <input 
-              type="text" 
-              placeholder="Search library..." 
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full h-8 pl-9 pr-8 bg-base-100 border border-base-300 focus:border-primary focus:outline-none rounded-none text-xs font-mono placeholder:text-base-content/40 transition-colors appearance-none"
+      
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] 2xl:grid-cols-[1fr_384px] gap-x-6 gap-y-2 xl:gap-y-6 items-start">
+        
+        {hasJumpBackIn && (
+          <div className="order-1 xl:col-start-1 xl:row-start-1 min-w-0 w-full">
+            <DashSection 
+              title={<><PlayCircle className="w-4 h-4 text-warning" /> Jump Back In</>} 
+              items={inProgress} 
+              isLoading={isLoading || isPopulating}
+              isCarousel 
             />
-            {searchQuery && (
-              <button onClick={() => setSearchQuery('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/50 hover:text-base-content appearance-none">
-                <X className="w-3 h-3" />
-              </button>
-            )}
           </div>
-        }
-      />
-      
-      {!(isLoading || isPopulating) && totalPages > 1 && (
-        <div className="flex justify-between items-center mt-2 pt-4 border-t border-base-300">
-          <button disabled={currentPage === 1} onClick={() => { setCurrentPage(p => p - 1); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="flex items-center justify-center h-11 sm:h-8 px-3 bg-transparent hover:bg-base-300 text-base-content hover:text-base-content rounded-none appearance-none font-mono text-[10px] uppercase tracking-widest disabled:opacity-30 disabled:cursor-not-allowed transition-colors"><ChevronLeft className="w-4 h-4 mr-1" /> Prev</button>
-          <span className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest">Page {currentPage} of {totalPages}</span>
-          <button disabled={currentPage === totalPages} onClick={() => { setCurrentPage(p => p + 1); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="flex items-center justify-center h-11 sm:h-8 px-3 bg-transparent hover:bg-base-300 text-base-content hover:text-base-content rounded-none appearance-none font-mono text-[10px] uppercase tracking-widest disabled:opacity-30 disabled:cursor-not-allowed transition-colors">Next <ChevronRight className="w-4 h-4 ml-1" /></button>
+        )}
+
+        {hasTimeline && (
+          <div className={`order-3 xl:order-2 xl:col-start-2 xl:row-start-1 w-full shrink-0 flex flex-col gap-4 mt-2 xl:mt-0 border-t border-base-300 xl:border-none pt-4 xl:pt-0 ${!hasJumpBackIn ? 'xl:row-span-2' : ''}`}>
+            <h2 className="text-sm font-black uppercase tracking-widest flex items-center gap-2 border-b border-base-300 pb-2 text-base-content xl:mt-1"><CalendarDays className="w-4 h-4 text-primary" /> Timeline</h2>
+            <div className="flex flex-col gap-3">
+              {recentActivity.map(log => {
+                const colors = getMediaTypeColors(log.media_type);
+                return (
+                  <Link to={`/media/${log.media_type}/${log.mediaItem.id}`} key={log.log_id} className={`bg-base-100 border border-base-300 p-3 hover:border-primary transition-colors border-l-2 ${colors.border}`}>
+                    <div className="text-[9px] font-mono font-bold opacity-50 uppercase tracking-widest mb-1">{formatFancyDate(log.log_date)} • {log.action_type || 'LOGGED'}</div>
+                    <div className="font-bold text-sm leading-tight truncate text-base-content">{log.mediaItem.title}</div>
+                    {log.review_text && <div className="text-xs mt-1.5 opacity-70 line-clamp-2 italic text-base-content/80">"{log.review_text}"</div>}
+                  </Link>
+                );
+              })}
+              <Link to="/diary" className="btn btn-sm btn-ghost bg-base-200 rounded-none font-mono text-[9px] uppercase tracking-widest mt-2 text-base-content">View Full Diary <ChevronRight className="w-3 h-3"/></Link>
+            </div>
+          </div>
+        )}
+
+        <div className={`order-2 xl:order-3 min-w-0 w-full ${hasTimeline && !hasJumpBackIn ? 'xl:col-start-1 xl:row-start-1 xl:col-span-1' : 'xl:col-span-full'}`}>
+          <DashSection 
+            title={searchQuery.trim() ? "Search Results" : "Recently Added"} 
+            items={paginatedItems} 
+            isLoading={isLoading || isPopulating} 
+            headerRight={
+              <div className="relative w-full sm:w-64">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-base-content/50" />
+                <input 
+                  type="text" 
+                  placeholder="Search library..." 
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full h-8 pl-9 pr-8 bg-base-100 border border-base-300 focus:border-primary focus:outline-none rounded-none text-xs font-mono placeholder:text-base-content/40 transition-colors appearance-none"
+                />
+                {searchQuery && (
+                  <button onClick={() => setSearchQuery('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/50 hover:text-base-content appearance-none">
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            }
+          />
+          
+          {!(isLoading || isPopulating) && totalPages > 1 && (
+            <div className="flex justify-between items-center mt-2 pt-4 border-t border-base-300">
+              <button disabled={currentPage === 1} onClick={() => { setCurrentPage(p => p - 1); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="flex items-center justify-center h-11 sm:h-8 px-3 bg-transparent hover:bg-base-300 text-base-content hover:text-base-content rounded-none appearance-none font-mono text-[10px] uppercase tracking-widest disabled:opacity-30 disabled:cursor-not-allowed transition-colors"><ChevronLeft className="w-4 h-4 mr-1" /> Prev</button>
+              <span className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest">Page {currentPage} of {totalPages}</span>
+              <button disabled={currentPage === totalPages} onClick={() => { setCurrentPage(p => p + 1); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="flex items-center justify-center h-11 sm:h-8 px-3 bg-transparent hover:bg-base-300 text-base-content hover:text-base-content rounded-none appearance-none font-mono text-[10px] uppercase tracking-widest disabled:opacity-30 disabled:cursor-not-allowed transition-colors">Next <ChevronRight className="w-4 h-4 ml-1" /></button>
+            </div>
+          )}
         </div>
-      )}
-      
+      </div>
     </div>
   );
 };
@@ -384,8 +510,7 @@ export const DetailView = () => {
   const itemLogs = React.useMemo(() => {
     if (!mediaLogs) return [];
     return mediaLogs
-      .filter(log => String(log.media_id).startsWith(cleanId))
-      .sort((a, b) => new Date(b.log_date) - new Date(a.log_date));
+      .filter(log => String(log.media_id).startsWith(cleanId));
   }, [mediaLogs, cleanId]);
 
   useEffect(() => {
@@ -441,7 +566,7 @@ export const DetailView = () => {
     setLoadingRecs(true);
     apiRegistry.getRecommendations(apiData.id, type).then(res => { 
       if (isMounted) { setRecs(res); setLoadingRecs(false); }
-    });
+    }).catch(() => { if (isMounted) setLoadingRecs(false); });
     if (type === 'tv' && (raw.number_of_seasons > 0 || apiData.raw?.number_of_seasons > 0)) {
       setLoadingEps(true);
       apiRegistry.getTVSeason(apiData.id, 1).then(res => {
@@ -473,6 +598,9 @@ export const DetailView = () => {
   
   let genres = raw.genres || previewItem?.raw?.genres || apiData.genres || [];
   if (!genres.length && type === 'vn' && raw.tags) genres = raw.tags.slice(0, 5).map(t => ({ name: t.name }));
+  if (type === 'games' && raw.themes) {
+    genres = [...(Array.isArray(genres) ? genres : []), ...(Array.isArray(raw.themes) ? raw.themes.map(t => ({ ...t, _isTheme: true })) : [])];
+  }
   
   const validBookAuthors = (type === 'books' ? (apiData.raw?.authors || apiData.authors || raw.authors || []) : []).map(a => typeof a === 'string' ? a : (a?.name || a?.author?.name)).filter(Boolean);
   const comicFormat = type === 'comics' ? (raw.series?.series_type?.name || raw.series_type?.name || (typeof raw.series_type === 'string' ? raw.series_type : null)) : null;
@@ -480,8 +608,28 @@ export const DetailView = () => {
   const seriesGames = type === 'games' && collections.length > 0 ? collections[0].games?.filter(g => String(g.id) !== String(raw.id)).sort((a, b) => (a.first_release_date || 0) - (b.first_release_date || 0)) : [];
   const displayedSeriesGames = showAllSeries ? seriesGames : seriesGames.slice(0, 10);
   
-  const getDevs = () => { if (raw.involved_companies) return raw.involved_companies.filter(c => c.developer).map(c => c.company?.name).filter(Boolean).join(', '); return (raw.developers || []).length > 0 ? raw.developers.map(d => d.name).join(', ') : null; };
-  const getPubs = () => { if (raw.involved_companies) return raw.involved_companies.filter(c => c.publisher).map(c => c.company?.name).filter(Boolean).join(', '); return (raw.publishers || []).length > 0 ? raw.publishers.map(p => typeof p === 'string' ? p : p.name).join(', ') : null; };
+  const getDevs = () => { 
+    if (raw.involved_companies) { const devs = raw.involved_companies.filter(c => c.developer && c.company); if (devs.length > 0) return devs.map((c, i) => <React.Fragment key={c.company.id || `dev-${i}`}><Link to={`/explore/igdb/company/${c.company.id}?name=${encodeURIComponent(c.company.name)}`} className="text-primary hover:text-primary/70 transition-colors">{c.company.name}</Link>{i < devs.length - 1 ? ', ' : ''}</React.Fragment>); }
+    return (raw.developers || []).length > 0 ? raw.developers.map(d => d.name).join(', ') : null; 
+  };
+  const getPubs = () => { 
+    if (raw.involved_companies) { const pubs = raw.involved_companies.filter(c => c.publisher && c.company); if (pubs.length > 0) return pubs.map((c, i) => <React.Fragment key={c.company.id || `pub-${i}`}><Link to={`/explore/igdb/company/${c.company.id}?name=${encodeURIComponent(c.company.name)}`} className="text-primary hover:text-primary/70 transition-colors">{c.company.name}</Link>{i < pubs.length - 1 ? ', ' : ''}</React.Fragment>); }
+    
+    if (type === 'comics') {
+      const pubId = raw.publisherId || raw.series?.publisher?.id || raw.publisher?.id || null;
+      const pubName = raw.publisherName || raw.series?.publisher?.name || raw.publisher?.name || (typeof raw.publisher === 'string' ? raw.publisher : null) || 'Unknown Publisher';
+      if (pubId) return <Link to={`/explore/metron/publisher/${pubId}?name=${encodeURIComponent(pubName)}`} className="text-primary hover:text-primary/70 transition-colors">{pubName}</Link>;
+      if (pubName && pubName !== 'Unknown Publisher') return pubName;
+    }
+    
+    return (raw.publishers || []).length > 0 ? raw.publishers.map(p => typeof p === 'string' ? p : p.name).join(', ') : raw.publisherName || null; 
+  };
+
+  const getStudios = () => {
+    if (type === 'movies' && raw.production_companies) return raw.production_companies.map((c, i) => <React.Fragment key={c.id || `pc-${i}`}><Link to={`/explore/tmdb/studio/${c.id}?name=${encodeURIComponent(c.name)}&source=movies`} className="text-primary hover:text-primary/70 transition-colors">{c.name}</Link>{i < raw.production_companies.length - 1 ? ', ' : ''}</React.Fragment>);
+    if (type === 'tv' && (raw.networks || raw.production_companies)) { const isNetwork = raw.networks?.length > 0; const list = isNetwork ? raw.networks : raw.production_companies; return list.map((c, i) => <React.Fragment key={c.id || `nw-${i}`}><Link to={`/explore/tmdb/${isNetwork ? 'network' : 'studio'}/${c.id}?name=${encodeURIComponent(c.name)}&source=tv`} className="text-primary hover:text-primary/70 transition-colors">{c.name}</Link>{i < list.length - 1 ? ', ' : ''}</React.Fragment>); }
+    return null;
+  };
 
   const validRels = raw.relations?.edges?.filter(e => ['ADAPTATION', 'SOURCE'].includes(e.relationType)) || [];
   const platforms = type === 'games' && raw.platforms ? raw.platforms.map(p => p.name || p.platform?.name).filter(Boolean) : raw.platforms?.map(p => p.platform?.name || p).filter(Boolean) || [];
@@ -562,7 +710,7 @@ export const DetailView = () => {
                 <MetaItem label="Released" value={formatFancyDate(raw.release_date || (raw.first_release_date ? new Date(raw.first_release_date * 1000).toISOString().split('T')[0] : null))} />
                 <MetaItem label="Aired" value={type === 'anime' && raw.startDate?.year ? formatFancyDate(`${raw.startDate.year}-${String(raw.startDate.month || 1).padStart(2, '0')}-${String(raw.startDate.day || 1).padStart(2, '0')}`) : null} />
                 {type === 'books' && validBookAuthors.length > 0 && <MetaItem label="Author" value={validBookAuthors.join(', ')} />}
-                {type === 'anime' && <MetaItem label="Studio" value={raw.studios?.nodes?.map(s => s.name).join(', ')} />}
+                {type === 'anime' && raw.studios?.nodes?.length > 0 && <MetaItem label="Studio" value={raw.studios.nodes.map((s, i) => <React.Fragment key={s.id || `s-${i}`}><Link to={`/explore/anilist/studio/${s.id}?name=${encodeURIComponent(s.name)}&source=anime`} className="text-primary hover:text-primary/70 transition-colors">{s.name}</Link>{i < raw.studios.nodes.length - 1 ? ', ' : ''}</React.Fragment>)} />}
                 <MetaItem label="Runtime" value={raw.runtime > 0 ? `${raw.runtime}m` : null} />
                 <MetaItem label="Length" value={type === 'vn' && raw.length > 0 ? vnLengthMap[raw.length] : null} />
                 <MetaItem label="Seasons" value={type === 'tv' && raw.number_of_seasons} />
@@ -571,6 +719,7 @@ export const DetailView = () => {
                 <MetaItem label="Volumes" value={type === 'manga' && raw.volumes} />
                 <MetaItem label="Developer" value={getDevs()} />
                 <MetaItem label="Publisher" value={getPubs() || raw.publisherName} />
+                <MetaItem label={type === 'tv' ? 'Network' : 'Studio'} value={getStudios()} />
                 {type === 'comics' && comicFormat && <MetaItem label="Format" value={comicFormat} />}
                 {type === 'comics' && <MetaItem label="Issues" value={raw.issuesCount} />}
                 <MetaItem label="Status" value={type === 'comics' && raw.status?.toLowerCase() === 'cancelled' ? null : raw.status?.replace(/_/g, ' ')} />

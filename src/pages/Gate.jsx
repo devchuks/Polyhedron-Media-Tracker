@@ -49,13 +49,18 @@ export const Gate = () => {
     setIsLoading(true);
     setError(false);
     
-    const { data, error: authError } = await supabase.auth.signInWithPassword({ email, password });
-    
-    if (authError) {
+    try {
+      const { data, error: authError } = await supabase.auth.signInWithPassword({ email, password });
+      
+      if (authError) {
+        setError(true);
+        setIsLoading(false);
+      } else if (data.user) {
+        setAuthMode('admin');
+      }
+    } catch (err) {
       setError(true);
       setIsLoading(false);
-    } else if (data.user) {
-      setAuthMode('admin');
     }
   };
 

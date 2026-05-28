@@ -7,6 +7,7 @@ import { Diary } from './pages/Diary';
 import { ImportTerminal } from './pages/ImportTerminal';
 import { NotFound } from './pages/NotFound';
 import { Discovery } from './pages/Discovery';
+import { Explore } from './pages/Explore';
 
 function App() {
   return (
@@ -20,6 +21,7 @@ function App() {
           <Route path="settings" element={<Settings />} />
           <Route path=":category" element={<MediaCategory />} />
           <Route path="media/:type/:id" element={<DetailView />} />
+          <Route path="explore/:api/:type/:id" element={<Explore />} />
           {/* Fallback 404 Route */}
           <Route path="*" element={<NotFound />} />
         </Route>

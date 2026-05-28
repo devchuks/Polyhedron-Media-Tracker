@@ -19,6 +19,8 @@ export const normalizeTMDB = (item, type) => {
   return {
     id: item.id,
     title: item.title || item.name || "Unknown Title",
+    type: type,
+    subtype: type === 'tv' ? 'TV Shows' : 'Movies',
     year: item.release_date ? item.release_date.substring(0, 4) : item.first_air_date ? item.first_air_date.substring(0, 4) : "----",
     description: item.overview || "No data available.",
     image: item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : null,
@@ -33,6 +35,8 @@ export const normalizeTMDB = (item, type) => {
 export const normalizeIGDB = (item) => ({
   id: `igdb_${item.id}`,
   title: item.name || "Unknown Title",
+  type: 'games',
+  subtype: 'Games',
   year: item.first_release_date ? new Date(item.first_release_date * 1000).getFullYear().toString() : "----",
   description: item.summary || item.storyline || "No description available.",
   image: item.cover?.image_id ? `https://images.igdb.com/igdb/image/upload/t_720p/${item.cover.image_id}.jpg` : null,
@@ -58,6 +62,8 @@ export const normalizeAniList = (item, type) => {
   return {
     id: item.id,
     title: item.title?.english || item.title?.romaji || item.title?.native || "Unknown Title",
+    type: type,
+    subtype: type === 'anime' ? 'Anime' : 'Manga',
     year: item.startDate?.year ? String(item.startDate.year) : "----",
     description: item.description ? item.description.replace(/<[^>]*>?/gm, '') : "No data available.",
     image: item.coverImage?.extraLarge || item.coverImage?.large || null,
@@ -69,12 +75,20 @@ export const normalizeAniList = (item, type) => {
   };
 };
 
-function extractMetronStaff(credits = []) {
+export function extractMetronStaff(credits = []) {
   const staff = {};
   for (const c of credits) {
+    if (typeof c !== 'object' || c === null) continue;
+
     let creatorName = 'Unknown';
-    if (typeof c.creator === 'string') creatorName = c.creator;
-    else if (c.creator?.name) creatorName = c.creator.name;
+    let creatorId = c.creator_id || c.id || null;
+
+    if (typeof c.creator === 'string') {
+      creatorName = c.creator;
+    } else if (c.creator?.name) {
+      creatorName = c.creator.name;
+      creatorId = c.creator.id || c.id || null;
+    }
 
     let roles = [];
     if (Array.isArray(c.role)) roles = c.role;
@@ -90,7 +104,7 @@ function extractMetronStaff(credits = []) {
       
       const mapped = roleName.charAt(0).toUpperCase() + roleName.slice(1);
       if (!staff[mapped]) staff[mapped] = [];
-      if (!staff[mapped].includes(creatorName)) staff[mapped].push(creatorName);
+      if (!staff[mapped].some(x => (x.name || x) === creatorName)) staff[mapped].push({ name: creatorName, id: creatorId });
     }
   }
   return staff;
@@ -99,22 +113,31 @@ function extractMetronStaff(credits = []) {
 export const normalizeMetron = (item) => {
   const isIssueResult = item.hasOwnProperty('cover_date') || item.hasOwnProperty('number');
   const seriesId = isIssueResult ? (item.series?.id || (typeof item.series === 'number' ? item.series : undefined)) : item.id;
-  const id = seriesId ? String(seriesId) : (item.id ? `issue_${item.id}` : '0');
+  
+  // Use issue_[id] routing for individual issues to get precise covers
+  const id = isIssueResult ? `issue_${item.id}` : `series_${seriesId || item.id}`;
 
   let rawTitle = isIssueResult ? (item.series?.name || item.name || "Unknown Comic") : (item.name || item.series || item.sort_name || "Unknown Comic");
   rawTitle = rawTitle.replace(/\s*\(\d{4}\)$/, '');
 
   const publisherObj = item.publisher || item.raw?.series?.publisher || item.series?.publisher;
   const publisherName = publisherObj?.name || (typeof publisherObj === 'string' ? publisherObj : 'Unknown Publisher');
+  const publisherId = publisherObj?.id || null;
   const genres = (item.genres || []).map(g => typeof g === 'object' ? g.name : g).filter(Boolean).slice(0, 8);
 
-  const subtitle = isIssueResult
+  let subtitle = isIssueResult
     ? (item.series?.volume != null ? `Vol. ${item.series.volume}` : 'Comic Series')
     : `${publisherName} • ${item.issue_count || '?'} Issues`;
+
+  if (item.isGroupedSeries) {
+    subtitle = `${subtitle.split(' • ')[0]} • ${item.grouped_issue_count} Issue${item.grouped_issue_count > 1 ? 's' : ''}`;
+  }
 
   return {
     id,
     title: rawTitle,
+    type: 'comics',
+    subtype: 'Comics',
     year: isIssueResult ? (item.cover_date?.substring(0, 4) || "----") : (item.year_began || "----"),
     description: item.desc || item.description || "No description available.",
     image: applyImageProxy(item.image, 500),
@@ -127,6 +150,7 @@ export const normalizeMetron = (item) => {
       staff: extractMetronStaff(item.credits || []),
       genres,
       publisherName,
+      publisherId,
       issuesCount: isIssueResult ? null : item.issue_count,
     },
   };
@@ -138,6 +162,8 @@ export const normalizeVNDB = (item) => {
   return {
     id: item.id,
     title: displayTitle,
+    type: 'vn',
+    subtype: 'Visual Novels',
     year: item.released ? item.released.substring(0, 4) : "----",
     description: item.description || "No description available.",
     image: applyImageProxy(item.image?.thumbnail || item.image?.url),
@@ -173,6 +199,8 @@ export const normalizeOpenLibrary = (item) => {
   return {
     id: item.workId?.replace('/works/', '') || item.key?.replace('/works/', ''),
     title: item.title || "Unknown Book",
+    type: 'books',
+    subtype: 'Books',
     year: item.first_publish_year ? String(item.first_publish_year) : "----",
     description: item.description?.value || item.description || `First published in ${item.first_publish_year || 'unknown year'}.`,
     image: item.cover_i
@@ -201,6 +229,7 @@ export const processDetailRaw = (rawDetails, type) => {
         staff,
         genres,
         publisherName: rawDetails.publisher?.name || rawDetails.publisher || 'Unknown Publisher',
+        publisherId: rawDetails.publisher?.id || null,
         issuesCount: rawDetails.issue_count,
       };
     }
