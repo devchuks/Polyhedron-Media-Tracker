@@ -112,10 +112,18 @@ export function extractMetronStaff(credits = []) {
 
 export const normalizeMetron = (item) => {
   const isIssueResult = item.hasOwnProperty('cover_date') || item.hasOwnProperty('number');
-  const seriesId = isIssueResult ? (item.series?.id || (typeof item.series === 'number' ? item.series : undefined)) : item.id;
   
-  // Use issue_[id] routing for individual issues to get precise covers
-  const id = isIssueResult ? `issue_${item.id}` : `series_${seriesId || item.id}`;
+  let seriesId;
+  if (isIssueResult) {
+    if (item.series?.id) seriesId = item.series.id;
+    else if (typeof item.series === 'number') seriesId = item.series;
+  } else {
+    seriesId = item.id;
+  }
+  
+  // ALWAYS route to the Series ID for library consistency if we HAVE it.
+  // Otherwise, route to the issue so getMediaDetails can fetch the full object and find the series.
+  const id = seriesId ? `series_${seriesId}` : `issue_${item.id}`;
 
   let rawTitle = isIssueResult ? (item.series?.name || item.name || "Unknown Comic") : (item.name || item.series || item.sort_name || "Unknown Comic");
   rawTitle = rawTitle.replace(/\s*\(\d{4}\)$/, '');

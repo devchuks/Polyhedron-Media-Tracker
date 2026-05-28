@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { apiRegistry } from '../services/apiRegistry';
-import { MediaCard } from '../components/UI';
-import { ArrowLeft, Loader2, User, Clapperboard, Gamepad2, ChevronLeft, ChevronDown, ChevronRight, Tv, Image as ImageIcon } from 'lucide-react';
+import { MediaCard, ComicIssueModal } from '../components/UI';
+import { useMediaStore } from '../store/useMediaStore';
+import { ArrowLeft, Loader2, User, Clapperboard, Gamepad2, ChevronLeft, ChevronDown, ChevronRight, Tv, Image as ImageIcon, X } from 'lucide-react';
 
 export const Explore = () => {
   const { api, type, id } = useParams();
@@ -29,7 +30,7 @@ export const Explore = () => {
     return 'movies';
   });
   const [roleFilter, setRoleFilter] = useState('all');
-  const [sortOrder, setSortOrder] = useState('popularity');
+  const [sortOrder, setSortOrder] = useState(() => type === 'person' ? 'known_for' : 'popularity');
 
   const [bioExpanded, setBioExpanded] = useState(false);
 
@@ -43,6 +44,13 @@ export const Explore = () => {
   const ITEMS_PER_PAGE = 24;
   const [personPage, setPersonPage] = useState(1);
 
+  // Modal specific state
+  const [selectedIssue, setSelectedIssue] = useState(null);
+  const [selectedCreatorSeries, setSelectedCreatorSeries] = useState(null);
+  const [modalDetails, setModalDetails] = useState(null);
+  const [modalIssues, setModalIssues] = useState([]);
+  const [isModalLoading, setIsModalLoading] = useState(false);
+
   useEffect(() => {
     window.scrollTo(0, 0);
     let isMounted = true;
@@ -50,6 +58,8 @@ export const Explore = () => {
     setData(null);
     setEntityData(null);
     setDiscoverResults([]);
+
+    setSortOrder(prev => type === 'person' ? 'known_for' : (prev === 'known_for' ? 'popularity' : prev));
 
     if (api === 'tmdb') {
       if (type === 'person') {
@@ -204,6 +214,7 @@ export const Explore = () => {
             rawDate: c.release_date || c.first_air_date || '9999-12-31',
             _apiRating: c.vote_average ? parseFloat(c.vote_average).toFixed(1) : 0,
             popularity: c.popularity || 0,
+            voteCount: c.vote_count || c.popularity || 0,
             isCast: false,
             isCrew: false,
             jobs: [],
@@ -232,6 +243,7 @@ export const Explore = () => {
     if (roleFilter === 'crew') res = res.filter(c => c.isCrew);
 
     res.sort((a, b) => {
+      if (sortOrder === 'known_for') return b.voteCount - a.voteCount;
       if (sortOrder === 'popularity') return b.popularity - a.popularity;
       if (sortOrder === 'rating') return b._apiRating - a._apiRating;
       if (sortOrder === 'new') return b.rawDate.localeCompare(a.rawDate);
@@ -241,6 +253,18 @@ export const Explore = () => {
 
     return res;
   }, [credits, mediaFilter, roleFilter, sortOrder]);
+
+  const handleModalNavigate = async (issue) => {
+    setSelectedIssue(issue);
+    setIsModalLoading(true);
+    try {
+      const details = await apiRegistry.getComicIssueDetails(issue.id);
+      setModalDetails(details);
+    } catch (e) {
+      console.error(e);
+    }
+    setIsModalLoading(false);
+  };
 
   useEffect(() => { setPersonPage(1); }, [mediaFilter, roleFilter, sortOrder]);
   const totalPersonPages = Math.ceil(filteredCredits.length / ITEMS_PER_PAGE) || 1;
@@ -286,8 +310,12 @@ export const Explore = () => {
       {isPersonLayout ? (
         <div className="flex flex-row gap-4 sm:gap-6 bg-base-100 border border-base-300 p-4 sm:p-6 pt-12 sm:pt-14 shadow-xl items-start relative">
           <button onClick={() => navigate(-1)} className="absolute top-2 left-2 sm:top-4 sm:left-4 flex items-center justify-center h-8 px-2 sm:px-3 rounded-none appearance-none font-mono text-[10px] uppercase tracking-widest bg-transparent hover:bg-base-200 text-base-content/60 hover:text-base-content transition-colors z-20"><ArrowLeft className="w-4 h-4 sm:mr-1" /><span className="hidden sm:inline">Back</span></button>
-          <div className="w-24 sm:w-32 md:w-48 shrink-0 bg-base-200 border border-base-300 overflow-hidden relative aspect-[2/3] shadow-sm">
-            {profileUrl ? <img src={profileUrl} alt={data?.name || entityName} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-base-content/20"><User className="w-8 h-8 md:w-12 md:h-12" /></div>}
+          <div className={`w-24 sm:w-32 md:w-48 shrink-0 bg-base-200 border border-base-300 overflow-hidden relative shadow-sm ${type === 'publisher' ? 'aspect-square sm:aspect-video bg-transparent border-none' : 'aspect-[2/3]'}`}>
+            {profileUrl ? (
+              <img src={profileUrl} alt={data?.name || entityName} className={`w-full h-full ${type === 'publisher' ? 'object-contain' : 'object-cover'}`} />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-base-content/20">{type === 'publisher' ? <ImageIcon className="w-8 h-8 md:w-12 md:h-12" /> : <User className="w-8 h-8 md:w-12 md:h-12" />}</div>
+            )}
           </div>
           
           <div className="flex flex-col flex-1 min-w-0 justify-center text-left">
@@ -388,6 +416,7 @@ export const Explore = () => {
           {api !== 'igdb' && api !== 'metron' && (
             <div className="relative shrink-0">
               <select value={sortOrder} onChange={e => setSortOrder(e.target.value)} className="h-7 sm:h-8 pl-2 pr-6 bg-base-100 border border-base-300 focus:outline-none focus:border-primary text-[9px] sm:text-[10px] font-mono uppercase tracking-widest cursor-pointer appearance-none rounded-none transition-colors">
+                {type === 'person' && <option value="known_for">Known For</option>}
                 <option value="popularity">Most Popular</option>
                 <option value="rating">Highest Rated</option>
                 <option value="new">Newest First</option>
@@ -406,7 +435,13 @@ export const Explore = () => {
       ) : renderItems.length > 0 ? (
         <>
           <div className={`grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-7 min-[2000px]:grid-cols-8 gap-3 ${isGridLoading ? 'pointer-events-none' : ''}`} style={{ gridAutoRows: 'min-content' }}>
-            {renderItems.map((item, idx) => <MediaCard key={`${item.type}_${item.id}_${idx}`} item={item} />)}
+            {renderItems.map((item, idx) => (
+              <MediaCard 
+                key={`${item.type}_${item.id}_${idx}`} 
+                item={item} 
+                onClickOverride={api === 'metron' && type === 'creator' ? () => setSelectedCreatorSeries(item) : undefined}
+              />
+            ))}
           </div>
           {maxPages > 1 && (
             <div className="flex justify-between items-center mt-6 pt-4 border-t border-base-300">
@@ -418,6 +453,65 @@ export const Explore = () => {
         </>
       ) : (
         <div className="w-full py-16 bg-base-200/50 border border-base-300 flex items-center justify-center text-[10px] font-mono text-base-content/40 uppercase tracking-widest">No credits found for these filters.</div>
+      )}
+
+      {selectedCreatorSeries && (
+        <div className="fixed inset-0 z-[90000] bg-black/80 flex flex-col items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setSelectedCreatorSeries(null)}>
+          <div className="bg-base-100 border border-base-300 w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center p-4 sm:p-6 border-b border-base-300 bg-base-200/50">
+               <div className="min-w-0 pr-4">
+                 <h3 className="text-xl sm:text-2xl font-black uppercase tracking-widest text-primary truncate">{selectedCreatorSeries.title}</h3>
+                 <p className="text-xs font-mono text-base-content/50 uppercase tracking-widest mt-1">Worked on {selectedCreatorSeries.raw.creator_issues?.length || 0} issues in this series</p>
+               </div>
+               <button onClick={() => setSelectedCreatorSeries(null)} className="btn btn-square btn-ghost rounded-none border border-base-300 hover:bg-error hover:text-error-content hover:border-error transition-colors shrink-0"><X className="w-5 h-5"/></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 custom-scrollbar bg-base-100">
+               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                 {(selectedCreatorSeries.raw.creator_issues || []).sort((a,b) => parseFloat(a.number) - parseFloat(b.number)).map(issue => (
+                     <div key={issue.id} onClick={() => {
+                       setSelectedIssue(issue);
+                       setIsModalLoading(true);
+                       setModalIssues(selectedCreatorSeries.raw.creator_issues);
+                       apiRegistry.getComicIssueDetails(issue.id).then(details => { setModalDetails(details); setIsModalLoading(false); });
+                     }} className="cursor-pointer group border border-base-300 bg-base-200 hover:border-primary transition-colors flex flex-col h-full shadow-sm hover:shadow-md">
+                       <div className="aspect-[2/3] w-full bg-base-300 overflow-hidden relative border-b border-base-300">
+                         {issue.image ? <img src={`https://wsrv.nl/?url=${encodeURIComponent(issue.image)}&w=300&output=webp`} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 grayscale-[15%] group-hover:grayscale-0" /> : <div className="w-full h-full flex items-center justify-center text-[10px] font-mono text-base-content/30 uppercase tracking-widest">No Img</div>}
+                       </div>
+                       <div className="p-3 text-center bg-base-100 flex-1 flex flex-col justify-center">
+                         <span className="text-sm font-bold uppercase tracking-wider font-sans block truncate text-base-content group-hover:text-primary transition-colors">Issue #{issue.number}</span>
+                         <span className="text-[9px] font-mono text-base-content/50 mt-1 uppercase tracking-widest block">{issue.cover_date ? issue.cover_date.substring(0, 4) : 'Unknown Year'}</span>
+                       </div>
+                     </div>
+                   )
+                 )}
+               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {api === 'metron' && type === 'creator' && (
+        <ComicIssueModal 
+          isOpen={!!selectedIssue} 
+          issue={selectedIssue} 
+          details={modalDetails} 
+          isLoading={isModalLoading}
+          isRead={false} 
+          isPreview={true}
+          onToggleRead={() => {}} 
+          allIssues={modalIssues}
+          onClose={() => { setSelectedIssue(null); setModalDetails(null); }}
+          onNavigatePrev={() => {
+             const idx = modalIssues.findIndex(i => i.id === selectedIssue?.id);
+             if (idx > 0) handleModalNavigate(modalIssues[idx - 1]);
+          }}
+          onNavigateNext={() => {
+             const idx = modalIssues.findIndex(i => i.id === selectedIssue?.id);
+             if (idx !== -1 && idx < modalIssues.length - 1) handleModalNavigate(modalIssues[idx + 1]);
+          }}
+          hasPrev={modalIssues.findIndex(i => i.id === selectedIssue?.id) > 0}
+          hasNext={modalIssues.findIndex(i => i.id === selectedIssue?.id) < modalIssues.length - 1}
+        />
       )}
     </div>
   );

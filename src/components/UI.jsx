@@ -668,12 +668,15 @@ export const StarRating = ({ rating = 0, onChange, readOnly = false }) => {
   );
 };
 
-export const MediaCard = ({ item }) => {
+export const MediaCard = ({ item, onClickOverride }) => {
   const image = resolveMediaImage(item, item.type, 'md');
   const colors = getMediaTypeColors(item.type);
 
+  const Wrapper = onClickOverride ? 'div' : Link;
+  const props = onClickOverride ? { onClick: () => onClickOverride(item) } : { to: `/media/${item.type}/${item.id}`, state: { previewData: item } };
+
   return (
-    <Link to={`/media/${item.type}/${item.id}`} state={{ previewData: item }} className={`group relative bg-base-100 border-y border-r border-base-300 border-l-4 border-l-transparent ${colors.hoverBorder} transition-all duration-200 hover:shadow-md cursor-pointer flex flex-col h-full`}>
+    <Wrapper {...props} className={`group relative bg-base-100 border-y border-r border-base-300 border-l-4 border-l-transparent ${colors.hoverBorder} transition-all duration-200 hover:shadow-md cursor-pointer flex flex-col h-full`}>
       <figure className="relative aspect-[2/3] w-full overflow-hidden bg-base-200 border-b border-base-300">
         <ImageWithFallback src={image} alt={item.title} className="grayscale-[15%] group-hover:grayscale-0" />
         <div className="absolute top-0 right-0 z-10"><div className={`px-2 py-1 text-[9px] font-mono font-bold tracking-[0.15em] uppercase border-b border-l border-base-300 ${colors.bg} ${colors.textContent}`}>{item.subtype}</div></div>
@@ -701,7 +704,7 @@ export const MediaCard = ({ item }) => {
           )}
         </div>
       </div>
-    </Link>
+    </Wrapper>
   );
 };
 
@@ -1074,6 +1077,8 @@ export const ComicIssueModal = ({ isOpen, onClose, issue, details, isLoading, is
   const { setGlobalLightbox } = useMediaStore();
   const navigate = useNavigate();
   if (!isOpen || !issue) return null;
+  
+  const targetSeriesId = details?.series?.id || (typeof issue.series === 'number' ? issue.series : null);
 
   return createPortal(
     <>
@@ -1128,6 +1133,11 @@ export const ComicIssueModal = ({ isOpen, onClose, issue, details, isLoading, is
                   >
                     {isRead ? '✓ Marked as Read' : 'Mark as Read'}
                   </button>
+                  {targetSeriesId && (
+                    <Link to={`/media/comics/series_${targetSeriesId}`} onClick={onClose} className="hidden sm:flex items-center justify-center w-full h-10 border border-base-300 bg-base-200 hover:bg-base-300 hover:border-primary hover:text-primary rounded-none appearance-none font-mono text-[10px] uppercase tracking-widest transition-colors">
+                      View Full Series
+                    </Link>
+                  )}
                 </div>
 
                 <div className="flex-1 flex flex-col sm:hidden min-w-0">
@@ -1156,20 +1166,27 @@ export const ComicIssueModal = ({ isOpen, onClose, issue, details, isLoading, is
                   )}
                 </div>
               </div>
-              <button
-                onClick={(e) => { 
-                  e.stopPropagation(); 
-                  const trackableIds = allIssues.filter(i => {
-                    const num = parseFloat(i.number);
-                    return i.id === issue.id || (!isNaN(num) && num > 0);
-                  }).map(i => i.id);
-                  onToggleRead(issue.id, trackableIds); 
-                }}
-                disabled={isPreview}
-                className={`flex sm:hidden items-center justify-center w-full h-12 rounded-none appearance-none font-mono text-xs uppercase tracking-widest shadow-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isRead ? 'bg-success hover:bg-success/90 text-success-content' : 'bg-primary hover:bg-primary/90 text-primary-content'}`}
-              >
-                {isRead ? '✓ Marked as Read' : 'Mark as Read'}
-              </button>
+              <div className="flex flex-col gap-2 mt-4 sm:hidden">
+                <button
+                  onClick={(e) => { 
+                    e.stopPropagation(); 
+                    const trackableIds = allIssues.filter(i => {
+                      const num = parseFloat(i.number);
+                      return i.id === issue.id || (!isNaN(num) && num > 0);
+                    }).map(i => i.id);
+                    onToggleRead(issue.id, trackableIds); 
+                  }}
+                  disabled={isPreview}
+                  className={`flex items-center justify-center w-full h-12 rounded-none appearance-none font-mono text-xs uppercase tracking-widest shadow-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isRead ? 'bg-success hover:bg-success/90 text-success-content' : 'bg-primary hover:bg-primary/90 text-primary-content'}`}
+                >
+                  {isRead ? '✓ Marked as Read' : 'Mark as Read'}
+                </button>
+                {targetSeriesId && (
+                  <Link to={`/media/comics/series_${targetSeriesId}`} onClick={onClose} className="flex items-center justify-center w-full h-12 border border-base-300 bg-base-200 hover:bg-base-300 hover:border-primary hover:text-primary rounded-none appearance-none font-mono text-[10px] uppercase tracking-widest transition-colors shadow-lg">
+                    View Full Series
+                  </Link>
+                )}
+              </div>
             </div>
 
             <div className="w-full sm:w-2/3 p-4 sm:p-6 flex-1 sm:overflow-y-auto custom-scrollbar flex flex-col gap-6">

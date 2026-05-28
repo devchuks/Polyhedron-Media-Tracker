@@ -527,6 +527,14 @@ export const DetailView = () => {
     
     apiRegistry.getMediaDetails(id, type).then(rawDetails => {
         if (!isMounted || !rawDetails) return;
+        
+        if (type === 'comics' && typeof id === 'string' && id.startsWith('issue_') && rawDetails.id) {
+          // If we fetched the detail using an issue fallback, immediately correct the URL to the series ID 
+          // so the user's library and diary logs are cleanly saved under the series natively.
+          navigate(`/media/comics/series_${rawDetails.id}`, { replace: true, state: { previewData: targetItem } });
+          return;
+        }
+        
         const processed = processDetailRaw(rawDetails, type);
         const updatedRaw = { ...targetItem.raw, ...rawDetails, ...processed, deepFetched: true };
         const updatedYear = rawDetails.release_date?.substring(0, 4) || rawDetails.first_air_date?.substring(0, 4) || rawDetails.released?.substring(0, 4) || rawDetails.startDate?.year || rawDetails.year_began || (rawDetails.first_release_date ? new Date(rawDetails.first_release_date * 1000).getFullYear().toString() : targetItem?.year);
@@ -547,8 +555,10 @@ export const DetailView = () => {
         else if (type === 'books' && rawDetails.workId) updatedUrl = `https://openlibrary.org${rawDetails.workId}`;
         else if (type === 'comics' && rawDetails.id) updatedUrl = `https://metron.cloud/series/${rawDetails.id}/`;
 
-        if (isPreview) setPreviewItem(prev => ({ ...prev, title: updatedTitle, raw: updatedRaw, year: updatedYear, url: updatedUrl || prev.url }));
-        else addMediaItem({ ...storeItem, title: updatedTitle, apiData: { ...storeItem.apiData, raw: updatedRaw, year: updatedYear, url: updatedUrl || storeItem.apiData.url } }, type);
+        const updatedImage = rawDetails.image || targetItem.image || previewItem?.image || null;
+
+        if (isPreview) setPreviewItem(prev => ({ ...prev, title: updatedTitle, image: updatedImage, raw: updatedRaw, year: updatedYear, url: updatedUrl || prev.url }));
+        else addMediaItem({ ...storeItem, title: updatedTitle, image: updatedImage, apiData: { ...storeItem.apiData, image: updatedImage, raw: updatedRaw, year: updatedYear, url: updatedUrl || storeItem.apiData.url } }, type);
     }).catch(err => { 
       // Error caught by apiRegistry, let it fail silently
     }).finally(() => {

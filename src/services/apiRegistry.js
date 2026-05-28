@@ -114,6 +114,30 @@ const enforceCacheLimit = (map, limit = 50) => {
   }
 };
 
+const mergeSeriesAndIssues = (seriesList, issuesList) => {
+  return seriesList.map(series => {
+    const sName = String(series.name || '').trim().toLowerCase();
+    const sYear = series.year_began;
+    const issueMatch = issuesList.find(issue => {
+      const iName = String(issue.series?.name || issue.series || '').trim().toLowerCase();
+      if (iName !== sName) return false;
+      if (issue.volume && series.volume && issue.volume === series.volume) return true;
+      const iYear = issue.cover_date ? parseInt(issue.cover_date.substring(0, 4)) : null;
+      if (iYear === sYear || Math.abs(iYear - sYear) <= 1) return true;
+      return false;
+    }) || issuesList.find(issue => String(issue.series?.name || issue.series || '').trim().toLowerCase() === sName);
+
+    return {
+      ...series,
+      isGroupedSeries: true,
+      grouped_issue_count: series.issue_count,
+      image: issueMatch ? issueMatch.image : null,
+      credits: issueMatch ? issueMatch.credits : null,
+      publisher: series.publisher || (issueMatch ? (issueMatch.publisher || issueMatch.series?.publisher) : null),
+    };
+  });
+};
+
 export const apiRegistry = {
   searchMovies: async (query, page = 1) => {
     try {
@@ -222,24 +246,24 @@ export const apiRegistry = {
         searchQuery = searchQuery.replace(yearMatch[0], '').replace(/\s{2,}/g, ' ').trim();
       }
 
-      const params = new URLSearchParams();
-      params.append('series_name', searchQuery);
-      params.append('number', '1');
-      params.append('page_size', '500');
-      if (coverYear) {
-        params.append('cover_year', coverYear);
-      }
+      const seriesParams = new URLSearchParams({ name: searchQuery, page, page_size: 20 });
+      if (coverYear) seriesParams.append('year_began', coverYear);
 
-      const endpoint = `/api/issue/?${params.toString()}`;
-      const data = await fetchMetron(endpoint);
+      const issueParams = new URLSearchParams();
+      issueParams.append('series_name', searchQuery);
+      issueParams.append('number', '1');
+      issueParams.append('page_size', '100');
+      if (coverYear) issueParams.append('cover_year', coverYear);
 
-      const allResults = (data.results || []).map(normalizeMetron);
-      const perPage = 20;
-      const totalPages = Math.ceil(allResults.length / perPage) || 1;
-      const start = (page - 1) * perPage;
-      const paginatedResults = allResults.slice(start, start + perPage);
+      const [seriesRes, issueRes] = await Promise.all([
+        fetchMetron(`/api/series/?${seriesParams.toString()}`),
+        fetchMetron(`/api/issue/?${issueParams.toString()}`)
+      ]);
 
-      return { results: paginatedResults, totalPages };
+      const merged = mergeSeriesAndIssues(seriesRes.results || [], issueRes.results || []);
+      const totalPages = seriesRes.count ? Math.ceil(seriesRes.count / 20) : 1;
+
+      return { results: merged.map(normalizeMetron), totalPages };
     } catch (err) {
       reportApiError(err, 'Metron (Comics)');
       return { results: [], totalPages: 1 };
@@ -260,32 +284,41 @@ export const apiRegistry = {
 
   discoverMetron: async (filterType, filterId, page = 1) => {
     try {
-      let endpoint = '';
       if (filterType === 'publisher') {
-        endpoint = `/api/issue/?publisher_id=${filterId}&page=${page}&page_size=50`;
+        const seriesParams = new URLSearchParams({ publisher_id: filterId, page, page_size: 24 });
+        const issueParams = new URLSearchParams({ publisher_id: filterId, number: 1, page_size: 100 });
+        
+        const [seriesRes, issueRes] = await Promise.all([
+          fetchMetron(`/api/series/?${seriesParams.toString()}`),
+          fetchMetron(`/api/issue/?${issueParams.toString()}`)
+        ]);
+
+        const merged = mergeSeriesAndIssues(seriesRes.results || [], issueRes.results || []);
+        const totalPages = seriesRes.count ? Math.ceil(seriesRes.count / 24) : 1;
+        
+        return { results: merged.map(normalizeMetron), totalPages };
       } else if (filterType === 'creator') {
-        endpoint = `/api/issue/?creator_id=${filterId}&page=${page}&page_size=50`;
-      } else {
-        return { results: [], totalPages: 1 };
+        const endpoint = `/api/issue/?creator_id=${filterId}&page=${page}&page_size=50`;
+        const data = await fetchMetron(endpoint);
+        
+        const seriesMap = new Map();
+        (data.results || []).forEach(issue => {
+          const sName = String(issue.series?.name || issue.series || '').trim();
+          if (!sName) return;
+          if (!seriesMap.has(sName)) {
+            seriesMap.set(sName, { ...issue, isGroupedSeries: true, grouped_issue_count: 1, creator_issues: [issue] });
+          } else {
+            const entry = seriesMap.get(sName);
+            entry.grouped_issue_count++;
+            entry.creator_issues.push(issue);
+          }
+        });
+
+        const results = Array.from(seriesMap.values()).map(normalizeMetron);
+        const totalPages = data.count ? Math.ceil(data.count / 50) : 1;
+        return { results, totalPages };
       }
-
-      const data = await fetchMetron(endpoint);
-      
-      // Group individual issues by series so the Explore page is cleaner
-      const seriesMap = new Map();
-      (data.results || []).forEach(issue => {
-        const sId = issue.series?.id || issue.series;
-        if (!sId) return;
-        if (!seriesMap.has(sId)) {
-          seriesMap.set(sId, { ...issue, isGroupedSeries: true, grouped_issue_count: 1 });
-        } else {
-          seriesMap.get(sId).grouped_issue_count++;
-        }
-      });
-
-      const results = Array.from(seriesMap.values()).map(normalizeMetron);
-      const totalPages = data.count ? Math.ceil(data.count / 50) : 1;
-      return { results, totalPages };
+      return { results: [], totalPages: 1 };
     } catch (err) { reportApiError(err, 'Metron Discover'); return { results: [], totalPages: 1 }; }
   },
 
@@ -472,16 +505,35 @@ export const apiRegistry = {
         result = { ...work, editions: editions?.entries, workId: workPath };
       }
       else if (type === 'comics') {
-        let seriesId = id;
-        if (typeof id === 'string' && id.startsWith('issue_')) {
-          const issueData = await fetchMetron(`/api/issue/${id.replace('issue_', '')}/`);
+        let seriesId = cleanId;
+        if (typeof cleanId === 'string' && cleanId.startsWith('issue_')) {
+          const issueData = await fetchMetron(`/api/issue/${cleanId.replace('issue_', '')}/`);
           if (issueData?.series?.id) seriesId = issueData.series.id;
           else throw new Error('Could not resolve series from issue');
         }
         if (typeof seriesId === 'string' && seriesId.startsWith('series_')) {
           seriesId = seriesId.replace('series_', '');
         }
-        const seriesData = await fetchMetron(`/api/series/${seriesId}/`);
+        
+        let seriesData;
+        try {
+          seriesData = await fetchMetron(`/api/series/${seriesId}/`);
+        } catch (err) {
+          // Backward compatibility & error recovery: 
+          // If fetching as a series fails with 404, it might be an issue ID from legacy logs
+          // or a cached invalid prefix. Try fetching it as an issue to resolve the real series ID.
+          try {
+            const legacyIssueData = await fetchMetron(`/api/issue/${seriesId}/`);
+            if (legacyIssueData?.series?.id) {
+              seriesId = legacyIssueData.series.id;
+              seriesData = await fetchMetron(`/api/series/${seriesId}/`);
+            } else {
+              throw err;
+            }
+          } catch (fallbackErr) {
+            throw err;
+          }
+        }
         if (seriesData && seriesData.id) {
           try {
             const issuesRes = await fetchMetron(`/api/series/${seriesData.id}/issue_list/`);
@@ -491,7 +543,8 @@ export const apiRegistry = {
               if (firstIssue) {
                 if (firstIssue.image) seriesData.image = firstIssue.image;
                 if (firstIssue.credits) seriesData.credits = firstIssue.credits;
-                if (!seriesData.publisher && firstIssue.series?.publisher) seriesData.publisher = firstIssue.series.publisher;
+                if (!seriesData.publisher && firstIssue.publisher) seriesData.publisher = firstIssue.publisher;
+                else if (!seriesData.publisher && firstIssue.series?.publisher) seriesData.publisher = firstIssue.series.publisher;
                 if (firstIssue.desc) seriesData.desc = firstIssue.desc;
                 if (!seriesData.year_began && firstIssue.cover_date) {
                   const year = firstIssue.cover_date.substring(0, 4);
@@ -507,6 +560,9 @@ export const apiRegistry = {
       if (result) {
         enforceCacheLimit(sessionCache.details, 100);
         sessionCache.details.set(cacheKey, result);
+        if (type === 'comics' && typeof cleanId === 'string' && cleanId.startsWith('issue_') && result.id) {
+           sessionCache.details.set(`${type}_series_${result.id}`, result);
+        }
       }
       return result;
     } catch (err) { reportApiError(err, `${type.toUpperCase()} Details`); return null; }
