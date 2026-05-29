@@ -852,6 +852,7 @@ console.log(
 <b>Type:</b> ${typeLabel}
 ${safeProgress ? `<b>Progress:</b> ${safeProgress}\n` : ''}<b>Status:</b> ${safeStatus.toUpperCase()}
 <b>Rating:</b> ${rating ? rating + '/10' : 'None'}
+<b>Link:</b> <a href="https://project-polyhedron.netlify.app/media/${type}/${mediaId}">View in Polyhedron</a>
       `.trim();
 
       await fetch(telegramUrl, {

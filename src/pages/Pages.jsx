@@ -735,7 +735,7 @@ export const DetailView = () => {
                 {type === 'comics' && <MetaItem label="Issues" value={raw.issuesCount} />}
                 <MetaItem label="Status" value={type === 'comics' && raw.status?.toLowerCase() === 'cancelled' ? null : raw.status?.replace(/_/g, ' ')} />
                 {type === 'comics' && genres?.length > 0 && (<MetaItem label="Genres" value={genres.map(g => typeof g === 'object' ? g.name : g).join(', ')} />)}
-                {type === 'comics' && apiData?.url && (<span><span className="font-bold text-base-content">Source:</span>{' '}<a href={apiData.url} target="_blank" rel="noreferrer" className="hover:text-primary transition-colors inline-flex items-center gap-1">Metron <ExternalLink className="w-3 h-3" /></a></span>)}
+                {apiData?.url && (<span><span className="font-bold text-base-content">Source:</span>{' '}<a href={apiData.url} target="_blank" rel="noreferrer" className="hover:text-primary transition-colors inline-flex items-center gap-1">{{ tv: 'TMDB', movies: 'TMDB', games: 'IGDB', anime: 'AniList', manga: 'AniList', vn: 'VNDB', books: 'OpenLibrary', comics: 'Metron' }[type] || 'Database'} <ExternalLink className="w-3 h-3" /></a></span>)}
                 {/* Check that rating actually has a value before trying to render stars to prevent undefined crashes */}
                 {unifiedScore > 0 && <span className="flex items-center gap-1 text-warning ml-auto sm:ml-0 font-bold"><Star className="w-3 h-3 fill-warning" /> {type === 'anime' || type === 'manga' ? `${unifiedScore}%` : type === 'games' ? `${Math.round(unifiedScore)}/100` : Number(unifiedScore).toFixed(1)}</span>}
               </div>
