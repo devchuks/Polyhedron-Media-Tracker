@@ -12,10 +12,14 @@ export const Explore = () => {
   const entityName = searchParams.get('name') || 'Unknown';
   const sourceParam = searchParams.get('source');
 
-  const [data, setData] = useState(null);
-  const [entityData, setEntityData] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isGridLoading, setIsGridLoading] = useState(false);
+  const exploreCache = useMediaStore((state) => state.exploreCache) || {};
+  const setExploreCache = useMediaStore((state) => state.setExploreCache);
+  
+  const entityCacheKey = `entity_${api}_${type}_${id}`;
+
+  const [data, setData] = useState(() => exploreCache[entityCacheKey]?.data?.personData || null);
+  const [entityData, setEntityData] = useState(() => exploreCache[entityCacheKey]?.data?.companyData || null);
+  const [isLoading, setIsLoading] = useState(() => !exploreCache[entityCacheKey]);
 
   const [mediaFilter, setMediaFilter] = useState(() => {
     if (type === 'person' || type === 'creator') return 'all';
@@ -35,9 +39,12 @@ export const Explore = () => {
   const [bioExpanded, setBioExpanded] = useState(false);
 
   // Discover specific state
-  const [discoverResults, setDiscoverResults] = useState([]);
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
+  
+  const activeGridCacheKey = `grid_${api}_${type}_${id}_${mediaFilter}_${sortOrder}_1`;
+  const [discoverResults, setDiscoverResults] = useState(() => exploreCache[activeGridCacheKey]?.data?.results || []);
+  const [totalPages, setTotalPages] = useState(() => exploreCache[activeGridCacheKey]?.data?.totalPages || 1);
+  const [isGridLoading, setIsGridLoading] = useState(() => type !== 'person' && !exploreCache[activeGridCacheKey]);
   const [isFetchingMore, setIsFetchingMore] = useState(false);
 
   // Person specific pagination
@@ -53,11 +60,24 @@ export const Explore = () => {
 
   useEffect(() => {
     window.scrollTo(0, 0);
+    
+    if (exploreCache[entityCacheKey]) {
+      const pData = exploreCache[entityCacheKey].data.personData;
+      setData(pData);
+      setEntityData(exploreCache[entityCacheKey].data.companyData);
+      setIsLoading(false);
+      
+      if (pData && type === 'person') {
+        if (pData.known_for_department === 'Acting') setRoleFilter('cast');
+        else setRoleFilter('crew');
+      }
+      return;
+    }
+
     let isMounted = true;
     setIsLoading(true);
     setData(null);
     setEntityData(null);
-    setDiscoverResults([]);
 
     setSortOrder(prev => type === 'person' ? 'known_for' : (prev === 'known_for' ? 'popularity' : prev));
 
@@ -66,28 +86,29 @@ export const Explore = () => {
       apiRegistry.getPersonDetails(id).then(res => {
         if (isMounted) {
           setData(res);
+          setExploreCache(entityCacheKey, { personData: res, companyData: null });
           if (res?.known_for_department === 'Acting') setRoleFilter('cast');
           else setRoleFilter('crew');
           setIsLoading(false);
         }
       });
       } else if (type === 'studio' || type === 'company') {
-        apiRegistry.getCompanyDetails(id).then(res => { if (isMounted) { setEntityData(res); setIsLoading(false); } });
+        apiRegistry.getCompanyDetails(id).then(res => { if (isMounted) { setEntityData(res); setExploreCache(entityCacheKey, { personData: null, companyData: res }); setIsLoading(false); } });
       } else if (type === 'network') {
-        apiRegistry.getNetworkDetails(id).then(res => { if (isMounted) { setEntityData(res); setIsLoading(false); } });
+        apiRegistry.getNetworkDetails(id).then(res => { if (isMounted) { setEntityData(res); setExploreCache(entityCacheKey, { personData: null, companyData: res }); setIsLoading(false); } });
       } else {
         setIsLoading(false);
       }
     } else if (api === 'igdb') {
       if (type === 'company') {
-        apiRegistry.getIGDBCompanyDetails(id).then(res => { if (isMounted) { setEntityData(res); setIsLoading(false); } });
+        apiRegistry.getIGDBCompanyDetails(id).then(res => { if (isMounted) { setEntityData(res); setExploreCache(entityCacheKey, { personData: null, companyData: res }); setIsLoading(false); } });
       } else {
         setIsLoading(false);
       }
     } else if (api === 'anilist') {
       if (type === 'person') {
         apiRegistry.getAniListPersonDetails(id).then(res => {
-          if (isMounted) { setData(res); setRoleFilter('all'); setIsLoading(false); }
+          if (isMounted) { setData(res); setExploreCache(entityCacheKey, { personData: res, companyData: null }); setRoleFilter('all'); setIsLoading(false); }
         });
       } else {
         setIsLoading(false);
@@ -96,20 +117,24 @@ export const Explore = () => {
       if (type === 'creator') {
         apiRegistry.getMetronCreatorDetails(id).then(res => {
           if (isMounted) {
-            setData({ name: res?.name, profile_path_custom: res?.image, biography: res?.desc, known_for_department: 'Comic Creator' });
+            const creatorData = { name: res?.name, profile_path_custom: res?.image, biography: res?.desc, known_for_department: 'Comic Creator' };
+            setData(creatorData);
+            setExploreCache(entityCacheKey, { personData: creatorData, companyData: null });
             setIsLoading(false);
           }
         });
       } else if (type === 'publisher') {
         apiRegistry.getMetronPublisherDetails(id).then(res => {
           if (isMounted) {
-            setData({ 
+            const pubData = { 
               name: res?.name, 
               profile_path_custom: res?.image, 
               biography: res?.desc, 
               known_for_department: 'Comic Publisher',
               birthday: res?.founded ? new Date(res.founded, 0, 1).getFullYear().toString() : null
-            });
+            };
+            setData(pubData);
+            setExploreCache(entityCacheKey, { personData: pubData, companyData: null });
             setIsLoading(false);
           }
         });
@@ -125,15 +150,26 @@ export const Explore = () => {
   useEffect(() => {
     if (type === 'person') return;
     
+    const gridKey = `grid_${api}_${type}_${id}_${mediaFilter}_${sortOrder}_1`;
+    if (exploreCache[gridKey]) {
+      setDiscoverResults(exploreCache[gridKey].data.results);
+      setTotalPages(exploreCache[gridKey].data.totalPages);
+      setIsGridLoading(false);
+      setPage(1);
+      return;
+    }
+
     let isMounted = true;
     setIsGridLoading(true);
     setPage(1);
+    setDiscoverResults([]);
     
     if (api === 'tmdb' && ['genre', 'studio', 'network'].includes(type)) {
       apiRegistry.discoverTMDB(type, id, mediaFilter, 1, sortOrder).then(res => {
         if (isMounted) {
           setDiscoverResults(res.results);
           setTotalPages(res.totalPages);
+          setExploreCache(gridKey, { results: res.results, totalPages: res.totalPages });
           setIsGridLoading(false);
         }
       });
@@ -142,6 +178,7 @@ export const Explore = () => {
         if (isMounted) {
           setDiscoverResults(res.results);
           setTotalPages(res.totalPages);
+          setExploreCache(gridKey, { results: res.results, totalPages: res.totalPages });
           setIsGridLoading(false);
         }
       });
@@ -150,6 +187,7 @@ export const Explore = () => {
         if (isMounted) {
           setDiscoverResults(res.results);
           setTotalPages(res.totalPages);
+          setExploreCache(gridKey, { results: res.results, totalPages: res.totalPages });
           setIsGridLoading(false);
         }
       });
@@ -158,6 +196,7 @@ export const Explore = () => {
         if (isMounted) {
           setDiscoverResults(res.results);
           setTotalPages(res.totalPages);
+          setExploreCache(gridKey, { results: res.results, totalPages: res.totalPages });
           setIsGridLoading(false);
         }
       });
@@ -172,22 +211,35 @@ export const Explore = () => {
     setIsFetchingMore(true);
     setPage(newPage);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    const newGridCacheKey = `grid_${api}_${type}_${id}_${mediaFilter}_${sortOrder}_${newPage}`;
+    if (exploreCache[newGridCacheKey]) {
+      setDiscoverResults(exploreCache[newGridCacheKey].data.results);
+      setTotalPages(exploreCache[newGridCacheKey].data.totalPages);
+      setIsFetchingMore(false);
+      return;
+    }
+
     if (api === 'tmdb') {
       const res = await apiRegistry.discoverTMDB(type, id, mediaFilter, newPage, sortOrder);
       setDiscoverResults(res.results);
       setTotalPages(res.totalPages);
+      setExploreCache(newGridCacheKey, { results: res.results, totalPages: res.totalPages });
     } else if (api === 'igdb') {
       const res = await apiRegistry.discoverIGDB(type, id, newPage, sortOrder);
       setDiscoverResults(res.results);
       setTotalPages(res.totalPages);
+      setExploreCache(newGridCacheKey, { results: res.results, totalPages: res.totalPages });
     } else if (api === 'anilist') {
       const res = await apiRegistry.discoverAniList(type, id, mediaFilter, newPage, sortOrder);
       setDiscoverResults(res.results);
       setTotalPages(res.totalPages);
+      setExploreCache(newGridCacheKey, { results: res.results, totalPages: res.totalPages });
     } else if (api === 'metron') {
       const res = await apiRegistry.discoverMetron(type, id, newPage);
       setDiscoverResults(res.results);
       setTotalPages(res.totalPages);
+      setExploreCache(newGridCacheKey, { results: res.results, totalPages: res.totalPages });
     }
     setIsFetchingMore(false);
   };
@@ -254,6 +306,31 @@ export const Explore = () => {
     return res;
   }, [credits, mediaFilter, roleFilter, sortOrder]);
 
+  const handleComicCardClick = async (item) => {
+    let targetId = item.id;
+    if (api === 'metron' && type === 'publisher' && typeof targetId === 'string' && targetId.startsWith('issue_')) {
+      setIsGridLoading(true);
+      try {
+        const issueId = targetId.replace('issue_', '');
+        const issueData = await apiRegistry.getComicIssueDetails(issueId);
+        if (issueData?.series?.id) {
+          targetId = `series_${issueData.series.id}`;
+          item.id = targetId;
+          item.title = issueData.series.name || item.title;
+        }
+      } catch (e) { console.error(e); }
+      setIsGridLoading(false);
+    }
+    navigate(`/media/comics/${targetId}`, { state: { previewData: item } });
+  };
+
+  const handleComicCardHover = (item) => {
+    if (api === 'metron' && type === 'publisher' && typeof item.id === 'string' && item.id.startsWith('issue_')) {
+      const issueId = item.id.replace('issue_', '');
+      apiRegistry.getComicIssueDetails(issueId).catch(() => {});
+    }
+  };
+
   const handleModalNavigate = async (issue) => {
     setSelectedIssue(issue);
     setIsModalLoading(true);
@@ -310,9 +387,9 @@ export const Explore = () => {
       {isPersonLayout ? (
         <div className="flex flex-row gap-4 sm:gap-6 bg-base-100 border border-base-300 p-4 sm:p-6 pt-12 sm:pt-14 shadow-xl items-start relative">
           <button onClick={() => navigate(-1)} className="absolute top-2 left-2 sm:top-4 sm:left-4 flex items-center justify-center h-8 px-2 sm:px-3 rounded-none appearance-none font-mono text-[10px] uppercase tracking-widest bg-transparent hover:bg-base-200 text-base-content/60 hover:text-base-content transition-colors z-20"><ArrowLeft className="w-4 h-4 sm:mr-1" /><span className="hidden sm:inline">Back</span></button>
-          <div className={`w-24 sm:w-32 md:w-48 shrink-0 bg-base-200 border border-base-300 overflow-hidden relative shadow-sm ${type === 'publisher' ? 'aspect-square sm:aspect-video bg-transparent border-none' : 'aspect-[2/3]'}`}>
+          <div className={`w-24 sm:w-32 md:w-48 shrink-0 relative shadow-sm ${type === 'publisher' ? 'bg-transparent border-none shadow-none' : 'bg-base-200 border border-base-300 overflow-hidden aspect-[2/3]'}`}>
             {profileUrl ? (
-              <img src={profileUrl} alt={data?.name || entityName} className={`w-full h-full ${type === 'publisher' ? 'object-contain' : 'object-cover'}`} />
+              <img src={profileUrl} alt={data?.name || entityName} className={`w-full ${type === 'publisher' ? 'h-auto object-contain' : 'h-full object-cover'}`} />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-base-content/20">{type === 'publisher' ? <ImageIcon className="w-8 h-8 md:w-12 md:h-12" /> : <User className="w-8 h-8 md:w-12 md:h-12" />}</div>
             )}
@@ -370,7 +447,6 @@ export const Explore = () => {
               <h1 className="text-3xl md:text-4xl font-black uppercase tracking-tight font-sans leading-none text-primary text-center">{entityData?.name || entityName}</h1>
             )}
           </div>
-          <p className="text-[10px] font-mono opacity-50 uppercase tracking-widest relative z-10 text-center mt-2">{type === 'genre' ? 'Genre' : type === 'studio' ? 'Production Studio' : 'Television Network'} Explorer</p>
         </div>
       )}
 
@@ -439,7 +515,8 @@ export const Explore = () => {
               <MediaCard 
                 key={`${item.type}_${item.id}_${idx}`} 
                 item={item} 
-                onClickOverride={api === 'metron' && type === 'creator' ? () => setSelectedCreatorSeries(item) : undefined}
+                onClickOverride={api === 'metron' && (type === 'creator' || type === 'publisher') ? (type === 'creator' ? () => setSelectedCreatorSeries(item) : handleComicCardClick) : undefined}
+                onMouseEnterOverride={api === 'metron' && type === 'publisher' ? () => handleComicCardHover(item) : undefined}
               />
             ))}
           </div>

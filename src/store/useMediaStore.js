@@ -251,6 +251,14 @@ export const useMediaStore = create(
         discoveryCache: { ...state.discoveryCache, [type]: { data, timestamp: Date.now() } }
       })),
 
+      exploreCache: {},
+      setExploreCache: (key, data) => set(state => {
+        const newCache = { ...state.exploreCache, [key]: { data, timestamp: Date.now() } };
+        const keys = Object.keys(newCache);
+        if (keys.length > 50) delete newCache[keys[0]];
+        return { exploreCache: newCache };
+      }),
+
       media: initialMediaState,
       importQueue: [], 
       mediaLogs: [],
@@ -487,7 +495,7 @@ export const useMediaStore = create(
         }
       },
       partialize: (state) => {
-        const { _hasHydrated, isAutoProcessing, isBatchCommitting, isCloudSyncing, realtimeSubscription, activeDiaryModal, ...stateToSave } = state;
+        const { _hasHydrated, isAutoProcessing, isBatchCommitting, isCloudSyncing, realtimeSubscription, activeDiaryModal, exploreCache, ...stateToSave } = state;
         const slimMedia = {};
         for (const key in stateToSave.media) {
           slimMedia[key] = stateToSave.media[key].map(item => {

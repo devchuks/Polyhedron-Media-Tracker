@@ -258,8 +258,19 @@ export const AppLayout = () => {
     }
   };
 
-  const handleSelectItem = (apiItem) => {
-    setSearchState(prev => ({ ...prev, isOpen: false }));
+  const handleSelectItem = async (apiItem) => {
+    if (searchState.type === 'comics' && typeof apiItem.id === 'string' && apiItem.id.startsWith('issue_')) {
+      setSearchState(prev => ({ ...prev, isLoading: true }));
+      try {
+        const issueId = apiItem.id.replace('issue_', '');
+        const issueDetails = await apiRegistry.getComicIssueDetails(issueId);
+        if (issueDetails?.series?.id) {
+          apiItem.id = `series_${issueDetails.series.id}`;
+          apiItem.title = issueDetails.series.name || apiItem.title;
+        }
+      } catch(e) { console.error(e); }
+    }
+    setSearchState(prev => ({ ...prev, isOpen: false, isLoading: false }));
     navigate(`/media/${searchState.type}/${apiItem.id}`, { state: { previewData: apiItem } });
   };
 

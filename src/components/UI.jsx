@@ -62,7 +62,7 @@ export const formatProgressLabel = (prog, type) => {
   if (!isNaN(num)) {
     if (type === 'tv' || type === 'anime') return `Ep. ${num}`;
     if (type === 'manga' || type === 'books') return `Ch. ${num}`;
-    if (type === 'comics') return `Iss. ${num}`;
+    if (type === 'comics') return `No. of issues: ${num}`;
     if (type === 'games' || type === 'vn') return `${num}%`;
   }
   return prog;
@@ -668,12 +668,12 @@ export const StarRating = ({ rating = 0, onChange, readOnly = false }) => {
   );
 };
 
-export const MediaCard = ({ item, onClickOverride }) => {
+export const MediaCard = ({ item, onClickOverride, onMouseEnterOverride }) => {
   const image = resolveMediaImage(item, item.type, 'md');
   const colors = getMediaTypeColors(item.type);
 
   const Wrapper = onClickOverride ? 'div' : Link;
-  const props = onClickOverride ? { onClick: () => onClickOverride(item) } : { to: `/media/${item.type}/${item.id}`, state: { previewData: item } };
+  const props = onClickOverride ? { onClick: () => onClickOverride(item), onMouseEnter: onMouseEnterOverride, onFocus: onMouseEnterOverride } : { to: `/media/${item.type}/${item.id}`, state: { previewData: item }, onMouseEnter: onMouseEnterOverride, onFocus: onMouseEnterOverride };
 
   return (
     <Wrapper {...props} className={`group relative bg-base-100 border-y border-r border-base-300 border-l-4 border-l-transparent ${colors.hoverBorder} transition-all duration-200 hover:shadow-md cursor-pointer flex flex-col h-full`}>
@@ -737,14 +737,32 @@ const SearchModalItem = ({ item, type, onSelect, handleQuickAdd }) => {
   const [isOpen, setIsOpen] = useState(false);
   const thumbImage = resolveMediaImage(item, type, 'thumb') || item.image;
   
+  const handleHover = () => {
+    if (type === 'comics' && typeof item.id === 'string' && item.id.startsWith('issue_')) {
+      const issueId = item.id.replace('issue_', '');
+      apiRegistry.getComicIssueDetails(issueId).catch(() => {});
+    }
+  };
+
   return (
-    <div onClick={() => onSelect(item)} tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') onSelect(item); }} className="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 hover:bg-base-200 focus:bg-base-200 focus:outline-none transition-colors group cursor-pointer border-b border-base-300 last:border-b-0 relative">
+    <div onClick={() => onSelect(item)} onMouseEnter={handleHover} onFocus={handleHover} tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') onSelect(item); }} className="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 hover:bg-base-200 focus:bg-base-200 focus:outline-none transition-colors group cursor-pointer border-b border-base-300 last:border-b-0 relative">
       <div className="w-10 h-14 sm:w-12 sm:h-16 flex-shrink-0 bg-base-300 border border-base-300 overflow-hidden relative">
         <ImageWithFallback src={thumbImage} alt={item.title} className="grayscale-[20%] group-hover:grayscale-0 object-cover" />
       </div>
       <div className="flex-1 min-w-0 flex flex-col">
         <h3 className="text-sm font-bold uppercase tracking-wide truncate group-hover:text-primary transition-colors font-sans">{item.title}</h3>
-        <div className="flex items-center gap-2 mt-1"><span className="text-[9px] font-mono font-bold bg-base-100 border border-base-300 text-base-content px-1.5 py-0.5 uppercase tracking-widest">{item.year || 'UNKNOWN'}</span><span className="text-[9px] font-mono font-bold text-base-content/50 uppercase tracking-widest truncate">{item.subtitle || item.description?.substring(0, 50) + '...'}</span></div>
+        <div className="flex items-center gap-2 mt-1">
+          <span className="text-[9px] font-mono font-bold bg-base-100 border border-base-300 text-base-content px-1.5 py-0.5 uppercase tracking-widest">{item.year || 'UNKNOWN'}</span>
+          {type === 'comics' ? (
+            <span className="text-[9px] font-mono font-bold text-base-content/50 uppercase tracking-widest truncate">
+              {item.apiData?.raw?.series?.publisher?.name || item.apiData?.raw?.publisher?.name || (typeof item.apiData?.raw?.publisher === 'string' ? item.apiData?.raw?.publisher : 'Unknown Publisher')}
+            </span>
+          ) : (
+            <span className="text-[9px] font-mono font-bold text-base-content/50 uppercase tracking-widest truncate">
+              {item.subtitle || (item.description && !item.description.includes('No description') ? item.description.substring(0, 50) + '...' : '')}
+            </span>
+          )}
+        </div>
       </div>
       <div className="relative" onClick={e => e.stopPropagation()}>
         <div role="button" tabIndex={0} onClick={() => setIsOpen(!isOpen)} className="flex items-center justify-center w-8 h-8 bg-transparent border border-base-300 text-primary hover:bg-base-300 rounded-none appearance-none opacity-100 sm:opacity-50 sm:group-hover:opacity-100 transition-all shrink-0 cursor-pointer relative z-10"><Plus className="w-4 h-4" /></div>
@@ -771,9 +789,21 @@ export const SearchModal = ({ isOpen, onClose, results, isLoading, query, type, 
 
   if (!isOpen) return null;
 
-  const handleQuickAdd = (e, item, status) => {
+  const handleQuickAdd = async (e, item, status) => {
     e.stopPropagation();
     onClose();
+    
+    if (type === 'comics' && typeof item.id === 'string' && item.id.startsWith('issue_')) {
+      try {
+        const issueId = item.id.replace('issue_', '');
+        const issueDetails = await apiRegistry.getComicIssueDetails(issueId);
+        if (issueDetails?.series?.id) {
+          item.id = `series_${issueDetails.series.id}`;
+          item.title = issueDetails.series.name || item.title;
+        }
+      } catch(err) { console.error(err); }
+    }
+
     openDiaryModal({ targetItem: item, type, isPreview: true, targetStatus: status, apiData: item, titleToSave: item.title });
   };
 
@@ -901,7 +931,7 @@ export const CreativeTeamSection = ({ type, raw, isDeepFetching, genres, platfor
   // Resolve comic staff dynamically to recover missing IDs from older caches
   const comicStaff = type === 'comics' && raw.credits ? extractMetronStaff(raw.credits) : raw.staff;
 
-  const renderMetronPills = (staffList, prefix) => (staffList || []).map((c, i) => {
+  const renderMetronPills = (staffList, prefix) => (staffList || []).slice(0, 6).map((c, i) => {
     const cName = typeof c === 'object' && c !== null ? (c.name || 'Unknown') : c;
     const cId = typeof c === 'object' && c !== null ? c.id : null;
     const toLink = cId ? `/explore/metron/creator/${cId}?name=${encodeURIComponent(cName)}` : undefined;
@@ -936,14 +966,21 @@ export const CreativeTeamSection = ({ type, raw, isDeepFetching, genres, platfor
         )}
         {type === 'comics' && (
           <div className="flex flex-row flex-wrap gap-x-8 gap-y-2">
-            <Section isLoading={isDeepFetching && !(comicStaff?.Writer?.length)} title="Writer">{renderMetronPills(comicStaff?.Writer, 'w')}</Section>
-            <Section isLoading={isDeepFetching && !(comicStaff?.Penciller?.length)} title="Penciller">{renderMetronPills(comicStaff?.Penciller, 'p')}</Section>
-            <Section isLoading={isDeepFetching && !(comicStaff?.Artist?.length)} title="Artist">{renderMetronPills(comicStaff?.Artist, 'a')}</Section>
-            <Section isLoading={isDeepFetching && !(comicStaff?.Inker?.length)} title="Inker">{renderMetronPills(comicStaff?.Inker, 'ink')}</Section>
-            <Section isLoading={isDeepFetching && !(comicStaff?.Colorist?.length)} title="Colorist">{renderMetronPills(comicStaff?.Colorist, 'col')}</Section>
-            <Section isLoading={isDeepFetching && !(comicStaff?.Letterer?.length)} title="Letterer">{renderMetronPills(comicStaff?.Letterer, 'let')}</Section>
-            <Section isLoading={isDeepFetching && !(comicStaff?.Editor?.length)} title="Editor">{renderMetronPills(comicStaff?.Editor, 'ed')}</Section>
-            <Section isLoading={isDeepFetching && !(comicStaff?.["Cover Artist"]?.length)} title="Cover Artist">{renderMetronPills(comicStaff?.["Cover Artist"], 'cov')}</Section>
+              {(() => {
+                const hasAnyStaff = comicStaff && Object.keys(comicStaff).length > 0;
+                return (
+                  <>
+                    <Section isLoading={isDeepFetching && !hasAnyStaff && !(comicStaff?.Writer?.length)} title="Writer">{renderMetronPills(comicStaff?.Writer, 'w')}</Section>
+                    <Section isLoading={isDeepFetching && !hasAnyStaff && !(comicStaff?.Penciller?.length)} title="Penciller">{renderMetronPills(comicStaff?.Penciller, 'p')}</Section>
+                    <Section isLoading={isDeepFetching && !hasAnyStaff && !(comicStaff?.Artist?.length)} title="Artist">{renderMetronPills(comicStaff?.Artist, 'a')}</Section>
+                    <Section isLoading={isDeepFetching && !hasAnyStaff && !(comicStaff?.Inker?.length)} title="Inker">{renderMetronPills(comicStaff?.Inker, 'ink')}</Section>
+                    <Section isLoading={isDeepFetching && !hasAnyStaff && !(comicStaff?.Colorist?.length)} title="Colorist">{renderMetronPills(comicStaff?.Colorist, 'col')}</Section>
+                    <Section isLoading={isDeepFetching && !hasAnyStaff && !(comicStaff?.Letterer?.length)} title="Letterer">{renderMetronPills(comicStaff?.Letterer, 'let')}</Section>
+                    <Section isLoading={isDeepFetching && !hasAnyStaff && !(comicStaff?.Editor?.length)} title="Editor">{renderMetronPills(comicStaff?.Editor, 'ed')}</Section>
+                    <Section isLoading={isDeepFetching && !hasAnyStaff && !(comicStaff?.["Cover Artist"]?.length)} title="Cover Artist">{renderMetronPills(comicStaff?.["Cover Artist"], 'cov')}</Section>
+                  </>
+                );
+              })()}
           </div>
         )}
         {type === 'books' && <Section isLoading={isDeepFetching && !(raw.subjects?.length)} title="Subjects">{(raw.subjects || []).map((g, i) => <Tag key={`subj-${g}-${i}`} text={g} />)}</Section>}
@@ -1134,7 +1171,7 @@ export const ComicIssueModal = ({ isOpen, onClose, issue, details, isLoading, is
                     {isRead ? '✓ Marked as Read' : 'Mark as Read'}
                   </button>
                   {targetSeriesId && (
-                    <Link to={`/media/comics/series_${targetSeriesId}`} onClick={onClose} className="hidden sm:flex items-center justify-center w-full h-10 border border-base-300 bg-base-200 hover:bg-base-300 hover:border-primary hover:text-primary rounded-none appearance-none font-mono text-[10px] uppercase tracking-widest transition-colors">
+                    <Link to={`/media/comics/series_${targetSeriesId}`} state={{ previewData: { id: `series_${targetSeriesId}`, title: details?.series?.name || issue.series?.name || 'Unknown Series', type: 'comics', image: null, raw: { ...(details?.series || issue.series || {}), image: null } } }} onClick={onClose} className="hidden sm:flex items-center justify-center w-full h-10 border border-base-300 bg-base-200 hover:bg-base-300 hover:border-primary hover:text-primary rounded-none appearance-none font-mono text-[10px] uppercase tracking-widest transition-colors">
                       View Full Series
                     </Link>
                   )}
@@ -1182,7 +1219,7 @@ export const ComicIssueModal = ({ isOpen, onClose, issue, details, isLoading, is
                   {isRead ? '✓ Marked as Read' : 'Mark as Read'}
                 </button>
                 {targetSeriesId && (
-                  <Link to={`/media/comics/series_${targetSeriesId}`} onClick={onClose} className="flex items-center justify-center w-full h-12 border border-base-300 bg-base-200 hover:bg-base-300 hover:border-primary hover:text-primary rounded-none appearance-none font-mono text-[10px] uppercase tracking-widest transition-colors shadow-lg">
+                  <Link to={`/media/comics/series_${targetSeriesId}`} state={{ previewData: { id: `series_${targetSeriesId}`, title: details?.series?.name || issue.series?.name || 'Unknown Series', type: 'comics', image: null, raw: { ...(details?.series || issue.series || {}), image: null } } }} onClick={onClose} className="flex items-center justify-center w-full h-12 border border-base-300 bg-base-200 hover:bg-base-300 hover:border-primary hover:text-primary rounded-none appearance-none font-mono text-[10px] uppercase tracking-widest transition-colors shadow-lg">
                     View Full Series
                   </Link>
                 )}

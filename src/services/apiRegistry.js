@@ -114,30 +114,6 @@ const enforceCacheLimit = (map, limit = 50) => {
   }
 };
 
-const mergeSeriesAndIssues = (seriesList, issuesList) => {
-  return seriesList.map(series => {
-    const sName = String(series.name || '').trim().toLowerCase();
-    const sYear = series.year_began;
-    const issueMatch = issuesList.find(issue => {
-      const iName = String(issue.series?.name || issue.series || '').trim().toLowerCase();
-      if (iName !== sName) return false;
-      if (issue.volume && series.volume && issue.volume === series.volume) return true;
-      const iYear = issue.cover_date ? parseInt(issue.cover_date.substring(0, 4)) : null;
-      if (iYear === sYear || Math.abs(iYear - sYear) <= 1) return true;
-      return false;
-    }) || issuesList.find(issue => String(issue.series?.name || issue.series || '').trim().toLowerCase() === sName);
-
-    return {
-      ...series,
-      isGroupedSeries: true,
-      grouped_issue_count: series.issue_count,
-      image: issueMatch ? issueMatch.image : null,
-      credits: issueMatch ? issueMatch.credits : null,
-      publisher: series.publisher || (issueMatch ? (issueMatch.publisher || issueMatch.series?.publisher) : null),
-    };
-  });
-};
-
 export const apiRegistry = {
   searchMovies: async (query, page = 1) => {
     try {
@@ -246,24 +222,51 @@ export const apiRegistry = {
         searchQuery = searchQuery.replace(yearMatch[0], '').replace(/\s{2,}/g, ' ').trim();
       }
 
-      const seriesParams = new URLSearchParams({ name: searchQuery, page, page_size: 20 });
-      if (coverYear) seriesParams.append('year_began', coverYear);
-
       const issueParams = new URLSearchParams();
       issueParams.append('series_name', searchQuery);
       issueParams.append('number', '1');
-      issueParams.append('page_size', '100');
+      issueParams.append('page_size', '500');
       if (coverYear) issueParams.append('cover_year', coverYear);
 
-      const [seriesRes, issueRes] = await Promise.all([
-        fetchMetron(`/api/series/?${seriesParams.toString()}`),
-        fetchMetron(`/api/issue/?${issueParams.toString()}`)
-      ]);
+      const issueRes = await fetchMetron(`/api/issue/?${issueParams.toString()}`);
 
-      const merged = mergeSeriesAndIssues(seriesRes.results || [], issueRes.results || []);
-      const totalPages = seriesRes.count ? Math.ceil(seriesRes.count / 20) : 1;
+      const seriesMap = new Map();
+      (issueRes.results || []).forEach(issue => {
+        const sName = String(issue.series?.name || issue.series || '').trim();
+        if (!sName) return;
+        const sId = issue.series?.id || (typeof issue.series === 'number' ? issue.series : null);
+        const iYear = issue.cover_date ? issue.cover_date.substring(0, 4) : 'Unknown';
+        const key = sId || `${sName}_${iYear}`;
+        if (!seriesMap.has(key)) {
+          seriesMap.set(key, { ...issue, isGroupedSeries: true, _extractedId: sId });
+        } else {
+          const entry = seriesMap.get(key);
+          if (sId && !entry._extractedId) entry._extractedId = sId;
+        }
+      });
 
-      return { results: merged.map(normalizeMetron), totalPages };
+      const allResults = Array.from(seriesMap.values()).map(entry => {
+        const norm = normalizeMetron(entry);
+        if (entry._extractedId) {
+          norm.id = `series_${entry._extractedId}`;
+        } else {
+          norm.id = `issue_${entry.id}`;
+        }
+        
+        let baseTitle = entry.series?.name || (typeof entry.series === 'string' ? entry.series : null) || norm.title;
+        norm.title = baseTitle.replace(/\sVol(?:ume)?\s\d+/i, '').trim();
+        norm.subtype = 'Comic Series';
+        delete norm.subtitle;
+        delete norm.progress;
+        return norm;
+      });
+
+      const perPage = 20;
+      const totalPages = Math.ceil(allResults.length / perPage) || 1;
+      const start = (page - 1) * perPage;
+      const paginatedResults = allResults.slice(start, start + perPage);
+
+      return { results: paginatedResults, totalPages };
     } catch (err) {
       reportApiError(err, 'Metron (Comics)');
       return { results: [], totalPages: 1 };
@@ -285,38 +288,100 @@ export const apiRegistry = {
   discoverMetron: async (filterType, filterId, page = 1) => {
     try {
       if (filterType === 'publisher') {
-        const seriesParams = new URLSearchParams({ publisher_id: filterId, page, page_size: 24 });
-        const issueParams = new URLSearchParams({ publisher_id: filterId, number: 1, page_size: 100 });
-        
-        const [seriesRes, issueRes] = await Promise.all([
-          fetchMetron(`/api/series/?${seriesParams.toString()}`),
-          fetchMetron(`/api/issue/?${issueParams.toString()}`)
-        ]);
-
-        const merged = mergeSeriesAndIssues(seriesRes.results || [], issueRes.results || []);
-        const totalPages = seriesRes.count ? Math.ceil(seriesRes.count / 24) : 1;
-        
-        return { results: merged.map(normalizeMetron), totalPages };
-      } else if (filterType === 'creator') {
-        const endpoint = `/api/issue/?creator_id=${filterId}&page=${page}&page_size=50`;
+        const endpoint = `/api/issue/?publisher_id=${filterId}&number=1&page=${page}&page_size=24`;
         const data = await fetchMetron(endpoint);
         
         const seriesMap = new Map();
         (data.results || []).forEach(issue => {
           const sName = String(issue.series?.name || issue.series || '').trim();
           if (!sName) return;
-          if (!seriesMap.has(sName)) {
-            seriesMap.set(sName, { ...issue, isGroupedSeries: true, grouped_issue_count: 1, creator_issues: [issue] });
+          const sId = issue.series?.id || (typeof issue.series === 'number' ? issue.series : null);
+          const key = sId || sName;
+          if (!seriesMap.has(key)) {
+            seriesMap.set(key, { ...issue, isGroupedSeries: true, _extractedId: sId });
           } else {
-            const entry = seriesMap.get(sName);
-            entry.grouped_issue_count++;
-            entry.creator_issues.push(issue);
+            const entry = seriesMap.get(key);
+            if (sId && !entry._extractedId) entry._extractedId = sId;
           }
         });
 
-        const results = Array.from(seriesMap.values()).map(normalizeMetron);
-        const totalPages = data.count ? Math.ceil(data.count / 50) : 1;
+        const results = Array.from(seriesMap.values()).map(entry => {
+          const norm = normalizeMetron(entry);
+          if (entry._extractedId) {
+            norm.id = `series_${entry._extractedId}`;
+          } else {
+            norm.id = `issue_${entry.id}`;
+          }
+          
+          norm.title = entry.series?.name || (typeof entry.series === 'string' ? entry.series : null) || norm.title;
+          norm.subtype = 'Comic Series';
+          const issuesCount = entry.series?.issue_count || entry.series?.issuesCount || 1;
+          norm.subtitle = `${issuesCount} Issue${issuesCount === 1 ? '' : 's'}`;
+          norm.progress = norm.subtitle;
+          return norm;
+        });
+
+        const totalPages = data.count ? Math.ceil(data.count / 24) : 1;
         return { results, totalPages };
+      } else if (filterType === 'creator') {
+        const cacheKey = `creator_series_${filterId}`;
+        let seriesArray = sessionCache.seasons.get(cacheKey);
+
+        if (!seriesArray) {
+          // Fetch first page to grab count and initial payload
+          const firstPage = await fetchMetron(`/api/issue/?creator_id=${filterId}&page=1&page_size=100`);
+          const allIssues = [...(firstPage.results || [])];
+          
+          // Automatically grab remaining pages in parallel to group them properly (cap at 1000 items)
+          if (firstPage.count > 100) {
+            const maxPages = Math.ceil(Math.min(firstPage.count, 1000) / 100);
+            const promises = [];
+            for (let i = 2; i <= maxPages; i++) {
+              promises.push(fetchMetron(`/api/issue/?creator_id=${filterId}&page=${i}&page_size=100`).catch(() => ({ results: [] })));
+            }
+            const restPages = await Promise.all(promises);
+            restPages.forEach(p => allIssues.push(...(p.results || [])));
+          }
+
+          const seriesMap = new Map();
+          allIssues.forEach(issue => {
+            const sName = String(issue.series?.name || issue.series || '').trim();
+            if (!sName) return;
+            const sId = issue.series?.id || (typeof issue.series === 'number' ? issue.series : null);
+            const key = sId || sName;
+            if (!seriesMap.has(key)) {
+              seriesMap.set(key, { ...issue, isGroupedSeries: true, creator_issues: [issue], _extractedId: sId });
+            } else {
+              const entry = seriesMap.get(key);
+              if (!entry.creator_issues.find(i => i.id === issue.id)) entry.creator_issues.push(issue);
+              if (sId && !entry._extractedId) entry._extractedId = sId;
+            }
+          });
+
+          seriesArray = Array.from(seriesMap.values()).map(entry => {
+            const norm = normalizeMetron(entry);
+            if (entry._extractedId) {
+              norm.id = `series_${entry._extractedId}`;
+            } else {
+              norm.id = `issue_${entry.id}`;
+            }
+            
+            norm.title = entry.series?.name || (typeof entry.series === 'string' ? entry.series : null) || norm.title;
+            norm.subtype = 'Comic Series';
+            const issuesCount = entry.series?.issue_count || entry.series?.issuesCount || entry.creator_issues?.length || 1;
+            norm.subtitle = `${issuesCount} Issue${issuesCount === 1 ? '' : 's'}`;
+            norm.progress = norm.subtitle;
+            return norm;
+          });
+          enforceCacheLimit(sessionCache.seasons, 50);
+          sessionCache.seasons.set(cacheKey, seriesArray);
+        }
+
+        const ITEMS_PER_PAGE = 24;
+        const totalPages = Math.ceil(seriesArray.length / ITEMS_PER_PAGE) || 1;
+        const paginated = seriesArray.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
+
+        return { results: paginated, totalPages };
       }
       return { results: [], totalPages: 1 };
     } catch (err) { reportApiError(err, 'Metron Discover'); return { results: [], totalPages: 1 }; }
