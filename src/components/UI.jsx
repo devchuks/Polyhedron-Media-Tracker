@@ -57,15 +57,16 @@ export const getMediaTypeColors = (type) => {
 
 export const formatProgressLabel = (prog, type) => {
   if (!prog || prog === 'Not Started' || prog === 'COMPLETED') return null;
-  if (prog.includes('S') && prog.includes('E')) return prog; 
-  const num = parseInt(prog);
+  const strProg = String(prog); // Defensively cast to string in case a raw number was saved
+  if (strProg.includes('S') && strProg.includes('E')) return strProg; 
+  const num = parseInt(strProg);
   if (!isNaN(num)) {
     if (type === 'tv' || type === 'anime') return `Ep. ${num}`;
     if (type === 'manga' || type === 'books') return `Ch. ${num}`;
     if (type === 'comics') return `No. of issues: ${num}`;
     if (type === 'games' || type === 'vn') return `${num}%`;
   }
-  return prog;
+  return strProg;
 };
 
 export const stripHtml = (html) => {
@@ -80,8 +81,15 @@ export const stripHtml = (html) => {
 
 export const getOptimizedImage = (url, w = 342) => {
   if (!url) return null;
-  if (url.includes('vndb.org') || url.includes('image.tmdb.org') || url.includes('images.igdb.com') || url.includes('wsrv.nl')) return url;
-  return `https://wsrv.nl/?url=${encodeURIComponent(url)}&w=${w}&output=webp`;
+  let safeUrl = url;
+  // Defensive check in case the API payload accidentally saved the image as a raw object
+  if (typeof safeUrl === 'object') {
+    safeUrl = safeUrl.url || safeUrl.image || safeUrl.thumbnail || null;
+  }
+  if (typeof safeUrl !== 'string') return null;
+
+  if (safeUrl.includes('vndb.org') || safeUrl.includes('image.tmdb.org') || safeUrl.includes('images.igdb.com') || safeUrl.includes('wsrv.nl')) return safeUrl;
+  return `https://wsrv.nl/?url=${encodeURIComponent(safeUrl)}&w=${w}&output=webp`;
 };
 
 export const resolveMediaImage = (item, type, size = 'md') => {
