@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { useMediaStore, useUIStore } from '../store/useMediaStore';
-import { MediaCard, MediaListRow, StarRating, getMediaTypeColors, SectionWrapper, TextBlockSkeleton, PillSkeleton, MetaItem, EpisodeCard, ImageWithFallback, getSubtype, CreativeTeamSection, UserActivitySection, GalleryAndLinks, ComicIssuesSection, formatFancyDate, getDynamicStatusLabel, getStatusColor, stripHtml, resolveMediaImage } from '../components/UI';
+import { MediaCard, MediaListRow, StarRating, getMediaTypeColors, SectionWrapper, TextBlockSkeleton, PillSkeleton, MetaItem, EpisodeCard, ImageWithFallback, getSubtype, CreativeTeamSection, UserActivitySection, GalleryAndLinks, ComicIssuesSection, formatFancyDate, getDynamicStatusLabel, getStatusColor, stripHtml, resolveMediaImage, formatMarkdownLinks } from '../components/UI';
 import { Star, ArrowLeft, Loader2, Filter, PlayCircle, X, ExternalLink, ChevronLeft, ChevronRight, Edit3, Plus, ChevronDown, ChevronUp, Download, LayoutGrid, List, Compass, Search, CalendarDays } from 'lucide-react';
 import { apiRegistry } from '../services/apiRegistry';
 import { processDetailRaw } from '../utils/normalizers';
@@ -304,32 +304,39 @@ export const MediaCategory = () => {
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'smooth' }); }, [currentPage]);
   useEffect(() => { setCurrentPage(1); }, [category, filter, sort, searchQuery]);
 
-  const getYear = (i) => {
-    if (i.year) return parseInt(i.year);
-    if (i.apiData?.year) return parseInt(i.apiData.year);
-    const raw = i.apiData?.raw || {};
-    if (raw.release_date) return parseInt(raw.release_date.substring(0,4));
-    if (raw.first_air_date) return parseInt(raw.first_air_date.substring(0,4));
-    if (raw.startDate?.year) return parseInt(raw.startDate.year);
-    if (raw.first_release_date) return new Date(raw.first_release_date * 1000).getFullYear();
-    if (raw.year_began) return parseInt(raw.year_began);
-    return 0;
-  };
+  const processedItems = React.useMemo(() => {
+    let displayItems = items.filter(item => filter === 'all' || item.status === filter);
 
-  let displayItems = items.filter(item => filter === 'all' || item.status === filter);
+    if (searchQuery.trim()) {
+      const lowerQ = searchQuery.toLowerCase();
+      displayItems = displayItems.filter(item => String(item.title || '').toLowerCase().includes(lowerQ));
+    }
 
-  if (searchQuery.trim()) {
-    const lowerQ = searchQuery.toLowerCase();
-    displayItems = displayItems.filter(item => item.title?.toLowerCase().includes(lowerQ));
-  }
+    const getYear = (i) => {
+      const y1 = parseInt(i.year);
+      if (!isNaN(y1)) return y1;
+      const y2 = parseInt(i.apiData?.year);
+      if (!isNaN(y2)) return y2;
+      
+      const raw = i.apiData?.raw || {};
+      if (raw.release_date) return parseInt(raw.release_date.substring(0,4)) || 0;
+      if (raw.first_air_date) return parseInt(raw.first_air_date.substring(0,4)) || 0;
+      if (raw.startDate?.year) return parseInt(raw.startDate.year) || 0;
+      if (raw.first_release_date) return new Date(raw.first_release_date * 1000).getFullYear() || 0;
+      if (raw.year_began) return parseInt(raw.year_began) || 0;
+      return 0;
+    };
 
-  if (sort === 'dateAdded') displayItems.sort((a,b) => (b.addedAt || b.dateAdded || 0) - (a.addedAt || a.dateAdded || 0));
-  else if (sort === 'dateStarted') displayItems.sort((a,b) => (b.dateStarted || 0) - (a.dateStarted || 0));
-  else if (sort === 'dateFinished') displayItems.sort((a,b) => (b.dateCompleted || 0) - (a.dateCompleted || 0));
-  else if (sort === 'releaseYear') displayItems.sort((a,b) => getYear(b) - getYear(a));
-  else if (sort === 'releaseYearAsc') displayItems.sort((a,b) => getYear(a) - getYear(b));
-  else if (sort === 'rating') displayItems.sort((a,b) => b.rating - a.rating);
-  else if (sort === 'title') displayItems.sort((a,b) => a.title.localeCompare(b.title));
+    if (sort === 'dateAdded') displayItems.sort((a,b) => (b.addedAt || b.dateAdded || 0) - (a.addedAt || a.dateAdded || 0));
+    else if (sort === 'dateStarted') displayItems.sort((a,b) => (b.dateStarted || 0) - (a.dateStarted || 0));
+    else if (sort === 'dateFinished') displayItems.sort((a,b) => (b.dateCompleted || 0) - (a.dateCompleted || 0));
+    else if (sort === 'releaseYear') displayItems.sort((a,b) => getYear(b) - getYear(a));
+    else if (sort === 'releaseYearAsc') displayItems.sort((a,b) => getYear(a) - getYear(b));
+    else if (sort === 'rating') displayItems.sort((a,b) => b.rating - a.rating);
+    else if (sort === 'title') displayItems.sort((a,b) => String(a.title || '').localeCompare(String(b.title || '')));
+    
+    return displayItems;
+  }, [items, filter, sort, searchQuery]);
 
   const sortLabels = {
     dateAdded: 'Date Added',
@@ -341,8 +348,8 @@ export const MediaCategory = () => {
     title: 'Title (A-Z)'
   };
 
-  const totalPages = Math.ceil(displayItems.length / ITEMS_PER_PAGE) || 1;
-  const paginatedItems = displayItems.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+  const totalPages = Math.ceil(processedItems.length / ITEMS_PER_PAGE) || 1;
+  const paginatedItems = processedItems.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
   return (
     <div className="flex flex-col gap-4 animate-in fade-in duration-300 pb-10 min-h-screen text-base-content">
@@ -350,7 +357,7 @@ export const MediaCategory = () => {
         <div className="flex-1 min-w-0">
           <h1 className="text-2xl font-black uppercase tracking-widest font-sans">{getSubtype(category)}</h1>
           <p className="text-[10px] font-mono text-base-content/50 uppercase tracking-widest mt-1">
-            {searchQuery.trim() ? `${displayItems.length} results for "${searchQuery}"` : `${displayItems.length} entries`}
+            {searchQuery.trim() ? `${processedItems.length} results for "${searchQuery}"` : `${processedItems.length} entries`}
           </p>
         </div>
         
@@ -405,7 +412,7 @@ export const MediaCategory = () => {
             <Loader2 className="w-4 h-4 animate-spin text-primary" /> Loading...
           </div>
         </div>
-      ) : displayItems.length > 0 ? (
+      ) : processedItems.length > 0 ? (
         <>
           {viewMode === 'grid' ? (
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-7 min-[2000px]:grid-cols-8 gap-3" style={{ gridAutoRows: 'min-content' }}>
@@ -564,20 +571,20 @@ export const DetailView = () => {
   }, [id, type]); // REMOVED volatile dependencies to prevent looping
 
   useEffect(() => {
-    if (!apiData?.id) return;
+    if (!cleanId) return;
     let isMounted = true;
     setLoadingRecs(true);
-    apiRegistry.getRecommendations(apiData.id, type).then(res => { 
+    apiRegistry.getRecommendations(cleanId, type).then(res => { 
       if (isMounted) { setRecs(res); setLoadingRecs(false); }
     }).catch(() => { if (isMounted) setLoadingRecs(false); });
-    if (type === 'tv' && (raw.number_of_seasons > 0 || apiData.raw?.number_of_seasons > 0)) {
+    if (type === 'tv' && (raw.number_of_seasons > 0 || apiData?.raw?.number_of_seasons > 0)) {
       setLoadingEps(true);
-      apiRegistry.getTVSeason(apiData.id, 1).then(res => {
+      apiRegistry.getTVSeason(cleanId, 1).then(res => {
         if (isMounted) { setEpisodes(res.episodes || []); setLoadingEps(false); }
       }).catch(() => { if (isMounted) { setEpisodes([]); setLoadingEps(false); } });
     }
     return () => { isMounted = false; };
-  }, [apiData?.id, type, raw.number_of_seasons]);
+  }, [cleanId, type, raw.number_of_seasons, apiData?.raw?.number_of_seasons]);
 
   const fetchSeason = async (tvId, seasonNum) => {
     setLoadingEps(true);
@@ -608,11 +615,12 @@ export const DetailView = () => {
   const validBookAuthors = (type === 'books' ? (apiData.raw?.authors || apiData.authors || raw.authors || []) : []).map(a => typeof a === 'string' ? a : (a?.name || a?.author?.name)).filter(Boolean);
   const comicFormat = type === 'comics' ? (raw.series?.series_type?.name || raw.series_type?.name || (typeof raw.series_type === 'string' ? raw.series_type : null)) : null;
   const collections = (raw.collections && raw.collections.length > 0) ? raw.collections : (raw.collection ? [raw.collection] : []);
-  const seriesGames = type === 'games' && collections.length > 0 ? collections[0].games?.filter(g => String(g.id) !== String(raw.id)).sort((a, b) => (a.first_release_date || 0) - (b.first_release_date || 0)) : [];
+  const seriesGames = type === 'games' && collections.length > 0 ? (collections[0].games?.filter(g => String(g.id) !== String(raw.id)).sort((a, b) => (a.first_release_date || 0) - (b.first_release_date || 0)) || []) : [];
   const displayedSeriesGames = showAllSeries ? seriesGames : seriesGames.slice(0, 10);
   
   const getDevs = () => { 
     if (raw.involved_companies) { const devs = raw.involved_companies.filter(c => c.developer && c.company); if (devs.length > 0) return devs.map((c, i) => <React.Fragment key={c.company.id || `dev-${i}`}><Link to={`/explore/igdb/company/${c.company.id}?name=${encodeURIComponent(c.company.name)}`} className="text-primary hover:text-primary/70 transition-colors">{c.company.name}</Link>{i < devs.length - 1 ? ', ' : ''}</React.Fragment>); }
+    if (type === 'vn' && raw.developers) { return raw.developers.map((d, i) => <React.Fragment key={d.id || `vndb-dev-${i}`}>{d.id ? <Link to={`/explore/vndb/developer/${d.id}?name=${encodeURIComponent(d.name || d)}`} className="text-primary hover:text-primary/70 transition-colors">{d.name || d}</Link> : (d.name || d)}{i < raw.developers.length - 1 ? ', ' : ''}</React.Fragment>); }
     return (raw.developers || []).length > 0 ? raw.developers.map(d => d.name).join(', ') : null; 
   };
   const getPubs = () => { 
@@ -737,7 +745,7 @@ export const DetailView = () => {
           <div className="flex flex-col gap-1">
             <span className="text-[10px] font-mono font-bold text-base-content/40 uppercase tracking-widest">Description</span>
             {isDeepFetching && (!overviewText || overviewText.startsWith('First published in') || overviewText === 'No description available.') ? <TextBlockSkeleton /> : (
-               <p className="text-sm leading-relaxed text-base-content/80 font-sans whitespace-pre-wrap">{overviewText?.startsWith('First published in') ? 'No descriptive data logged.' : (overviewText || 'No descriptive data logged.')}</p>
+               <div className="text-sm leading-relaxed text-base-content/80 font-sans whitespace-pre-wrap [&_a]:text-primary [&_a]:hover:text-primary/70 [&_a]:underline [&_a]:transition-colors" dangerouslySetInnerHTML={{ __html: overviewText?.startsWith('First published in') || !overviewText ? 'No descriptive data logged.' : formatMarkdownLinks(rawDesc) }} />
             )}
           </div>
 

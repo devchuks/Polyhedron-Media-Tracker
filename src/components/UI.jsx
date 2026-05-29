@@ -71,12 +71,100 @@ export const formatProgressLabel = (prog, type) => {
 
 export const stripHtml = (html) => {
   if (!html) return '';
+  
+  let text = String(html);
+  // Silently extract text from BBCode tags before HTML parsing
+  text = text.replace(/\[url=(?:.*?)\](.*?)\[\/url\]/gi, '$1');
+  text = text.replace(/\[url\](.*?)\[\/url\]/gi, '$1');
+  text = text.replace(/\[b\](.*?)\[\/b\]/gi, '$1');
+  text = text.replace(/\[i\](.*?)\[\/i\]/gi, '$1');
+  text = text.replace(/\[u\](.*?)\[\/u\]/gi, '$1');
+  text = text.replace(/\[s\](.*?)\[\/s\]/gi, '$1');
+  text = text.replace(/\[spoiler\](.*?)\[\/spoiler\]/gi, '$1');
+  text = text.replace(/\[quote\](.*?)\[\/quote\]/gi, '"$1"');
+
   try {
-    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const doc = new DOMParser().parseFromString(text, 'text/html');
     return doc.body.textContent || '';
   } catch (e) {
-    return html.replace(/<[^>]*>?/gm, '');
+    return text.replace(/<[^>]*>?/gm, '');
   }
+};
+
+export const formatMarkdownLinks = (text) => {
+  if (!text) return '';
+
+  let formatted = text;
+
+  // Markdown links: [label](https://...)
+  formatted = formatted.replace(
+    /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
+  );
+
+  // BBCode: [url=link]text[/url]
+  formatted = formatted.replace(
+    /\[url=(.*?)\](.*?)\[\/url\]/gi,
+    (match, url, label) => {
+      const cleanUrl = url.replace(/^["']|["']$/g, '');
+      const href = cleanUrl.startsWith('/')
+        ? `https://vndb.org${cleanUrl}`
+        : cleanUrl;
+
+      return `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+    }
+  );
+
+  // BBCode: [url]link[/url]
+  formatted = formatted.replace(
+    /\[url\](.*?)\[\/url\]/gi,
+    (match, url) => {
+      const cleanUrl = url.replace(/^["']|["']$/g, '');
+      const href = cleanUrl.startsWith('/')
+        ? `https://vndb.org${cleanUrl}`
+        : cleanUrl;
+
+      return `<a href="${href}" target="_blank" rel="noopener noreferrer">${cleanUrl}</a>`;
+    }
+  );
+
+  // Bold: [b]text[/b]
+  formatted = formatted.replace(
+    /\[b\](.*?)\[\/b\]/gi,
+    '<strong>$1</strong>'
+  );
+
+  // Italic: [i]text[/i]
+  formatted = formatted.replace(
+    /\[i\](.*?)\[\/i\]/gi,
+    '<em>$1</em>'
+  );
+
+  // Underline: [u]text[/u]
+  formatted = formatted.replace(
+    /\[u\](.*?)\[\/u\]/gi,
+    '<u>$1</u>'
+  );
+
+  // Strikethrough: [s]text[/s]
+  formatted = formatted.replace(
+    /\[s\](.*?)\[\/s\]/gi,
+    '<s>$1</s>'
+  );
+
+  // Spoiler: [spoiler]text[/spoiler]
+  formatted = formatted.replace(
+    /\[spoiler\](.*?)\[\/spoiler\]/gi,
+    `<span class="bg-base-content/20 text-transparent hover:text-base-content transition-colors px-1 rounded cursor-help" title="Spoiler">$1</span>`
+  );
+
+  // Quote: [quote]text[/quote]
+  formatted = formatted.replace(
+    /\[quote\](.*?)\[\/quote\]/gi,
+    '<blockquote class="border-l-2 border-primary/50 pl-2 italic my-1">$1</blockquote>'
+  );
+
+  return formatted;
 };
 
 export const getOptimizedImage = (url, w = 342) => {
@@ -946,6 +1034,22 @@ export const CreativeTeamSection = ({ type, raw, isDeepFetching, genres, platfor
     return <Pill key={`${prefix}-${cName}-${i}`} main={cName} normalText to={toLink} />;
   });
 
+  const getUniqueVnStaff = (staffList, roleKeywords) => {
+    const map = new Map();
+    (staffList || []).forEach(s => {
+      const r = s.role?.toLowerCase().trim() || '';
+      if (roleKeywords.some(kw => r.includes(kw)) && s.id && !map.has(s.id)) {
+        map.set(s.id, { id: s.id, name: s.name });
+      }
+    });
+    return Array.from(map.values());
+  };
+
+  const vnDirectors = getUniqueVnStaff(type === 'vn' ? raw.staff : [], ['director']);
+  const vnScenario = getUniqueVnStaff(type === 'vn' ? raw.staff : [], ['scenario', 'writer']);
+  const vnCharDesign = getUniqueVnStaff(type === 'vn' ? raw.staff : [], ['chardesign', 'character design']);
+  const vnArt = getUniqueVnStaff(type === 'vn' ? raw.staff : [], ['art']);
+
   return (
     <SectionWrapper>
       <div className="flex flex-col gap-3">
@@ -989,6 +1093,14 @@ export const CreativeTeamSection = ({ type, raw, isDeepFetching, genres, platfor
                   </>
                 );
               })()}
+          </div>
+        )}
+        {type === 'vn' && (
+          <div className="flex flex-row flex-wrap gap-x-8 gap-y-2">
+            <Section isLoading={isDeepFetching && !vnDirectors.length} title="Director">{vnDirectors.map((c, i) => <Pill key={`vndir-${i}`} main={c.name} to={`/explore/vndb/staff/${c.id}?name=${encodeURIComponent(c.name)}`} />)}</Section>
+            <Section isLoading={isDeepFetching && !vnScenario.length} title="Scenario">{vnScenario.map((c, i) => <Pill key={`vnscen-${i}`} main={c.name} to={`/explore/vndb/staff/${c.id}?name=${encodeURIComponent(c.name)}`} />)}</Section>
+            <Section isLoading={isDeepFetching && !vnCharDesign.length} title="Character Design">{vnCharDesign.map((c, i) => <Pill key={`vncd-${i}`} main={c.name} to={`/explore/vndb/staff/${c.id}?name=${encodeURIComponent(c.name)}`} />)}</Section>
+            <Section isLoading={isDeepFetching && !vnArt.length} title="Art">{vnArt.map((c, i) => <Pill key={`vnart-${i}`} main={c.name} to={`/explore/vndb/staff/${c.id}?name=${encodeURIComponent(c.name)}`} />)}</Section>
           </div>
         )}
         {type === 'books' && <Section isLoading={isDeepFetching && !(raw.subjects?.length)} title="Subjects">{(raw.subjects || []).map((g, i) => <Tag key={`subj-${g}-${i}`} text={g} />)}</Section>}

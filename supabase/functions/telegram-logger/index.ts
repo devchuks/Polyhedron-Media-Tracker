@@ -38,84 +38,328 @@ serve(async (req) => {
     }
 
     // 3. Payload Parsing Setup
-    const text = message.text || '';
+    const rawText = message.text || '';
     const timestamp = message.date; // Unix timestamp provided by Telegram
 
-    if (!text) {
+    if (!rawText) {
       return new Response('No text provided.', { status: 200, headers: corsHeaders });
     }
 
+    // Input sanitization: limit length to prevent massive token usage/injection bloat
+    const text = rawText.slice(0, 1000).trim();
+
     console.log(`Received authorized message at ${timestamp}:\n${text}`);
 
-    // --- Phase 2 - Regex Parsing Engine ---
-    
-    // Split the raw message text by line breaks
-    const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
+// --- Phase 2 - LLM Parsing Engine (Gemini 2.0 Flash Structured Outputs) ---
 
-    if (lines.length < 4) {
-      return new Response('Webhook acknowledged, but message format does not match required 4-line template.', { status: 200, headers: corsHeaders });
-    }
+const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
 
-    // Line 1: Title, Year, and Season
-    const line1 = lines[0];
-    
-    const yearMatch = line1.match(/\((\d{4})\)/);
-    const year = yearMatch ? parseInt(yearMatch[1], 10) : null;
-    
-    const seasonMatch = line1.match(/s(?:eason\s*)?(\d+)/i);
-    const season = seasonMatch ? parseInt(seasonMatch[1], 10) : null;
+if (!GEMINI_API_KEY) {
+  console.error("[Phase 2] CRITICAL: GEMINI_API_KEY is missing!");
+  return new Response('LLM Configuration Error', {
+    status: 200,
+    headers: corsHeaders
+  });
+}
 
-    const issueMatch = line1.match(/#(\d+)|issue\s*(\d+)|ep(?:isode)?\s*(\d+)|ch(?:apter)?\s*(\d+)/i);
-    const issue = issueMatch ? parseInt(issueMatch[1] || issueMatch[2] || issueMatch[3] || issueMatch[4], 10) : null;
+// Updated Gemini endpoint
+const geminiUrl =
+  `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
-    const cleanTitle = line1
-      .replace(/\(\d{4}\)/g, '')            // Strip year
-      .replace(/s(?:eason\s*)?\d+/ig, '')   // Strip season
-      .replace(/#\d+|issue\s*\d+|ep(?:isode)?\s*\d+|ch(?:apter)?\s*\d+/ig, '') // Strip issue/ep/ch
-      .replace(/\s+/g, ' ')                 // Remove any duplicate whitespace left behind
-      .trim();
+// Light sanitization to reduce prompt injection / token abuse
+const sanitizedText = String(text)
+  .replace(/\0/g, '')
+  .trim()
+  .slice(0, 1500);
 
-    // Line 2: Media Type Normalization
-    const rawType = lines[1].toLowerCase();
-    let type = 'unknown';
-    if (rawType.includes('tv') || rawType.includes('show')) type = 'tv';
-    else if (rawType.includes('movie') || rawType.includes('film')) type = 'movies';
-    else if (rawType.includes('comic')) type = 'comics';
-    else if (rawType.includes('game')) type = 'games';
-    else if (rawType.includes('anime')) type = 'anime';
-    else if (rawType.includes('manga')) type = 'manga';
-    else if (rawType.includes('vn') || rawType.includes('visual novel')) type = 'vn';
+const systemPrompt = `
+You are a structured media parsing engine.
 
-    // Deep Scan: Rating Conversion (Supports x/10, x/5, x stars, or raw numbers anywhere)
-    let rating = null;
-    let parsedRatingLine = 'None found';
-    for (const line of lines.slice(1)) {
-      const explicitMatch = line.match(/(?:^|\s)(\d+(?:\.\d+)?)\s*(?:\/\s*(10|5)|stars?)/i);
-      if (explicitMatch) {
-        const val = parseFloat(explicitMatch[1]);
-        const scale = explicitMatch[2];
-        if (scale === '10') rating = val;
-        else if (scale === '5' || line.toLowerCase().includes('star')) rating = val * 2;
-        else rating = val <= 5 ? val * 2 : val;
-        parsedRatingLine = line;
-        break;
+Extract semantic media logging information from the user's message.
+
+Rules:
+- Return ONLY valid structured JSON.
+- Never include markdown.
+- Do not invent missing information.
+- If uncertain, return null for the field.
+- CRITICAL: If the media is a Japanese Anime (whether a series or a movie), ALWAYS classify the type as 'anime'. Do NOT classify anime as 'tv' or 'movies'.
+- Confidence must be a number between 0 and 1.
+- Preserve the user's intent accurately.
+`;
+
+console.log(`[Phase 2] Invoking Gemini Structured Output Parser...`);
+
+const geminiRes = await fetch(geminiUrl, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    systemInstruction: {
+      role: "system",
+      parts: [{ text: systemPrompt }]
+    },
+
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: sanitizedText }]
+      }
+    ],
+
+    generationConfig: {
+      temperature: 0.1,
+      topK: 20,
+      topP: 0.8,
+
+      // Modern structured outputs
+      responseMimeType: "application/json",
+
+      responseSchema: {
+        type: "OBJECT",
+
+        properties: {
+          cleanTitle: {
+            type: "STRING",
+            description:
+              "Media title with years, season labels, and issue markers removed."
+          },
+
+          year: {
+            type: "INTEGER",
+            nullable: true,
+            description:
+              "Release year explicitly mentioned by the user."
+          },
+
+          season: {
+            type: "INTEGER",
+            nullable: true,
+            description:
+              "Season number or volume number if applicable."
+          },
+
+          progressNumber: {
+            type: "NUMBER",
+            nullable: true,
+            description:
+              "Episode number, issue number, chapter number, or completion percentage."
+          },
+
+          progressUnit: {
+            type: "STRING",
+            nullable: true,
+            enum: [
+              "episode",
+              "issue",
+              "chapter",
+              "percentage",
+              "season"
+            ]
+          },
+
+          type: {
+            type: "STRING",
+            nullable: true,
+            enum: [
+              "tv",
+              "movies",
+              "comics",
+              "games",
+              "anime",
+              "manga",
+              "vn",
+              "books"
+            ]
+          },
+
+          rawRating: {
+            type: "NUMBER",
+            nullable: true,
+            description:
+              "Numeric rating value supplied by the user."
+          },
+
+          rawRatingScale: {
+            type: "INTEGER",
+            nullable: true,
+            description:
+              "Rating scale denominator such as 5 or 10."
+          },
+
+          reviewText: {
+            type: "STRING",
+            nullable: true,
+            description:
+              "Freeform review or notes from the user."
+          },
+
+          confidence: {
+            type: "NUMBER",
+            description:
+              "Confidence score from 0.0 to 1.0."
+          }
+        },
+
+        required: [
+          "cleanTitle",
+          "confidence"
+        ]
       }
     }
-    // Fallback: Check for standalone numbers on the third line specifically
-    if (rating === null && lines[2]) {
-      const standaloneMatch = lines[2].match(/^(\d+(?:\.\d+)?)$/);
-      if (standaloneMatch) {
-        const val = parseFloat(standaloneMatch[1]);
-        rating = val <= 5 ? val * 2 : val;
-        parsedRatingLine = lines[2];
-      }
-    }
+  })
+});
 
-    // Line 4+: Review Capture
-    const reviewText = lines.slice(3).join('\n');
+if (!geminiRes.ok) {
+  const errorText = await geminiRes.text();
 
-    console.log(`Parsed -> Title: ${cleanTitle} | Year: ${year} | Season: ${season} | Type: ${type} | Rating: ${rating}/10`);
+  console.error(
+    `[Phase 2] Gemini API Error (${geminiRes.status}):`,
+    errorText
+  );
 
+  return new Response('Gemini API request failed.', {
+    status: 200,
+    headers: corsHeaders
+  });
+}
+
+const geminiData = await geminiRes.json();
+
+const responseText =
+  geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+if (!responseText) {
+  console.error(
+    "[Phase 2] Gemini failed to return structured output:",
+    geminiData
+  );
+
+  return new Response('Failed to parse message with LLM.', {
+    status: 200,
+    headers: corsHeaders
+  });
+}
+
+let parsedJson;
+
+try {
+  // Structured outputs should always return valid JSON now
+  parsedJson = JSON.parse(responseText);
+} catch (e) {
+  console.error(
+    "[Phase 2] Structured output parsing failure:",
+    responseText
+  );
+
+  return new Response('LLM returned invalid structured JSON.', {
+    status: 200,
+    headers: corsHeaders
+  });
+}
+
+// Confidence guard
+const confidence =
+  typeof parsedJson.confidence === 'number'
+    ? parsedJson.confidence
+    : 0;
+
+if (confidence < 0.35) {
+  console.warn(
+    `[Phase 2] Low confidence extraction (${confidence})`
+  );
+}
+
+// Safe Mapping from Structured Output
+const cleanTitle =
+  typeof parsedJson.cleanTitle === 'string'
+    ? parsedJson.cleanTitle.trim()
+    : 'Unknown Title';
+
+const year =
+  parsedJson.year !== null &&
+  parsedJson.year !== undefined
+    ? parseInt(parsedJson.year, 10)
+    : null;
+
+const season =
+  parsedJson.season !== null &&
+  parsedJson.season !== undefined
+    ? parseInt(parsedJson.season, 10)
+    : null;
+
+// Maintain compatibility with existing downstream architecture
+const issue =
+  parsedJson.progressNumber !== null &&
+  parsedJson.progressNumber !== undefined
+    ? Math.floor(parsedJson.progressNumber)
+    : null;
+
+const progressUnit =
+  parsedJson.progressUnit || null;
+
+let type =
+  typeof parsedJson.type === 'string'
+    ? parsedJson.type.toLowerCase()
+    : 'unknown';
+
+const VALID_TYPES = [
+  'tv',
+  'movies',
+  'comics',
+  'games',
+  'anime',
+  'manga',
+  'vn',
+  'books'
+];
+
+if (!VALID_TYPES.includes(type)) {
+  type = 'unknown';
+}
+
+// Deterministic rating normalization
+let rating = null;
+
+if (
+  parsedJson.rawRating !== null &&
+  parsedJson.rawRating !== undefined
+) {
+  const rawValue = parseFloat(parsedJson.rawRating);
+
+  const scale =
+    parsedJson.rawRatingScale ||
+    (rawValue <= 5 ? 5 : 10);
+
+  if (scale === 10) {
+    rating = rawValue;
+  } else if (scale === 5) {
+    rating = rawValue * 2;
+  } else {
+    rating = rawValue <= 5
+      ? rawValue * 2
+      : rawValue;
+  }
+
+  // Clamp to sane range
+  rating = Math.max(0, Math.min(10, rating));
+}
+
+let reviewText =
+  typeof parsedJson.reviewText === 'string'
+    ? parsedJson.reviewText.trim()
+    : '';
+
+console.log(
+  `[Phase 2 Resolved] ` +
+  `Title: ${cleanTitle} | ` +
+  `Year: ${year} | ` +
+  `Season: ${season} | ` +
+  `Progress: ${issue} (${progressUnit}) | ` +
+  `Type: ${type} | ` +
+  `Rating: ${rating}/10 | ` +
+  `Confidence: ${confidence}`
+);
     // --- Phase 3 - Autonomous API Resolution ---
     
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? Deno.env.get('VITE_SUPABASE_URL') ?? '';
@@ -145,12 +389,25 @@ serve(async (req) => {
       const path = type === 'tv' ? '/search/tv' : '/search/movie';
       const queryParams: any = { query: cleanTitle };
       if (year) {
-        if (type === 'tv') queryParams.first_air_date_year = year;
+        if (type === 'tv') {
+          // Import Terminal Logic: Don't restrict the series search to the season's year
+          if (season === null && issue === null) {
+            queryParams.first_air_date_year = year;
+          }
+        }
         else queryParams.year = year;
       }
 
       console.log(`[Phase 3] Invoking TMDB for ${cleanTitle}`);
-      const { data, error } = await supabase.functions.invoke('tmdb', { body: { path, query: queryParams } });
+      let { data, error } = await supabase.functions.invoke('tmdb', { body: { path, query: queryParams } });
+      
+      // Fallback: If TMDB strict year search returns nothing, retry without the year constraint
+      if (data?.results?.length === 0 && year) {
+        console.log(`[Phase 3] Strict year search failed. Retrying TMDB without year for ${cleanTitle}...`);
+        const fallbackRes = await supabase.functions.invoke('tmdb', { body: { path, query: { query: cleanTitle } } });
+        data = fallbackRes.data;
+        error = fallbackRes.error || error;
+      }
       
       if (error) console.error('[Phase 3] TMDB Error:', error);
       if (data?.results?.length > 0) {
@@ -165,6 +422,17 @@ serve(async (req) => {
         canonicalTitle = apiMatch.name || apiMatch.title;
         canonicalYear = parseInt((apiMatch.first_air_date || apiMatch.release_date || '').split('-')[0], 10) || year;
         posterUrl = apiMatch.poster_path ? `https://image.tmdb.org/t/p/w500${apiMatch.poster_path}` : null;
+
+        // Import Terminal Logic: Auto-resolve missing season via the provided year
+        if (type === 'tv' && season === null && year !== null && apiMatch.seasons) {
+          const matchedSeason = apiMatch.seasons.find((s: any) =>
+            s.air_date && s.air_date.startsWith(String(year)) && s.season_number > 0
+          );
+          if (matchedSeason && String(year) !== String(canonicalYear)) {
+            season = matchedSeason.season_number;
+            console.log(`[Phase 3] Auto-resolved Year ${year} to Season ${season} via Import Terminal logic.`);
+          }
+        }
 
         // Deep-fetch TV season
         if (type === 'tv' && season !== null) {
@@ -225,7 +493,18 @@ serve(async (req) => {
       issueParams.append('number', '1');
       if (year) issueParams.append('cover_year', year.toString());
 
-      const { data, error } = await supabase.functions.invoke('metron', { body: { path: `/api/issue/?${issueParams.toString()}` } });
+      let { data, error } = await supabase.functions.invoke('metron', { body: { path: `/api/issue/?${issueParams.toString()}` } });
+      
+      // Fallback: If Metron strict year search returns nothing, retry without the year constraint
+      if (data?.results?.length === 0 && year) {
+        console.log(`[Phase 3] Strict year search failed. Retrying Metron without year for ${cleanTitle}...`);
+        const fallbackParams = new URLSearchParams();
+        fallbackParams.append('series_name', cleanTitle);
+        fallbackParams.append('number', '1');
+        const fallbackRes = await supabase.functions.invoke('metron', { body: { path: `/api/issue/?${fallbackParams.toString()}` } });
+        data = fallbackRes.data;
+        error = fallbackRes.error || error;
+      }
       
       if (error) console.error('[Phase 3] Metron Error:', error);
       if (data?.results?.length > 0) {
@@ -366,19 +645,65 @@ serve(async (req) => {
       const calendarDay = isoDate.split('T')[0];
       const timestampMs = messageDate.getTime();
 
-      // Determine progress strings and diary log labels dynamically
+      // Determine progress strings and milestone states dynamically
       let progressStr = null;
-      let logLabel = null;
+
+      let isSeriesComplete = issue === null && season === null;
+      let isSeasonComplete = type === 'tv' && season !== null && issue === null;
+
+      // --- SMART COMPLETION ENGINE ---
+      if (apiMatch) {
+        if (type === 'tv') {
+          const isEnded = ['Ended', 'Canceled'].includes(apiMatch.status);
+          const activeSeasons = (apiMatch.seasons || []).filter((s: any) => s.season_number > 0);
+          const maxSeason = activeSeasons.length > 0 ? Math.max(...activeSeasons.map((s: any) => s.season_number)) : 1;
+          
+          if (season !== null) {
+            const isMaxSeason = season === maxSeason;
+            const seasonData = activeSeasons.find((s: any) => s.season_number === season);
+            const maxEp = seasonData?.episode_count || 0;
+            const hitFinalEp = issue !== null && maxEp > 0 && issue >= maxEp;
+
+            if (isMaxSeason) {
+              if (issue === null && isEnded) isSeriesComplete = true; 
+              else if (issue !== null && hitFinalEp) isSeriesComplete = true; 
+            }
+            
+            if (issue !== null && hitFinalEp && !isSeriesComplete) {
+              isSeasonComplete = true; // Auto-complete non-final seasons if final episode is hit
+            }
+          } else if (issue !== null) {
+            const totalEps = apiMatch.number_of_episodes || 0;
+            if (totalEps > 0 && issue >= totalEps) isSeriesComplete = true;
+          }
+        } 
+        else if (type === 'anime' || type === 'manga' || type === 'books' || type === 'comics') {
+          const maxEp = type === 'anime' ? apiMatch.episodes : (type === 'manga' || type === 'books' ? apiMatch.chapters : (apiMatch.issue_count || apiMatch.issuesCount));
+          if (issue !== null && maxEp > 0 && issue >= maxEp) isSeriesComplete = true;
+        }
+        else if (type === 'games' || type === 'vn') {
+          if (issue !== null && issue >= 100) isSeriesComplete = true;
+        }
+      }
+
+      const shouldLogToDiary = isSeriesComplete || isSeasonComplete;
+
       if (type === 'tv' && season !== null) {
-        progressStr = `S${String(season).padStart(2, '0')}`;
-        logLabel = `Season ${season}`;
+        if (issue !== null) {
+          progressStr = `S${String(season).padStart(2, '0')} E${String(issue).padStart(2, '0')}`;
+        } else {
+          // Season complete fallback
+          const seasonObj = apiMatch?.seasons?.find((s: any) => s.season_number === season);
+          const eps = seasonObj?.episode_count || 1;
+          progressStr = `S${String(season).padStart(2, '0')} E${String(eps).padStart(2, '0')}`;
+        }
       } else if ((type === 'comics' || type === 'manga' || type === 'books') && issue !== null) {
         progressStr = type === 'comics' ? `#${String(issue).padStart(3, '0')}` : `Ch. ${issue}`; 
-        logLabel = type === 'comics' ? `Issue ${issue}` : `Chapter ${issue}`;
       } else if (type === 'anime' && issue !== null) {
         progressStr = `Ep. ${issue}`;
-        logLabel = `Episode ${issue}`;
-      } else if (issue === null && season === null) {
+      } else if ((type === 'games' || type === 'vn') && issue !== null) {
+        progressStr = `${issue}%`;
+      } else if (isSeriesComplete) {
         // Auto-complete the entire series/media if no specific episode/issue is provided
         if (type === 'tv') {
           const lastS = apiMatch?.number_of_seasons || 1;
@@ -415,6 +740,11 @@ serve(async (req) => {
         }
       }
 
+      let rewatchCount = existingMedia?.rewatchCount || 0;
+      if (existingMedia?.status === 'completed' && isSeriesComplete) {
+        rewatchCount += 1;
+      }
+
       // Resolve the exact subtype string expected by the frontend UI cards
       let subtype = 'Media';
       if (type === 'tv') subtype = 'TV Shows';
@@ -432,7 +762,14 @@ serve(async (req) => {
       const safeType = String(type);
       const safeImage = posterUrl ? String(posterUrl) : null;
       const safeProgress = progressStr ? String(progressStr) : null;
-      const safeStatus = (issue === null && season === null) ? 'completed' : String(existingMedia?.status || 'completed');
+      
+      // If logging a new episode/issue for a previously completed series, gracefully downgrade it back to 'in progress'
+      let safeStatus = String(existingMedia?.status || 'in progress');
+      if (isSeriesComplete) {
+        safeStatus = 'completed';
+      } else if (issue !== null || season !== null) {
+        if (safeStatus === 'completed') safeStatus = 'in progress';
+      }
 
       const mediaPayload = {
         id: mediaId,
@@ -443,44 +780,64 @@ serve(async (req) => {
         image: safeImage,
         rating: rating || existingMedia?.rating || 0,
         addedAt: existingMedia?.addedAt || timestampMs,
-        dateCompleted: timestampMs,
+        dateCompleted: isSeriesComplete ? timestampMs : (safeStatus === 'completed' ? existingMedia?.dateCompleted : null),
         dateStarted: existingMedia?.dateStarted || timestampMs,
         status: safeStatus,
+        rewatchCount: rewatchCount,
         ...(safeProgress && { progress: safeProgress }),
         ...(type === 'comics' && { readIssueIds: updatedReadIssues }),
         apiData: { 
           raw: apiMatch || existingMedia?.apiData?.raw || {},
           image: safeImage,
-          year: String(canonicalYear || existingMedia?.apiData?.year || '') 
+          year: String(canonicalYear || existingMedia?.apiData?.year || ''),
+          id: externalId
         }
       };
 
       const { error: mediaError } = await supabaseAdmin.from('media_library').upsert(mediaPayload);
       if (mediaError) console.error('[Phase 4] Media Library Upsert Error:', mediaError);
 
-      // 2. Diary Insert (media_logs table) - Use UUID to perfectly match the frontend behavior
-      const logId = crypto.randomUUID();
+      // 2. Diary Insert (media_logs table) ONLY if it's a completion
+      if (shouldLogToDiary) {
+        const logId = crypto.randomUUID();
 
-      let actionType = 'WATCHED';
-      if (type === 'games' || type === 'vn') actionType = 'PLAYED';
-      else if (type === 'comics' || type === 'manga' || type === 'books') actionType = 'READ';
+        let actionType = 'WATCHED';
+        if (type === 'games' || type === 'vn') actionType = 'PLAYED';
+        else if (type === 'comics' || type === 'manga' || type === 'books') actionType = 'READ';
 
-      const logPayload = {
-        log_id: logId,
-        media_id: mediaId,
-        user_id: userId,
-        media_type: type,
-        action_type: actionType,
-        log_date: isoDate,
-        season_label: logLabel,
-        season_year: seasonYear ? String(seasonYear) : null,
-        image: safeImage,
-        review_text: reviewText
-      };
+        if (existingMedia?.status === 'completed' && isSeriesComplete) {
+            actionType = `RE-${actionType}`;
+        }
+        
+        let logSeasonLabel = null;
+        if (type === 'tv') {
+          if (season !== null) {
+            if (isSeasonComplete || isSeriesComplete) logSeasonLabel = `Season ${season}`;
+          } else if (isSeriesComplete) {
+            const lastS = apiMatch?.number_of_seasons || 1;
+            logSeasonLabel = `Season ${lastS}`;
+          }
+        }
 
-      const { error: logError } = await supabaseAdmin.from('media_logs').insert(logPayload);
-      if (logError) console.error('[Phase 4] Media Logs Upsert Error:', logError);
-      else console.log(`[Phase 4] Successfully upserted ${mediaId} into database!`);
+        const logPayload = {
+          log_id: logId,
+          media_id: mediaId,
+          user_id: userId,
+          media_type: type,
+          action_type: actionType,
+          log_date: isoDate,
+          season_label: logSeasonLabel,
+          season_year: seasonYear ? String(seasonYear) : null,
+          image: safeImage,
+          review_text: reviewText
+        };
+
+        const { error: logError } = await supabaseAdmin.from('media_logs').insert(logPayload);
+        if (logError) console.error('[Phase 4] Media Logs Upsert Error:', logError);
+        else console.log(`[Phase 4] Successfully inserted diary log for ${mediaId}`);
+      } else {
+        console.log(`[Phase 4] Progress update only. Skipped diary log for ${mediaId}`);
+      }
 
       // --- Phase 5 - Feedback Loop & Deep Linking ---
       const telegramUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
@@ -493,13 +850,8 @@ serve(async (req) => {
 <b>✅ Cataloged Successfully</b>${posterLink}
 <b>Title:</b> ${safeTitle} (${canonicalYear || '?'})
 <b>Type:</b> ${typeLabel}
-${safeProgress ? `<b>Progress:</b> ${safeProgress}\n` : ''}<b>Rating:</b> ${rating ? rating + '/10' : 'None'}
-<pre>
---- DEBUG INFO ---
-Rating Scanned: ${rating} (from: "${parsedRatingLine}")
-Extracted ID: ${externalId}
-Image Saved: ${safeImage ? 'Yes' : 'No'}
-</pre>
+${safeProgress ? `<b>Progress:</b> ${safeProgress}\n` : ''}<b>Status:</b> ${safeStatus.toUpperCase()}
+<b>Rating:</b> ${rating ? rating + '/10' : 'None'}
       `.trim();
 
       await fetch(telegramUrl, {

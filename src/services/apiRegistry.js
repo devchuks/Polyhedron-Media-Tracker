@@ -389,7 +389,7 @@ export const apiRegistry = {
 
   searchVNs: async (query, page = 1) => {
     try {
-      const data = await safeApiClient('https://api.vndb.org/kana/vn', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filters: ['search', '=', query], fields: 'id, title, titles.lang, titles.title, titles.latin, released, image.url, image.thumbnail, developers.name, description', results: 10, page, count: true }) });
+      const data = await safeApiClient('https://api.vndb.org/kana/vn', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filters: ['search', '=', query], fields: 'id, title, titles.lang, titles.title, titles.latin, released, image.url, image.thumbnail, developers.id, developers.name, description', results: 10, page, count: true }) });
       return { results: (data.results || []).map(normalizeVNDB), totalPages: Math.ceil(data.count / 10) || 1 };
     } catch (err) { reportApiError(err, 'VNDB'); return { results: [], totalPages: 1 }; }
   },
@@ -530,6 +530,64 @@ export const apiRegistry = {
     } catch (err) { reportApiError(err, 'TMDB Discover'); return { results: [], totalPages: 1 }; }
   },
 
+  getVNDBStaffDetails: async (staffId) => {
+    try {
+      const data = await safeApiClient('https://api.vndb.org/kana/staff', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filters: ['id', '=', staffId],
+          fields: 'id, name, original, description, extlinks.url, extlinks.label'
+        })
+      });
+      return data.results?.[0] || null;
+    } catch (err) { reportApiError(err, 'VNDB (Staff)'); return null; }
+  },
+
+  getVNDBDeveloperDetails: async (developerId) => {
+    try {
+      const data = await safeApiClient('https://api.vndb.org/kana/producer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filters: ['id', '=', developerId],
+          fields: 'id, name, original, description'
+        })
+      });
+      return data.results?.[0] || null;
+    } catch (err) { reportApiError(err, 'VNDB (Developer)'); return null; }
+  },
+
+  discoverVNDB: async (filterType, filterId, page = 1, sortOrder = 'popularity', roleFilter = 'all') => {
+    try {
+      let sort = 'rating';
+      let reverse = true;
+      if (sortOrder === 'popularity') { sort = 'votecount'; reverse = true; }
+      else if (sortOrder === 'new') { sort = 'released'; reverse = true; }
+      else if (sortOrder === 'old') { sort = 'released'; reverse = false; }
+
+      const limit = 24;
+      let filters = [];
+      if (filterType === 'developer') {
+        filters = ['developer', '=', ['id', '=', String(filterId)]];
+      } else if (filterType === 'staff') {
+        if (roleFilter === 'all') {
+          filters = ['staff', '=', ['id', '=', String(filterId)]];
+        } else {
+          let roleStr = 'director';
+          if (roleFilter === 'scenario') roleStr = 'scenario';
+          if (roleFilter === 'art') roleStr = 'art';
+          if (roleFilter === 'chardesign') roleStr = 'chardesign';
+          filters = ['staff', '=', ['and', ['id', '=', String(filterId)], ['role', '=', roleStr]]];
+        }
+      } else return { results: [], totalPages: 1 };
+
+      const data = await safeApiClient('https://api.vndb.org/kana/vn', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filters, fields: 'id, title, titles.lang, titles.title, titles.latin, released, image.url, image.thumbnail, developers.id, developers.name, description, rating, staff.id, staff.name, staff.role', sort, reverse, results: limit, page, count: true }) });
+      const results = (data.results || []).map(normalizeVNDB);
+      return { results, totalPages: Math.ceil(data.count / limit) || 1 };
+    } catch (err) { reportApiError(err, 'VNDB Discover'); return { results: [], totalPages: 1 }; }
+  },
+
   getTVSeason: async (tvId, seasonNumber) => {
     const cacheKey = `${tvId}_${seasonNumber}`;
     if (sessionCache.seasons.has(cacheKey)) return sessionCache.seasons.get(cacheKey);
@@ -560,7 +618,7 @@ export const apiRegistry = {
       }
       else if (type === 'anime') result = (await fetchAniListGraphQL(`query ($id: Int) { Media(id: $id, type: ANIME) { id title { romaji english native } description(asHtml: true) trailer { id site } coverImage { extraLarge large medium } bannerImage startDate { year month day } episodes status averageScore siteUrl genres studios(isMain: true) { nodes { id name } } staff(perPage: 50, sort: RELEVANCE) { edges { role node { id name { full } } } } relations { edges { relationType node { id type title { romaji english } coverImage { large } } } } externalLinks { url site } } }`, { id: parseInt(cleanId) }))?.Media;
       else if (type === 'manga') result = (await fetchAniListGraphQL(`query ($id: Int) { Media(id: $id, type: MANGA) { id title { romaji english native } description(asHtml: true) coverImage { extraLarge large medium } bannerImage startDate { year month day } chapters volumes status averageScore siteUrl genres staff(perPage: 50) { edges { role node { id name { full } } } } relations { edges { relationType node { id type title { romaji english } coverImage { large } } } } externalLinks { url site } } }`, { id: parseInt(cleanId) }))?.Media;
-      else if (type === 'vn') result = (await safeApiClient('https://api.vndb.org/kana/vn', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filters: ['id', '=', cleanId], fields: 'id, title, titles.lang, titles.title, titles.latin, released, image.url, image.thumbnail, developers.name, description, length, tags.name, relations.relation, relations.id, relations.title, relations.image.url, screenshots.url, extlinks.url, extlinks.label' }) })).results?.[0];
+      else if (type === 'vn') result = (await safeApiClient('https://api.vndb.org/kana/vn', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filters: ['id', '=', cleanId], fields: 'id, title, titles.lang, titles.title, titles.latin, released, image.url, image.thumbnail, developers.id, developers.name, description, length, tags.name, relations.relation, relations.id, relations.title, relations.image.url, screenshots.url, extlinks.url, extlinks.label, staff.id, staff.name, staff.role' }) })).results?.[0];
       else if (type === 'books') {
         const workPath = String(cleanId).includes('/works/') ? cleanId : `/works/${cleanId}`;
         const [work, editions] = await Promise.all([

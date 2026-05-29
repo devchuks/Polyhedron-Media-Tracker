@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { apiRegistry } from '../services/apiRegistry';
-import { MediaCard, ComicIssueModal } from '../components/UI';
+import { MediaCard, ComicIssueModal, formatMarkdownLinks } from '../components/UI';
 import { useMediaStore } from '../store/useMediaStore';
-import { ArrowLeft, Loader2, User, Clapperboard, Gamepad2, ChevronLeft, ChevronDown, ChevronRight, Tv, Image as ImageIcon, X } from 'lucide-react';
+import { ArrowLeft, Loader2, User, Clapperboard, Gamepad2, ChevronLeft, ChevronDown, ChevronRight, Tv, Image as ImageIcon, X, Eye } from 'lucide-react';
 
 export const Explore = () => {
   const { api, type, id } = useParams();
@@ -22,10 +22,11 @@ export const Explore = () => {
   const [isLoading, setIsLoading] = useState(() => !exploreCache[entityCacheKey]);
 
   const [mediaFilter, setMediaFilter] = useState(() => {
-    if (type === 'person' || type === 'creator') return 'all';
+    if (type === 'person' || type === 'creator' || type === 'staff') return 'all';
     if (type === 'network') return 'tv';
     if (api === 'igdb') return 'games';
     if (api === 'metron') return 'comics';
+    if (api === 'vndb') return 'vn';
     if (api === 'anilist') {
       if (type === 'studio') return 'anime';
       return sourceParam === 'anime' || sourceParam === 'manga' ? sourceParam : 'anime';
@@ -41,7 +42,7 @@ export const Explore = () => {
   // Discover specific state
   const [page, setPage] = useState(1);
   
-  const activeGridCacheKey = `grid_${api}_${type}_${id}_${mediaFilter}_${sortOrder}_1`;
+  const activeGridCacheKey = `grid_${api}_${type}_${id}_${mediaFilter}_${sortOrder}_${roleFilter}_1`;
   const [discoverResults, setDiscoverResults] = useState(() => exploreCache[activeGridCacheKey]?.data?.results || []);
   const [totalPages, setTotalPages] = useState(() => exploreCache[activeGridCacheKey]?.data?.totalPages || 1);
   const [isGridLoading, setIsGridLoading] = useState(() => type !== 'person' && !exploreCache[activeGridCacheKey]);
@@ -141,6 +142,36 @@ export const Explore = () => {
       } else {
         setIsLoading(false);
       }
+    } else if (api === 'vndb') {
+      if (type === 'developer') {
+        apiRegistry.getVNDBDeveloperDetails(id).then(res => {
+          if (isMounted) {
+            const devData = {
+              name: res?.original ? `${res.name} (${res.original})` : res?.name,
+              description: res?.description
+            };
+            setEntityData(devData);
+            setExploreCache(entityCacheKey, { personData: null, companyData: devData });
+            setIsLoading(false);
+          }
+        });
+      } else if (type === 'staff') {
+        apiRegistry.getVNDBStaffDetails(id).then(res => {
+          if (isMounted) {
+            const staffData = {
+              name: res?.original ? `${res.name} (${res.original})` : res?.name,
+              biography: res?.description,
+              known_for_department: 'Visual Novel Staff',
+              extlinks: res?.extlinks || []
+            };
+            setData(staffData);
+            setExploreCache(entityCacheKey, { personData: staffData, companyData: null });
+            setIsLoading(false);
+          }
+        });
+      } else {
+        setIsLoading(false);
+      }
     } else {
       setIsLoading(false);
     }
@@ -150,7 +181,7 @@ export const Explore = () => {
   useEffect(() => {
     if (type === 'person') return;
     
-    const gridKey = `grid_${api}_${type}_${id}_${mediaFilter}_${sortOrder}_1`;
+    const gridKey = `grid_${api}_${type}_${id}_${mediaFilter}_${sortOrder}_${roleFilter}_1`;
     if (exploreCache[gridKey]) {
       setDiscoverResults(exploreCache[gridKey].data.results);
       setTotalPages(exploreCache[gridKey].data.totalPages);
@@ -200,11 +231,20 @@ export const Explore = () => {
           setIsGridLoading(false);
         }
       });
+    } else if (api === 'vndb') {
+      apiRegistry.discoverVNDB(type, id, 1, sortOrder, roleFilter).then(res => {
+        if (isMounted) {
+          setDiscoverResults(res.results);
+          setTotalPages(res.totalPages);
+          setExploreCache(gridKey, { results: res.results, totalPages: res.totalPages });
+          setIsGridLoading(false);
+        }
+      });
     } else {
       setIsGridLoading(false);
     }
     return () => { isMounted = false; };
-  }, [api, type, id, mediaFilter, sortOrder]);
+  }, [api, type, id, mediaFilter, sortOrder, roleFilter]);
 
   const handleDiscoverPageChange = async (newPage) => {
     if (isFetchingMore || newPage < 1 || newPage > totalPages) return;
@@ -212,7 +252,7 @@ export const Explore = () => {
     setPage(newPage);
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
-    const newGridCacheKey = `grid_${api}_${type}_${id}_${mediaFilter}_${sortOrder}_${newPage}`;
+    const newGridCacheKey = `grid_${api}_${type}_${id}_${mediaFilter}_${sortOrder}_${roleFilter}_${newPage}`;
     if (exploreCache[newGridCacheKey]) {
       setDiscoverResults(exploreCache[newGridCacheKey].data.results);
       setTotalPages(exploreCache[newGridCacheKey].data.totalPages);
@@ -237,6 +277,11 @@ export const Explore = () => {
       setExploreCache(newGridCacheKey, { results: res.results, totalPages: res.totalPages });
     } else if (api === 'metron') {
       const res = await apiRegistry.discoverMetron(type, id, newPage);
+      setDiscoverResults(res.results);
+      setTotalPages(res.totalPages);
+      setExploreCache(newGridCacheKey, { results: res.results, totalPages: res.totalPages });
+    } else if (api === 'vndb') {
+      const res = await apiRegistry.discoverVNDB(type, id, newPage, sortOrder, roleFilter);
       setDiscoverResults(res.results);
       setTotalPages(res.totalPages);
       setExploreCache(newGridCacheKey, { results: res.results, totalPages: res.totalPages });
@@ -350,19 +395,41 @@ export const Explore = () => {
   const enrichedDiscoverResults = useMemo(() => {
     return discoverResults.map(item => {
       const { apiRating, ...rest } = item;
+      
+      let roleLabel = rest.roleLabel;
+      if (api === 'vndb' && type === 'staff' && item.raw?.staff) {
+        const roles = item.raw.staff
+          .filter(s => String(s.id) === String(id))
+          .map(s => {
+            const r = String(s.role || '').toLowerCase();
+            if (r === 'art') return 'Art';
+            if (r === 'chardesign') return 'Character Design';
+            if (r === 'scenario') return 'Scenario';
+            if (r === 'director') return 'Director';
+            if (r === 'music') return 'Music';
+            if (r === 'songs') return 'Songs';
+            return s.role ? s.role.charAt(0).toUpperCase() + s.role.slice(1) : '';
+          })
+          .filter(Boolean);
+        if (roles.length > 0) {
+          roleLabel = Array.from(new Set(roles)).slice(0, 2).join(', ');
+        }
+      }
+
       return { 
         ...rest, 
-        apiData: { ...rest.apiData, year: rest.year } 
+        roleLabel,
+        apiData: { ...rest.apiData, year: rest.year, raw: item.raw } 
       };
     });
-  }, [discoverResults]);
+  }, [discoverResults, api, type, id]);
 
   if (isLoading) return <div className="flex items-center justify-center min-h-[60vh] animate-in fade-in"><Loader2 className="w-8 h-8 animate-spin text-primary opacity-50" /></div>;
-  if ((type === 'person' || type === 'creator' || type === 'publisher') && !data) return <div className="p-8 text-center font-mono uppercase tracking-widest text-xs opacity-50">Entity not found.</div>;
+  if ((type === 'person' || type === 'creator' || type === 'publisher' || type === 'staff') && !data) return <div className="p-8 text-center font-mono uppercase tracking-widest text-xs opacity-50">Entity not found.</div>;
 
   const profileUrl = data?.profile_path ? `https://image.tmdb.org/t/p/h632${data.profile_path}` : data?.profile_path_custom || null;
-  const isPersonLayout = type === 'person' || type === 'creator' || type === 'publisher';
-  const isCompany = ['company', 'studio', 'network'].includes(type);
+  const isPersonLayout = type === 'person' || type === 'creator' || type === 'publisher' || type === 'staff';
+  const isCompany = ['company', 'studio', 'network', 'developer'].includes(type);
 
   const renderItems = type === 'person' ? paginatedCredits : enrichedDiscoverResults;
   const currentPage = type === 'person' ? personPage : page;
@@ -371,15 +438,10 @@ export const Explore = () => {
   const hasDescription = entityData?.description && entityData.description.trim() !== '';
   const logoUrl = entityData?.logo_path ? `https://image.tmdb.org/t/p/w500${entityData.logo_path}` : entityData?.logo?.image_id ? `https://images.igdb.com/igdb/image/upload/t_logo_med/${entityData.logo.image_id}.png` : api === 'metron' && entityData?.image ? entityData.image : null;
 
-  const isLongBio = data?.biography && data.biography.length > 400;
-  const isLongDesc = entityData?.description && entityData.description.length > 400;
+  const isLongBio = data?.biography?.length > 400;
+  const isLongDesc = entityData?.description?.length > 400;
 
-  const formatMarkdownLinks = (text) => {
-    if (!text) return '';
-    return text.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-  };
-
-  const BgIcon = api === 'igdb' ? Gamepad2 : api === 'anilist' ? Tv : api === 'metron' ? ImageIcon : Clapperboard;
+  const BgIcon = api === 'igdb' ? Gamepad2 : api === 'anilist' ? Tv : api === 'metron' ? ImageIcon : api === 'vndb' ? Eye : Clapperboard;
 
   return (
     <div className="flex flex-col gap-6 animate-in fade-in duration-300 pb-10 min-h-screen text-base-content">
@@ -387,22 +449,38 @@ export const Explore = () => {
       {isPersonLayout ? (
         <div className="flex flex-row gap-4 sm:gap-6 bg-base-100 border border-base-300 p-4 sm:p-6 pt-12 sm:pt-14 shadow-xl items-start relative">
           <button onClick={() => navigate(-1)} className="absolute top-2 left-2 sm:top-4 sm:left-4 flex items-center justify-center h-8 px-2 sm:px-3 rounded-none appearance-none font-mono text-[10px] uppercase tracking-widest bg-transparent hover:bg-base-200 text-base-content/60 hover:text-base-content transition-colors z-20"><ArrowLeft className="w-4 h-4 sm:mr-1" /><span className="hidden sm:inline">Back</span></button>
-          <div className={`w-24 sm:w-32 md:w-48 shrink-0 relative shadow-sm ${type === 'publisher' ? 'bg-transparent border-none shadow-none' : 'bg-base-200 border border-base-300 overflow-hidden aspect-[2/3]'}`}>
-            {profileUrl ? (
-              <img src={profileUrl} alt={data?.name || entityName} className={`w-full ${type === 'publisher' ? 'h-auto object-contain' : 'h-full object-cover'}`} />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-base-content/20">{type === 'publisher' ? <ImageIcon className="w-8 h-8 md:w-12 md:h-12" /> : <User className="w-8 h-8 md:w-12 md:h-12" />}</div>
-            )}
-          </div>
+          
+          {!(api === 'vndb' && type === 'staff') && (
+            <div className={`w-24 sm:w-32 md:w-48 shrink-0 relative shadow-sm ${type === 'publisher' ? 'bg-transparent border-none shadow-none' : 'bg-base-200 border border-base-300 overflow-hidden aspect-[2/3]'}`}>
+              {profileUrl ? (
+                <img src={profileUrl} alt={data?.name || entityName} className={`w-full ${type === 'publisher' ? 'h-auto object-contain' : 'h-full object-cover'}`} />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-base-content/20">{type === 'publisher' ? <ImageIcon className="w-8 h-8 md:w-12 md:h-12" /> : <User className="w-8 h-8 md:w-12 md:h-12" />}</div>
+              )}
+            </div>
+          )}
           
           <div className="flex flex-col flex-1 min-w-0 justify-center text-left">
             <div className="inline-flex items-center justify-start gap-2 mb-2 flex-wrap">
               <span className="text-[10px] font-mono font-bold tracking-[0.15em] uppercase bg-primary text-primary-content px-2 py-1">{data?.known_for_department}</span>
               {data?.birthday && <span className="text-[10px] font-mono opacity-60 tracking-widest">{data.birthday.substring(0,4)} {data.deathday ? `- ${data.deathday.substring(0,4)}` : '- Present'}</span>}
             </div>
-            <h1 className="text-2xl sm:text-3xl md:text-5xl font-black uppercase tracking-tight font-sans leading-none mb-2 md:mb-4 text-primary">{data?.name || entityName}</h1>
+            <h1 className={`text-2xl sm:text-3xl md:text-5xl font-black uppercase tracking-tight font-sans leading-none ${api === 'vndb' && type === 'staff' && data?.extlinks?.length > 0 ? 'mb-1 md:mb-2' : 'mb-2 md:mb-4'} text-primary`}>{data?.name || entityName}</h1>
             
-            {data.biography && (
+            {api === 'vndb' && type === 'staff' && data?.extlinks?.length > 0 && (
+              <div className="mb-3 md:mb-4 text-[10px] font-mono font-bold uppercase tracking-widest text-base-content/60 truncate w-full">
+                {data.extlinks.map((link, idx) => (
+                  <span key={idx}>
+                    <a href={link.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:text-primary/70 transition-colors">
+                      {link.label}
+                    </a>
+                    {idx < data.extlinks.length - 1 && <span className="opacity-30 mx-2">|</span>}
+                  </span>
+                ))}
+              </div>
+            )}
+            
+            {data?.biography && (
               <div className="relative group mt-1 md:mt-2">
                 <div 
                   className={`text-xs md:text-sm font-sans leading-relaxed text-base-content/80 whitespace-pre-wrap [&_a]:text-primary [&_a]:hover:text-primary/70 [&_a]:underline [&_a]:transition-colors max-w-none ${!bioExpanded && isLongBio ? 'line-clamp-4 md:line-clamp-6' : ''}`} 
@@ -418,9 +496,11 @@ export const Explore = () => {
           <div className="absolute -right-10 -bottom-10 opacity-10 pointer-events-none"><BgIcon className="w-64 h-64" /></div>
           <button onClick={() => navigate(-1)} className="absolute top-2 left-2 sm:top-4 sm:left-4 flex items-center justify-center h-8 px-2 sm:px-3 rounded-none appearance-none font-mono text-[10px] uppercase tracking-widest bg-transparent hover:bg-base-200 text-base-content/60 hover:text-base-content transition-colors z-20"><ArrowLeft className="w-4 h-4 sm:mr-1" /><span className="hidden sm:inline">Back</span></button>
           
-          <div className="w-full shrink-0 flex items-center justify-center min-h-[80px] relative">
-            {logoUrl ? <img src={logoUrl} alt={entityData?.name || entityName} className="max-h-28 sm:max-h-32 w-auto max-w-full object-contain drop-shadow-[0_0_12px_rgba(150,150,150,0.3)]" /> : <div className="text-xs font-mono font-bold opacity-50 uppercase text-center p-4">{entityData?.name || entityName}</div>}
-          </div>
+          {logoUrl && (
+            <div className="w-full shrink-0 flex items-center justify-center min-h-[80px] relative">
+              <img src={logoUrl} alt={entityData?.name || entityName} className="max-h-28 sm:max-h-32 w-auto max-w-full object-contain drop-shadow-[0_0_12px_rgba(150,150,150,0.3)]" />
+            </div>
+          )}
           
           <div className="flex flex-col flex-1 min-w-0 justify-center text-left w-full mt-2 relative z-10">
             {!logoUrl && <h1 className="text-2xl sm:text-3xl md:text-4xl font-black uppercase tracking-tight font-sans leading-none mb-1 text-primary">{entityData?.name || entityName}</h1>}
@@ -478,12 +558,25 @@ export const Explore = () => {
             </div>
           )}
 
-          {isPersonLayout && api !== 'metron' && (
+          {isPersonLayout && api !== 'metron' && api !== 'vndb' && (
             <div className="relative shrink-0">
               <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} className="h-7 sm:h-8 pl-2 pr-6 bg-base-100 border border-base-300 focus:outline-none focus:border-primary text-[9px] sm:text-[10px] font-mono uppercase tracking-widest cursor-pointer appearance-none rounded-none transition-colors">
                 <option value="all">All Roles</option>
                 <option value="cast">{api === 'anilist' ? 'Voice / Cast' : 'Acting'}</option>
                 <option value="crew">{api === 'anilist' ? 'Staff / Creator' : 'Production'}</option>
+              </select>
+              <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 pointer-events-none opacity-50" />
+            </div>
+          )}
+
+          {isPersonLayout && api === 'vndb' && (
+            <div className="relative shrink-0">
+              <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} className="h-7 sm:h-8 pl-2 pr-6 bg-base-100 border border-base-300 focus:outline-none focus:border-primary text-[9px] sm:text-[10px] font-mono uppercase tracking-widest cursor-pointer appearance-none rounded-none transition-colors">
+                <option value="all">All Roles</option>
+                <option value="scenario">Scenario</option>
+                <option value="director">Director</option>
+                <option value="chardesign">Character Design</option>
+                <option value="art">Art</option>
               </select>
               <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 pointer-events-none opacity-50" />
             </div>
