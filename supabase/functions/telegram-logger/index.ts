@@ -419,7 +419,7 @@ for (let i = 0; i < items.length; i++) {
         canonicalTitle = apiMatch.name;
         if (apiMatch.first_release_date) canonicalYear = new Date(apiMatch.first_release_date * 1000).getFullYear();
         if (apiMatch.cover?.url) {
-          posterUrl = apiMatch.cover.url.replace('t_thumb', 't_cover_big');
+          posterUrl = apiMatch.cover.url.replace('t_thumb', 't_720p');
           if (posterUrl.startsWith('//')) posterUrl = 'https:' + posterUrl;
         }
       }
@@ -852,7 +852,7 @@ ${safeProgress ? `<b>Progress:</b> ${safeProgress}\n` : ''}<b>Status:</b> ${safe
 
     // Safe artificial sleep to bypass any 3rd party API (TMDB/IGDB/AniList) rate limits.
     if (i < items.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
   }
 
