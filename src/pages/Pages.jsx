@@ -25,7 +25,7 @@ const isFutureRelease = (item) => {
   return !isNaN(yearNum) && yearNum > new Date().getFullYear();
 };
 
-const DashSection = ({ title, items, isLoading, headerRight, horizontalMobile, isCarousel }) => {
+const DashSection = ({ title, items, isLoading, headerRight, horizontalMobile, isCarousel, viewMode = 'grid' }) => {
   const scrollRef = useRef(null);
   const [showLeftArrow, setShowLeftArrow] = useState(false);
   const [showRightArrow, setShowRightArrow] = useState(false);
@@ -86,7 +86,12 @@ const DashSection = ({ title, items, isLoading, headerRight, horizontalMobile, i
           <Loader2 className="w-4 h-4 animate-spin text-primary" /> Loading...
         </div>
       ) : items.length > 0 ? (
-        <div className={`relative ${isCarousel || horizontalMobile ? 'group/carousel' : ''}`}>
+        viewMode === 'list' && !isCarousel ? (
+          <div className="flex flex-col gap-2 w-full mt-2">
+            {items.map(item => <MediaListRow key={item.id} item={item} />)}
+          </div>
+        ) : (
+          <div className={`relative ${isCarousel || horizontalMobile ? 'group/carousel' : ''}`}>
           {isCarousel && showLeftArrow && (
             <button onClick={() => scroll('left')} className="absolute left-2 top-1/2 -translate-y-[calc(50%+8px)] z-40 bg-base-100/90 hover:bg-primary text-base-content hover:text-primary-content w-10 h-10 items-center justify-center hidden md:group-hover/carousel:flex backdrop-blur-md transition-all border border-base-300 shadow-2xl rounded-full">
               <ChevronLeft className="w-6 h-6" />
@@ -111,7 +116,8 @@ const DashSection = ({ title, items, isLoading, headerRight, horizontalMobile, i
               <ChevronRight className="w-6 h-6" />
             </button>
           )}
-        </div>
+          </div>
+        )
       ) : (
         <div className="w-full bg-base-100 border border-base-300 p-8 flex items-center justify-center text-[10px] font-mono text-base-content/40 uppercase tracking-widest">No records found.</div>
       )}
@@ -125,12 +131,18 @@ export const Dashboard = () => {
   const mediaLogs = useMediaStore((state) => state.mediaLogs);
   const isLoading = useMediaStore((state) => state.isLoading);
   
+  const viewMode = useUIStore((state) => state.viewMode);
+  const setViewMode = useUIStore((state) => state.setViewMode);
+  const [filter, setFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const { recentlyAddedItems, allItemsLength, inProgress, recentActivity } = React.useMemo(() => {
     const allItems = Object.values(media).flat();
     const getAddedTime = (item) => item.addedAt || item.dateAdded || 0;
     
     let filtered = allItems;
+    if (filter !== 'all') {
+      filtered = filtered.filter(item => item.status === filter);
+    }
     if (searchQuery.trim()) {
       const lowerQ = searchQuery.toLowerCase();
       filtered = allItems.filter(item => item.title?.toLowerCase().includes(lowerQ));
@@ -149,7 +161,7 @@ export const Dashboard = () => {
     }).filter(log => log.mediaItem);
 
     return { recentlyAddedItems: recent, allItemsLength: allItems.length, inProgress: active, recentActivity: recentLogs };
-  }, [media, mediaLogs, searchQuery]);
+  }, [media, mediaLogs, searchQuery, filter]);
   
   const [isPopulating, setIsPopulating] = useState(false);
   const [popLog, setPopLog] = useState('');
@@ -175,7 +187,7 @@ export const Dashboard = () => {
   }, []);
 
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'smooth' }); }, [currentPage]);
-  useEffect(() => { setCurrentPage(1); }, [searchQuery]);
+  useEffect(() => { setCurrentPage(1); }, [searchQuery, filter]);
   
   const totalPages = Math.ceil(recentlyAddedItems.length / itemsPerPage) || 1;
   useEffect(() => { if (currentPage > totalPages) setCurrentPage(totalPages); }, [totalPages, currentPage]);
@@ -253,21 +265,37 @@ export const Dashboard = () => {
             title={searchQuery.trim() ? "Search Results" : "Recently Added"} 
             items={paginatedItems} 
             isLoading={isLoading || isPopulating} 
+            viewMode={viewMode}
             headerRight={
-              <div className="relative w-full sm:w-64">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-base-content/50" />
-                <input 
-                  type="text" 
-                  placeholder="Search library..." 
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full h-8 pl-9 pr-8 bg-base-100 border border-base-300 focus:border-primary focus:outline-none rounded-none text-xs font-mono placeholder:text-base-content/40 transition-colors appearance-none"
-                />
-                {searchQuery && (
-                  <button onClick={() => setSearchQuery('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/50 hover:text-base-content appearance-none">
-                    <X className="w-3 h-3" />
-                  </button>
-                )}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto shrink-0">
+                <div className="relative w-full sm:w-48">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-base-content/50 pointer-events-none" />
+                  <input 
+                    type="text" 
+                    placeholder="Search library..." 
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full h-8 pl-9 pr-8 bg-base-100 border border-base-300 focus:border-primary focus:outline-none rounded-none text-xs font-mono placeholder:text-base-content/40 transition-colors appearance-none"
+                  />
+                  {searchQuery && (
+                    <button onClick={() => setSearchQuery('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/50 hover:text-base-content appearance-none">
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex bg-base-100 border border-base-300 rounded-none h-8">
+                    <button onClick={() => setViewMode('grid')} className={`flex-1 px-3 ${viewMode === 'grid' ? 'bg-primary text-primary-content' : 'text-base-content/50 hover:bg-base-200'}`}><LayoutGrid className="w-4 h-4"/></button>
+                    <button onClick={() => setViewMode('list')} className={`flex-1 px-3 ${viewMode === 'list' ? 'bg-primary text-primary-content' : 'text-base-content/50 hover:bg-base-200'}`}><List className="w-4 h-4"/></button>
+                  </div>
+                  <div className="dropdown dropdown-bottom dropdown-end flex-1 sm:flex-none min-w-0">
+                    <div role="button" tabIndex={0} className="w-full h-8 rounded-none border border-base-300 bg-base-100 hover:bg-base-200 hover:border-primary text-[10px] font-mono uppercase font-bold tracking-widest flex px-2 sm:px-3 justify-between items-center cursor-pointer appearance-none transition-colors"><div className="flex items-center min-w-0"><Filter className="w-3 h-3 mr-1 shrink-0" /> <span className="truncate">{filter === 'all' ? 'Filter' : 'Filtered'}</span></div></div>
+                    <ul tabIndex={0} className="dropdown-content z-50 menu p-2 shadow-xl bg-base-100 border border-base-300 w-52 mt-1 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest">
+                      <li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setFilter('all'); document.activeElement.blur(); }}>All Entries</a></li>
+                      {['planned', 'in progress', 'completed', 'dropped'].map(s => (<li key={s}><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setFilter(s); document.activeElement.blur(); }}>{s}</a></li>))}
+                    </ul>
+                  </div>
+                </div>
               </div>
             }
           />

@@ -76,6 +76,8 @@ const systemPrompt = `
 You are a structured media parsing engine.
 
 Extract semantic media logging information from the user's message.
+If the user mentions multiple media items, extract EACH ONE as a separate object in the 'items' array.
+If the user expresses a general intent for a list (e.g. "add these to my backlog", "I want to watch..."), apply that action to ALL items in the list.
 
 Rules:
 - Return ONLY valid structured JSON.
@@ -117,94 +119,82 @@ const geminiRes = await fetch(geminiUrl, {
 
       responseSchema: {
         type: "OBJECT",
-
         properties: {
-          cleanTitle: {
-            type: "STRING",
-            description:
-              "Media title with years, season labels, and issue markers removed."
-          },
-
-          year: {
-            type: "INTEGER",
-            nullable: true,
-            description:
-              "Release year explicitly mentioned by the user."
-          },
-
-          season: {
-            type: "INTEGER",
-            nullable: true,
-            description:
-              "Season number or volume number if applicable."
-          },
-
-          progressNumber: {
-            type: "NUMBER",
-            nullable: true,
-            description:
-              "Episode number, issue number, chapter number, or completion percentage."
-          },
-
-          progressUnit: {
-            type: "STRING",
-            nullable: true,
-            enum: [
-              "episode",
-              "issue",
-              "chapter",
-              "percentage",
-              "season"
-            ]
-          },
-
-          type: {
-            type: "STRING",
-            nullable: true,
-            enum: [
-              "tv",
-              "movies",
-              "comics",
-              "games",
-              "anime",
-              "manga",
-              "vn",
-              "books"
-            ]
-          },
-
-          rawRating: {
-            type: "NUMBER",
-            nullable: true,
-            description:
-              "Numeric rating value supplied by the user."
-          },
-
-          rawRatingScale: {
-            type: "INTEGER",
-            nullable: true,
-            description:
-              "Rating scale denominator such as 5 or 10."
-          },
-
-          reviewText: {
-            type: "STRING",
-            nullable: true,
-            description:
-              "Freeform review or notes from the user."
-          },
-
-          confidence: {
-            type: "NUMBER",
-            description:
-              "Confidence score from 0.0 to 1.0."
+          items: {
+            type: "ARRAY",
+            description: "A list of media items extracted from the user's message. Multiple items can be extracted.",
+            items: {
+              type: "OBJECT",
+              properties: {
+                action: {
+                  type: "STRING",
+                  nullable: true,
+                  description:
+                    "The user's intent. Use 'planned' (want to consume, add to watchlist/backlog), 'in progress' (currently consuming), 'completed' (finished consuming), or 'dropped'.",
+                  enum: ["planned", "in progress", "completed", "dropped"]
+                },
+                cleanTitle: {
+                  type: "STRING",
+                  description:
+                    "Media title with years, season labels, and issue markers removed."
+                },
+                year: {
+                  type: "INTEGER",
+                  nullable: true,
+                  description:
+                    "Release year explicitly mentioned by the user."
+                },
+                season: {
+                  type: "INTEGER",
+                  nullable: true,
+                  description:
+                    "Season number or volume number explicitly mentioned."
+                },
+                progressNumber: {
+                  type: "NUMBER",
+                  nullable: true,
+                  description:
+                    "Episode number, issue number, chapter number, or completion percentage. Do NOT put the season number here."
+                },
+                progressUnit: {
+                  type: "STRING",
+                  nullable: true,
+                  enum: [
+                    "episode", "issue", "chapter", "percentage", "season"
+                  ]
+                },
+                type: {
+                  type: "STRING",
+                  nullable: true,
+                  enum: [
+                    "tv", "movies", "comics", "games", "anime", "manga", "vn", "books"
+                  ]
+                },
+                rawRating: {
+                  type: "NUMBER",
+                  nullable: true,
+                  description: "Numeric rating value supplied by the user."
+                },
+                rawRatingScale: {
+                  type: "INTEGER",
+                  nullable: true,
+                  description: "Rating scale denominator such as 5 or 10."
+                },
+                reviewText: {
+                  type: "STRING",
+                  nullable: true,
+                  description: "Freeform review or notes from the user."
+                },
+                confidence: {
+                  type: "NUMBER",
+                  description: "Confidence score from 0.0 to 1.0."
+                }
+              },
+              required: ["cleanTitle", "confidence"]
+            }
           }
         },
-
-        required: [
-          "cleanTitle",
-          "confidence"
-        ]
+        required: ["items"]
       }
     }
   })
@@ -258,122 +248,83 @@ try {
   });
 }
 
-// Confidence guard
-const confidence =
-  typeof parsedJson.confidence === 'number'
-    ? parsedJson.confidence
-    : 0;
-
-if (confidence < 0.35) {
-  console.warn(
-    `[Phase 2] Low confidence extraction (${confidence})`
-  );
-}
-
-// Safe Mapping from Structured Output
-const cleanTitle =
-  typeof parsedJson.cleanTitle === 'string'
-    ? parsedJson.cleanTitle.trim()
-    : 'Unknown Title';
-
-const year =
-  parsedJson.year !== null &&
-  parsedJson.year !== undefined
-    ? parseInt(parsedJson.year, 10)
-    : null;
-
-const season =
-  parsedJson.season !== null &&
-  parsedJson.season !== undefined
-    ? parseInt(parsedJson.season, 10)
-    : null;
-
-// Maintain compatibility with existing downstream architecture
-const issue =
-  parsedJson.progressNumber !== null &&
-  parsedJson.progressNumber !== undefined
-    ? Math.floor(parsedJson.progressNumber)
-    : null;
-
-const progressUnit =
-  parsedJson.progressUnit || null;
-
-let type =
-  typeof parsedJson.type === 'string'
-    ? parsedJson.type.toLowerCase()
-    : 'unknown';
-
-const VALID_TYPES = [
-  'tv',
-  'movies',
-  'comics',
-  'games',
-  'anime',
-  'manga',
-  'vn',
-  'books'
-];
-
-if (!VALID_TYPES.includes(type)) {
-  type = 'unknown';
-}
-
-// Deterministic rating normalization
-let rating = null;
-
-if (
-  parsedJson.rawRating !== null &&
-  parsedJson.rawRating !== undefined
-) {
-  const rawValue = parseFloat(parsedJson.rawRating);
-
-  const scale =
-    parsedJson.rawRatingScale ||
-    (rawValue <= 5 ? 5 : 10);
-
-  if (scale === 10) {
-    rating = rawValue;
-  } else if (scale === 5) {
-    rating = rawValue * 2;
+let items = parsedJson.items;
+// Fallback gracefully in case the LLM returns a single object instead of the array wrapper
+if (!Array.isArray(items)) {
+  if (parsedJson.cleanTitle) {
+    items = [parsedJson];
   } else {
-    rating = rawValue <= 5
-      ? rawValue * 2
-      : rawValue;
+    items = [];
+  }
+}
+
+if (items.length === 0) {
+  console.warn("[Phase 2] No items extracted from the message.");
+  return new Response('No items found.', { status: 200, headers: corsHeaders });
+}
+
+if (items.length > 1) {
+  await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: `⏳ Processing a batch of ${items.length} items...`
+    })
+  });
+}
+
+const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? Deno.env.get('VITE_SUPABASE_URL') ?? '';
+const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+const anonKey = Deno.env.get('VITE_SUPABASE_ANON_KEY') ?? Deno.env.get('SUPABASE_ANON_KEY') ?? serviceRoleKey;
+
+const supabase = createClient(supabaseUrl, anonKey);
+const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
+const userId = Deno.env.get('ADMIN_USER_ID');
+
+if (!userId) {
+  console.error('[Phase 4] CRITICAL ERROR: ADMIN_USER_ID is missing from environment variables.');
+  return new Response('Configuration Error', { status: 200, headers: corsHeaders }); 
+}
+
+// BATCH PROCESSING LOOP
+for (let i = 0; i < items.length; i++) {
+  const item = items[i];
+
+  // Confidence guard
+  const confidence = typeof item.confidence === 'number' ? item.confidence : 0;
+  if (confidence < 0.35) {
+    console.warn(`[Phase 2] Low confidence extraction (${confidence}) on item ${i+1}`);
   }
 
-  // Clamp to sane range
-  rating = Math.max(0, Math.min(10, rating));
-}
+  // Safe Mapping from Structured Output
+  const action = item.action || null;
+  const cleanTitle = typeof item.cleanTitle === 'string' ? item.cleanTitle.trim() : 'Unknown Title';
+  const year = item.year !== null && item.year !== undefined ? parseInt(item.year, 10) : null;
+  const season = item.season !== null && item.season !== undefined ? parseInt(item.season, 10) : null;
+  const issue = item.progressNumber !== null && item.progressNumber !== undefined ? Math.floor(item.progressNumber) : null;
+  const progressUnit = item.progressUnit || null;
 
-let reviewText =
-  typeof parsedJson.reviewText === 'string'
-    ? parsedJson.reviewText.trim()
-    : '';
+  let type = typeof item.type === 'string' ? item.type.toLowerCase() : 'unknown';
+  const VALID_TYPES = ['tv', 'movies', 'comics', 'games', 'anime', 'manga', 'vn', 'books'];
+  if (!VALID_TYPES.includes(type)) type = 'unknown';
 
-console.log(
-  `[Phase 2 Resolved] ` +
-  `Title: ${cleanTitle} | ` +
-  `Year: ${year} | ` +
-  `Season: ${season} | ` +
-  `Progress: ${issue} (${progressUnit}) | ` +
-  `Type: ${type} | ` +
-  `Rating: ${rating}/10 | ` +
-  `Confidence: ${confidence}`
-);
-    // --- Phase 3 - Autonomous API Resolution ---
-    
-    const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? Deno.env.get('VITE_SUPABASE_URL') ?? '';
-    
-    // Supabase automatically injects SUPABASE_SERVICE_ROLE_KEY into the cloud Edge Function environment.
-    // This acts as an admin key to safely bypass Postgres Row-Level Security during backend execution.
-    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+  // Deterministic rating normalization
+  let rating = null;
+  if (item.rawRating !== null && item.rawRating !== undefined) {
+    const rawValue = parseFloat(item.rawRating);
+    const scale = item.rawRatingScale || (rawValue <= 5 ? 5 : 10);
+    if (scale === 10) rating = rawValue;
+    else if (scale === 5) rating = rawValue * 2;
+    else rating = rawValue <= 5 ? rawValue * 2 : rawValue;
+    rating = Math.max(0, Math.min(10, rating));
+  }
 
-    // We'll use the anon key just for invoking your other Edge Functions (Phase 3)
-    const anonKey = Deno.env.get('VITE_SUPABASE_ANON_KEY') ?? Deno.env.get('SUPABASE_ANON_KEY') ?? serviceRoleKey;
-    const supabase = createClient(supabaseUrl, anonKey);
+  let reviewText = typeof item.reviewText === 'string' ? item.reviewText.trim() : '';
 
-    // We'll use the Admin client to explicitly bypass RLS (Phase 4)
-    const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
+  console.log(`[Phase 2 Resolved] Item ${i+1}/${items.length} | Action: ${action} | Title: ${cleanTitle} | Year: ${year} | Season: ${season} | Progress: ${issue} (${progressUnit}) | Type: ${type} | Rating: ${rating}/10 | Confidence: ${confidence}`);
+
+  // --- Phase 3 - Autonomous API Resolution ---
 
     let externalId = null;
     let canonicalTitle = cleanTitle;
@@ -640,16 +591,26 @@ console.log(
       if (type === 'comics') mediaId = isComicSeries ? `series_${externalId}` : `issue_${externalId}`;
       else if (type === 'games') mediaId = `igdb_${externalId}`;
       
-      const messageDate = new Date(timestamp * 1000);
-      const isoDate = messageDate.toISOString();
-      const calendarDay = isoDate.split('T')[0];
-      const timestampMs = messageDate.getTime();
+      // Advance timestamp minimally to guarantee chronological ordering in the UI 
+      const timestampMs = new Date(timestamp * 1000).getTime() + i;
+      const isoDate = new Date(timestampMs).toISOString();
+
+      // Pre-fetch existing library data to feed into the Smart Completion Engine
+      const { data: existingMedia } = await supabaseAdmin
+        .from('media_library')
+        .select('*') // Get everything to preserve existing fields safely
+        .eq('id', mediaId)
+        .eq('user_id', userId)
+        .maybeSingle();
 
       // Determine progress strings and milestone states dynamically
       let progressStr = null;
 
-      let isSeriesComplete = issue === null && season === null;
-      let isSeasonComplete = type === 'tv' && season !== null && issue === null;
+      let isSeriesComplete = false;
+      let isSeasonComplete = false;
+
+      // Smart status resolution based on LLM extracted action and existing media
+      let safeStatus = action || existingMedia?.status || 'in progress';
 
       // --- SMART COMPLETION ENGINE ---
       if (apiMatch) {
@@ -665,37 +626,65 @@ console.log(
             const hitFinalEp = issue !== null && maxEp > 0 && issue >= maxEp;
 
             if (isMaxSeason) {
-              if (issue === null && isEnded) isSeriesComplete = true; 
+              if (issue === null && isEnded && action === 'completed') isSeriesComplete = true; 
               else if (issue !== null && hitFinalEp) isSeriesComplete = true; 
             }
             
-            if (issue !== null && hitFinalEp && !isSeriesComplete) {
+            if (action === 'completed' && issue === null) {
+              isSeasonComplete = true;
+            } else if (issue !== null && hitFinalEp && !isSeriesComplete) {
               isSeasonComplete = true; // Auto-complete non-final seasons if final episode is hit
             }
           } else if (issue !== null) {
             const totalEps = apiMatch.number_of_episodes || 0;
             if (totalEps > 0 && issue >= totalEps) isSeriesComplete = true;
+          } else if (action === 'completed') {
+            isSeriesComplete = true;
           }
         } 
         else if (type === 'anime' || type === 'manga' || type === 'books' || type === 'comics') {
           const maxEp = type === 'anime' ? apiMatch.episodes : (type === 'manga' || type === 'books' ? apiMatch.chapters : (apiMatch.issue_count || apiMatch.issuesCount));
           if (issue !== null && maxEp > 0 && issue >= maxEp) isSeriesComplete = true;
+          else if (action === 'completed' && issue === null) isSeriesComplete = true;
         }
         else if (type === 'games' || type === 'vn') {
           if (issue !== null && issue >= 100) isSeriesComplete = true;
+          else if (action === 'completed' && issue === null) isSeriesComplete = true;
         }
+      } else {
+        if (action === 'completed' && issue === null && season === null) isSeriesComplete = true;
+        if (action === 'completed' && type === 'tv' && season !== null && issue === null) isSeasonComplete = true;
       }
 
       const shouldLogToDiary = isSeriesComplete || isSeasonComplete;
+
+      // If the user specified they completed a specific season/issue, but NOT the series, status should be 'in progress'
+      if (action === 'completed' && !isSeriesComplete) {
+         if (issue !== null || season !== null) {
+             safeStatus = 'in progress';
+         }
+      }
+
+      if (isSeriesComplete) {
+        safeStatus = 'completed';
+      } else if (issue !== null || season !== null) {
+        if (safeStatus === 'completed') safeStatus = 'in progress';
+      }
 
       if (type === 'tv' && season !== null) {
         if (issue !== null) {
           progressStr = `S${String(season).padStart(2, '0')} E${String(issue).padStart(2, '0')}`;
         } else {
-          // Season complete fallback
-          const seasonObj = apiMatch?.seasons?.find((s: any) => s.season_number === season);
-          const eps = seasonObj?.episode_count || 1;
-          progressStr = `S${String(season).padStart(2, '0')} E${String(eps).padStart(2, '0')}`;
+          // Season progress fallback
+          if (action === 'completed' || isSeasonComplete) {
+            const seasonObj = apiMatch?.seasons?.find((s: any) => s.season_number === season);
+            const eps = seasonObj?.episode_count || 1;
+            progressStr = `S${String(season).padStart(2, '0')} E${String(eps).padStart(2, '0')}`;
+          } else if (action === 'in progress' || action === 'planned') {
+            progressStr = `S${String(season).padStart(2, '0')} E01`;
+          } else {
+            progressStr = `S${String(season).padStart(2, '0')} E01`;
+          }
         }
       } else if ((type === 'comics' || type === 'manga' || type === 'books') && issue !== null) {
         progressStr = type === 'comics' ? `#${String(issue).padStart(3, '0')}` : `Ch. ${issue}`; 
@@ -723,14 +712,6 @@ console.log(
           progressStr = '100%';
         }
       }
-
-      // 1. Library Collection Upsert (media_library table)
-      const { data: existingMedia } = await supabaseAdmin
-        .from('media_library')
-        .select('*') // Get everything to preserve existing fields safely
-        .eq('id', mediaId)
-        .eq('user_id', userId)
-        .maybeSingle();
 
       // Append specific issue to read array if one was parsed
       let updatedReadIssues = existingMedia?.readIssueIds || [];
@@ -762,14 +743,6 @@ console.log(
       const safeType = String(type);
       const safeImage = posterUrl ? String(posterUrl) : null;
       const safeProgress = progressStr ? String(progressStr) : null;
-      
-      // If logging a new episode/issue for a previously completed series, gracefully downgrade it back to 'in progress'
-      let safeStatus = String(existingMedia?.status || 'in progress');
-      if (isSeriesComplete) {
-        safeStatus = 'completed';
-      } else if (issue !== null || season !== null) {
-        if (safeStatus === 'completed') safeStatus = 'in progress';
-      }
 
       const mediaPayload = {
         id: mediaId,
@@ -864,7 +837,24 @@ ${safeProgress ? `<b>Progress:</b> ${safeProgress}\n` : ''}<b>Status:</b> ${safe
           parse_mode: 'HTML'
         })
       });
+    } else {
+      // API missing fallback logging
+      await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: `❌ Could not find an automatic match for <b>${cleanTitle}</b>`,
+          parse_mode: 'HTML'
+        })
+      });
     }
+
+    // Safe artificial sleep to bypass any 3rd party API (TMDB/IGDB/AniList) rate limits.
+    if (i < items.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 1500));
+    }
+  }
 
     // Standard success response for Telegram webhook
     return new Response('Webhook processed successfully', { status: 200, headers: corsHeaders });
