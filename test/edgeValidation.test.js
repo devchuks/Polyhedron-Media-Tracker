@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   assertAllowedMetronPath,
   assertAllowedTmdbRequest,
+  assertGraphqlSuccess,
   buildIgdbRequest,
   enforceRateLimit,
   escapeTelegramHtml,
@@ -29,6 +30,11 @@ test('Telegram webhook authentication and generated HTML fail closed', () => {
   assert.equal(verifyTelegramWebhookSecret('', 'secret'), false);
   assert.equal(verifyTelegramWebhookSecret('secret', ''), false);
   assert.equal(escapeTelegramHtml('<b>unsafe & title</b>'), '&lt;b&gt;unsafe &amp; title&lt;/b&gt;');
+});
+
+test('GraphQL error payloads remain failures even when HTTP status is successful', () => {
+  assert.deepEqual(assertGraphqlSuccess({ data: { Page: { media: [] } } }, 'AniList'), { data: { Page: { media: [] } } });
+  assert.throws(() => assertGraphqlSuccess({ errors: [{ message: 'upstream unavailable' }] }, 'AniList'), /AniList lookup failed/);
 });
 
 test('Edge rate limiter rejects excess requests and supplies retry metadata', () => {

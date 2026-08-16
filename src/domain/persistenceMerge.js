@@ -16,6 +16,16 @@ const mergeTombstones = (left = {}, right = {}) => {
   return merged;
 };
 
+export const nextRecordRevision = (...values) => {
+  let revision = Date.now();
+  for (const value of values) {
+    const numeric = Number(value);
+    const parsed = Number.isFinite(numeric) ? numeric : Date.parse(value);
+    if (Number.isFinite(parsed)) revision = Math.max(revision, parsed + 1);
+  }
+  return revision;
+};
+
 export const mergeLibraryState = (current = {}, incoming = {}) => {
   const deletedMediaKeys = mergeTombstones(current.deletedMediaKeys, incoming.deletedMediaKeys);
   const deletedLogIds = mergeTombstones(current.deletedLogIds, incoming.deletedLogIds);
@@ -39,8 +49,10 @@ export const mergeLibraryState = (current = {}, incoming = {}) => {
 
   const categories = new Set([...Object.keys(current.media || {}), ...Object.keys(incoming.media || {})]);
   const media = Object.fromEntries([...categories].map(category => [category, []]));
+  const liveMediaKeys = new Set();
   for (const item of mediaByKey.values()) {
     if ((deletedMediaKeys[item.media_key] || 0) >= recordTime(item, 'addedAt')) continue;
+    liveMediaKeys.add(item.media_key);
     (media[item.type] ||= []).push(item);
   }
 
@@ -56,7 +68,9 @@ export const mergeLibraryState = (current = {}, incoming = {}) => {
   }
   const mediaLogs = [...logsById.values()]
     .filter(log => (deletedLogIds[String(log.log_id)] || 0) < recordTime(log, 'log_date'))
-    .filter(log => !deletedMediaKeys[log.media_key] || deletedMediaKeys[log.media_key] < recordTime(log, 'log_date'))
+    .filter(log => liveMediaKeys.has(log.media_key)
+      || !deletedMediaKeys[log.media_key]
+      || deletedMediaKeys[log.media_key] < recordTime(log, 'log_date'))
     .sort((a, b) => new Date(b.log_date) - new Date(a.log_date));
 
   return { media, mediaLogs, deletedMediaKeys, deletedLogIds };

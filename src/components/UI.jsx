@@ -140,7 +140,7 @@ export const GlobalDiaryModal = () => {
   const activeDiaryModal = useMediaStore((state) => state.activeDiaryModal);
   const closeDiaryModal = useMediaStore((state) => state.closeDiaryModal);
   const addMediaItem = useMediaStore((state) => state.addMediaItem);
-  const addDiaryLog = useMediaStore((state) => state.addDiaryLog);
+  const saveMediaWithLog = useMediaStore((state) => state.saveMediaWithLog);
   const removeMediaItem = useMediaStore((state) => state.removeMediaItem);
   const navigate = useNavigate();
 
@@ -263,11 +263,8 @@ export const GlobalDiaryModal = () => {
       apiData: apiData || targetItem?.apiData
     };
 
-    addMediaItem(libraryPayload, type);
-
     const isolatedSeasonYear = currentSeasonObj?.air_date ? currentSeasonObj.air_date.substring(0, 4) : undefined;
-    
-    addDiaryLog({
+    const diaryLog = {
       log_id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).substring(2),
       media_id: libraryPayload.id,
       media_type: type,
@@ -277,6 +274,10 @@ export const GlobalDiaryModal = () => {
       image: apiData?.image || targetItem?.image,
       season_label: `Season ${inputSeason}`,
       season_year: isolatedSeasonYear
+    };
+    void saveMediaWithLog(libraryPayload, type, diaryLog).catch(error => {
+      console.error('Season save failed:', error);
+      useUIStore.getState().addToast('Season was saved locally but cloud synchronization failed.', 'error');
     });
 
     const nextSeason = inputSeason + 1;
@@ -350,8 +351,6 @@ export const GlobalDiaryModal = () => {
       apiData: apiData || targetItem?.apiData
     };
 
-    addMediaItem(libraryPayload, type);
-
     const noteExists = reviewText.trim() !== '';
     
     const prevProgress = targetItem?.progress || '';
@@ -359,6 +358,7 @@ export const GlobalDiaryModal = () => {
 
     const isMilestone = status === 'completed' || explicitAction === 'SEASON FINISHED' || newlyFinishedSeason;
 
+    let diaryLog = null;
     if (isMilestone || noteExists || isRewatch || explicitAction === 'NOTE ADDED') {
       if (explicitAction === 'SEASON FINISHED' || newlyFinishedSeason) finalActionType = 'WATCHED';
 
@@ -374,7 +374,7 @@ export const GlobalDiaryModal = () => {
         return new Date(timestamp).toISOString();
       };
 
-      addDiaryLog({
+      diaryLog = {
         log_id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).substring(2),
         media_id: libraryPayload.id,
         media_type: type,
@@ -384,7 +384,16 @@ export const GlobalDiaryModal = () => {
         image: apiData?.image || targetItem?.image,
         season_label: finalSeasonLabel,
         season_year: isolatedSeasonYear
+      };
+    }
+
+    if (diaryLog) {
+      void saveMediaWithLog(libraryPayload, type, diaryLog).catch(error => {
+        console.error('Media and diary save failed:', error);
+        useUIStore.getState().addToast('Saved locally, but the media and diary transaction did not sync.', 'error');
       });
+    } else {
+      addMediaItem(libraryPayload, type);
     }
 
     setTimeout(() => {

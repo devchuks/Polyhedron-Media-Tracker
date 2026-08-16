@@ -158,6 +158,12 @@ export const safeHttpUrl = value => {
   }
 };
 
+export const assertGraphqlSuccess = (payload, provider = 'GraphQL') => {
+  if (!payload || typeof payload !== 'object') throw new Error(`${provider} lookup failed (invalid response)`);
+  if (Array.isArray(payload.errors) && payload.errors.length > 0) throw new Error(`${provider} lookup failed (GraphQL error)`);
+  return payload;
+};
+
 export const readBoundedJson = async (request, maxBytes = 32_000) => {
   const contentLength = Number(request.headers.get('content-length') || 0);
   if (contentLength > maxBytes) throw new TypeError('Request body is too large');

@@ -434,8 +434,22 @@ set search_path = public, pg_temp
 as $$
 begin
   if auth.uid() is null then raise exception 'authentication required'; end if;
+  perform pg_advisory_xact_lock(hashtextextended(auth.uid()::text, 0));
+  insert into public.log_tombstones(user_id, log_id, deleted_at)
+  select auth.uid(), log_id, greatest(now(), p_deleted_at, updated_at + interval '1 millisecond')
+  from public.media_logs
+  where user_id = auth.uid() and media_key = p_media_key
+  on conflict (user_id, log_id) do update set deleted_at = greatest(excluded.deleted_at, public.log_tombstones.deleted_at);
   insert into public.media_tombstones(user_id, media_key, deleted_at)
-  values (auth.uid(), p_media_key, p_deleted_at)
+  values (
+    auth.uid(),
+    p_media_key,
+    greatest(
+      now(),
+      p_deleted_at,
+      coalesce((select updated_at + interval '1 millisecond' from public.media_library where user_id = auth.uid() and media_key = p_media_key), now())
+    )
+  )
   on conflict (user_id, media_key) do update set deleted_at = greatest(excluded.deleted_at, public.media_tombstones.deleted_at);
   delete from public.media_library where user_id = auth.uid() and media_key = p_media_key;
 end;
@@ -449,8 +463,17 @@ set search_path = public, pg_temp
 as $$
 begin
   if auth.uid() is null then raise exception 'authentication required'; end if;
+  perform pg_advisory_xact_lock(hashtextextended(auth.uid()::text, 0));
   insert into public.log_tombstones(user_id, log_id, deleted_at)
-  values (auth.uid(), p_log_id, p_deleted_at)
+  values (
+    auth.uid(),
+    p_log_id,
+    greatest(
+      now(),
+      p_deleted_at,
+      coalesce((select updated_at + interval '1 millisecond' from public.media_logs where user_id = auth.uid() and log_id = p_log_id), now())
+    )
+  )
   on conflict (user_id, log_id) do update set deleted_at = greatest(excluded.deleted_at, public.log_tombstones.deleted_at);
   delete from public.media_logs where user_id = auth.uid() and log_id = p_log_id;
 end;
@@ -464,8 +487,9 @@ set search_path = public, pg_temp
 as $$
 begin
   if auth.uid() is null then raise exception 'authentication required'; end if;
+  perform pg_advisory_xact_lock(hashtextextended(auth.uid()::text, 0));
   insert into public.log_tombstones(user_id, log_id, deleted_at)
-  select auth.uid(), log_id, p_deleted_at
+  select auth.uid(), log_id, greatest(now(), p_deleted_at, updated_at + interval '1 millisecond')
   from public.media_logs
   where user_id = auth.uid() and media_key = p_media_key
   on conflict (user_id, log_id) do update set deleted_at = greatest(excluded.deleted_at, public.log_tombstones.deleted_at);
@@ -481,11 +505,12 @@ set search_path = public, pg_temp
 as $$
 begin
   if auth.uid() is null then raise exception 'authentication required'; end if;
+  perform pg_advisory_xact_lock(hashtextextended(auth.uid()::text, 0));
   insert into public.media_tombstones(user_id, media_key, deleted_at)
-  select auth.uid(), media_key, now() from public.media_library where user_id = auth.uid()
+  select auth.uid(), media_key, greatest(now(), updated_at + interval '1 millisecond') from public.media_library where user_id = auth.uid()
   on conflict (user_id, media_key) do update set deleted_at = greatest(excluded.deleted_at, public.media_tombstones.deleted_at);
   insert into public.log_tombstones(user_id, log_id, deleted_at)
-  select auth.uid(), log_id, now() from public.media_logs where user_id = auth.uid()
+  select auth.uid(), log_id, greatest(now(), updated_at + interval '1 millisecond') from public.media_logs where user_id = auth.uid()
   on conflict (user_id, log_id) do update set deleted_at = greatest(excluded.deleted_at, public.log_tombstones.deleted_at);
   delete from public.media_logs where user_id = auth.uid();
   delete from public.media_library where user_id = auth.uid();
@@ -503,12 +528,11 @@ declare
   revision timestamptz := coalesce(nullif(p_media->>'updated_at', '')::timestamptz, now());
 begin
   if owner_id is null then raise exception 'authentication required'; end if;
+  perform pg_advisory_xact_lock(hashtextextended(owner_id::text, 0));
   if exists (
     select 1 from public.media_tombstones
     where user_id = owner_id and media_key = p_media->>'media_key' and deleted_at >= revision
   ) then return; end if;
-  delete from public.media_tombstones
-  where user_id = owner_id and media_key = p_media->>'media_key' and deleted_at < revision;
   insert into public.media_library (
     user_id, id, provider, provider_id, media_type, media_key, title, type, subtype, progress,
     status, rating, "addedAt", "dateStarted", "dateCompleted", "rewatchCount", "readIssueIds", image, "apiData", updated_at
@@ -530,6 +554,46 @@ begin
 end;
 $$;
 
+create or replace function public.patch_user_media(p_media_key text, p_updates jsonb, p_revision timestamptz default now())
+returns void
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  owner_id uuid := auth.uid();
+begin
+  if owner_id is null then raise exception 'authentication required'; end if;
+  if jsonb_typeof(p_updates) <> 'object' then raise exception 'invalid media patch'; end if;
+  if exists (
+    select 1 from jsonb_object_keys(p_updates) as fields(field_name)
+    where field_name not in (
+      'title', 'image', 'apiData', 'status', 'dateCompleted', 'progress',
+      'rating', 'readIssueIds', 'dateStarted', 'rewatchCount'
+    )
+  ) then raise exception 'media patch contains an unsupported field'; end if;
+  perform pg_advisory_xact_lock(hashtextextended(owner_id::text, 0));
+  if exists (
+    select 1 from public.media_tombstones
+    where user_id = owner_id and media_key = p_media_key and deleted_at >= p_revision
+  ) then return; end if;
+
+  update public.media_library set
+    title = case when p_updates ? 'title' then coalesce(nullif(p_updates->>'title', ''), title) else title end,
+    image = case when p_updates ? 'image' then p_updates->>'image' else image end,
+    "apiData" = case when p_updates ? 'apiData' then coalesce(p_updates->'apiData', '{}'::jsonb) else "apiData" end,
+    status = case when p_updates ? 'status' then p_updates->>'status' else status end,
+    "dateCompleted" = case when p_updates ? 'dateCompleted' then nullif(p_updates->>'dateCompleted', '')::bigint else "dateCompleted" end,
+    progress = case when p_updates ? 'progress' then p_updates->>'progress' else progress end,
+    rating = case when p_updates ? 'rating' then (p_updates->>'rating')::numeric else rating end,
+    "readIssueIds" = case when p_updates ? 'readIssueIds' then coalesce(p_updates->'readIssueIds', '[]'::jsonb) else "readIssueIds" end,
+    "dateStarted" = case when p_updates ? 'dateStarted' then nullif(p_updates->>'dateStarted', '')::bigint else "dateStarted" end,
+    "rewatchCount" = case when p_updates ? 'rewatchCount' then coalesce((p_updates->>'rewatchCount')::integer, 0) else "rewatchCount" end,
+    updated_at = p_revision
+  where user_id = owner_id and media_key = p_media_key and updated_at <= p_revision;
+end;
+$$;
+
 create or replace function public.upsert_user_log(p_log jsonb)
 returns void
 language plpgsql
@@ -541,12 +605,11 @@ declare
   revision timestamptz := coalesce(nullif(p_log->>'updated_at', '')::timestamptz, now());
 begin
   if owner_id is null then raise exception 'authentication required'; end if;
+  perform pg_advisory_xact_lock(hashtextextended(owner_id::text, 0));
   if exists (
     select 1 from public.log_tombstones
     where user_id = owner_id and log_id = p_log->>'log_id' and deleted_at >= revision
   ) then return; end if;
-  delete from public.log_tombstones
-  where user_id = owner_id and log_id = p_log->>'log_id' and deleted_at < revision;
   insert into public.media_logs (
     log_id, user_id, media_id, provider, provider_id, media_type, media_key, action_type,
     log_date, review_text, image, season_label, season_year, updated_at
@@ -573,6 +636,7 @@ set search_path = public, pg_temp
 as $$
 begin
   if auth.uid() is null then raise exception 'authentication required'; end if;
+  perform pg_advisory_xact_lock(hashtextextended(auth.uid()::text, 0));
   perform public.upsert_user_media(p_media);
   if p_log is not null then
     perform public.upsert_user_log(p_log);
@@ -589,24 +653,60 @@ as $$
 declare
   owner_id uuid := auth.uid();
   row_data jsonb;
+  row_revision timestamptz;
 begin
   if owner_id is null then raise exception 'authentication required'; end if;
+  perform pg_advisory_xact_lock(hashtextextended(owner_id::text, 0));
   if jsonb_typeof(p_media) <> 'array' or jsonb_typeof(p_logs) <> 'array' then raise exception 'invalid backup payload'; end if;
   if jsonb_array_length(p_media) > 160000 or jsonb_array_length(p_logs) > 500000 then raise exception 'backup payload exceeds row limits'; end if;
 
-  insert into public.media_tombstones(user_id, media_key, deleted_at)
-  select owner_id, media_key, now() from public.media_library where user_id = owner_id
-  on conflict (user_id, media_key) do update set deleted_at = greatest(excluded.deleted_at, public.media_tombstones.deleted_at);
+  if exists (
+    select 1 from jsonb_array_elements(p_logs) incoming_log
+    where not exists (
+      select 1 from jsonb_array_elements(p_media) incoming_media
+      where incoming_media->>'media_key' = incoming_log->>'media_key'
+    )
+  ) then raise exception 'backup contains an orphan log'; end if;
+
   insert into public.log_tombstones(user_id, log_id, deleted_at)
-  select owner_id, log_id, now() from public.media_logs where user_id = owner_id
+  select owner_id, existing.log_id, greatest(now(), existing.updated_at + interval '1 millisecond')
+  from public.media_logs existing
+  where existing.user_id = owner_id
+    and not exists (
+      select 1 from jsonb_array_elements(p_logs) incoming
+      where incoming->>'log_id' = existing.log_id
+    )
   on conflict (user_id, log_id) do update set deleted_at = greatest(excluded.deleted_at, public.log_tombstones.deleted_at);
-  delete from public.media_logs where user_id = owner_id;
-  delete from public.media_library where user_id = owner_id;
+  delete from public.media_logs existing
+  where existing.user_id = owner_id
+    and not exists (
+      select 1 from jsonb_array_elements(p_logs) incoming
+      where incoming->>'log_id' = existing.log_id
+    );
+
+  insert into public.media_tombstones(user_id, media_key, deleted_at)
+  select owner_id, existing.media_key, greatest(now(), existing.updated_at + interval '1 millisecond')
+  from public.media_library existing
+  where existing.user_id = owner_id
+    and not exists (
+      select 1 from jsonb_array_elements(p_media) incoming
+      where incoming->>'media_key' = existing.media_key
+    )
+  on conflict (user_id, media_key) do update set deleted_at = greatest(excluded.deleted_at, public.media_tombstones.deleted_at);
+  delete from public.media_library existing
+  where existing.user_id = owner_id
+    and not exists (
+      select 1 from jsonb_array_elements(p_media) incoming
+      where incoming->>'media_key' = existing.media_key
+    );
 
   for row_data in select value from jsonb_array_elements(p_media)
   loop
-    delete from public.media_tombstones
-    where user_id = owner_id and media_key = row_data->>'media_key';
+    select greatest(
+      now(),
+      coalesce((select existing.updated_at + interval '1 millisecond' from public.media_library existing where existing.user_id = owner_id and existing.media_key = row_data->>'media_key'), now()),
+      coalesce((select tombstone.deleted_at + interval '1 millisecond' from public.media_tombstones tombstone where tombstone.user_id = owner_id and tombstone.media_key = row_data->>'media_key'), now())
+    ) into row_revision;
     insert into public.media_library (
       user_id, id, provider, provider_id, media_type, media_key, title, type, subtype, progress,
       status, rating, "addedAt", "dateStarted", "dateCompleted", "rewatchCount", "readIssueIds", image, "apiData", updated_at
@@ -616,14 +716,24 @@ begin
       coalesce(row_data->>'status', 'planned'), coalesce((row_data->>'rating')::numeric, 0),
       nullif(row_data->>'addedAt', '')::bigint, nullif(row_data->>'dateStarted', '')::bigint,
       nullif(row_data->>'dateCompleted', '')::bigint, coalesce((row_data->>'rewatchCount')::integer, 0),
-      coalesce(row_data->'readIssueIds', '[]'::jsonb), row_data->>'image', coalesce(row_data->'apiData', '{}'::jsonb), now()
-    );
+      coalesce(row_data->'readIssueIds', '[]'::jsonb), row_data->>'image', coalesce(row_data->'apiData', '{}'::jsonb), row_revision
+    )
+    on conflict (user_id, media_key) do update set
+      id = excluded.id, provider = excluded.provider, provider_id = excluded.provider_id, media_type = excluded.media_type,
+      title = excluded.title, type = excluded.type, subtype = excluded.subtype, progress = excluded.progress,
+      status = excluded.status, rating = excluded.rating, "addedAt" = excluded."addedAt",
+      "dateStarted" = excluded."dateStarted", "dateCompleted" = excluded."dateCompleted",
+      "rewatchCount" = excluded."rewatchCount", "readIssueIds" = excluded."readIssueIds",
+      image = excluded.image, "apiData" = excluded."apiData", updated_at = excluded.updated_at;
   end loop;
 
   for row_data in select value from jsonb_array_elements(p_logs)
   loop
-    delete from public.log_tombstones
-    where user_id = owner_id and log_id = row_data->>'log_id';
+    select greatest(
+      now(),
+      coalesce((select existing.updated_at + interval '1 millisecond' from public.media_logs existing where existing.user_id = owner_id and existing.log_id = row_data->>'log_id'), now()),
+      coalesce((select tombstone.deleted_at + interval '1 millisecond' from public.log_tombstones tombstone where tombstone.user_id = owner_id and tombstone.log_id = row_data->>'log_id'), now())
+    ) into row_revision;
     insert into public.media_logs (
       log_id, user_id, media_id, provider, provider_id, media_type, media_key, action_type,
       log_date, review_text, image, season_label, season_year, updated_at
@@ -631,8 +741,13 @@ begin
       row_data->>'log_id', owner_id, row_data->>'media_id', row_data->>'provider', row_data->>'provider_id',
       row_data->>'media_type', row_data->>'media_key', coalesce(row_data->>'action_type', 'LOGGED'),
       (row_data->>'log_date')::timestamptz, coalesce(row_data->>'review_text', ''), row_data->>'image',
-      row_data->>'season_label', row_data->>'season_year', now()
-    );
+      row_data->>'season_label', row_data->>'season_year', row_revision
+    )
+    on conflict (user_id, log_id) do update set
+      media_id = excluded.media_id, provider = excluded.provider, provider_id = excluded.provider_id,
+      media_type = excluded.media_type, media_key = excluded.media_key, action_type = excluded.action_type,
+      log_date = excluded.log_date, review_text = excluded.review_text, image = excluded.image,
+      season_label = excluded.season_label, season_year = excluded.season_year, updated_at = excluded.updated_at;
   end loop;
 end;
 $$;
@@ -642,6 +757,7 @@ revoke all on function public.delete_user_log(text, timestamptz) from public, an
 revoke all on function public.delete_user_media_logs(text, timestamptz) from public, anon;
 revoke all on function public.reset_user_library() from public, anon;
 revoke all on function public.upsert_user_media(jsonb) from public, anon;
+revoke all on function public.patch_user_media(text, jsonb, timestamptz) from public, anon;
 revoke all on function public.upsert_user_log(jsonb) from public, anon;
 revoke all on function public.upsert_user_media_with_log(jsonb, jsonb) from public, anon;
 revoke all on function public.replace_user_library(jsonb, jsonb) from public, anon;
@@ -650,6 +766,7 @@ grant execute on function public.delete_user_log(text, timestamptz) to authentic
 grant execute on function public.delete_user_media_logs(text, timestamptz) to authenticated;
 grant execute on function public.reset_user_library() to authenticated;
 grant execute on function public.upsert_user_media(jsonb) to authenticated;
+grant execute on function public.patch_user_media(text, jsonb, timestamptz) to authenticated;
 grant execute on function public.upsert_user_log(jsonb) to authenticated;
 grant execute on function public.upsert_user_media_with_log(jsonb, jsonb) to authenticated;
 grant execute on function public.replace_user_library(jsonb, jsonb) to authenticated;
@@ -771,18 +888,23 @@ language plpgsql
 security definer
 set search_path = public, pg_temp
 as $$
-declare inserted_event integer;
+declare
+  inserted_event integer;
+  event_revision timestamptz := coalesce(nullif(p_media->>'updated_at', '')::timestamptz, now());
+  log_revision timestamptz := coalesce(nullif(p_log->>'log_date', '')::timestamptz, event_revision);
 begin
   if p_event_id is null or length(p_event_id) > 200 then raise exception 'invalid event id'; end if;
-  perform pg_advisory_xact_lock(hashtextextended(p_user_id::text || ':' || coalesce(p_media->>'media_key', ''), 0));
+  perform pg_advisory_xact_lock(hashtextextended(p_user_id::text, 0));
   insert into public.webhook_events(source, event_id, user_id)
   values ('telegram', p_event_id, p_user_id)
   on conflict do nothing;
   get diagnostics inserted_event = row_count;
   if inserted_event = 0 then return false; end if;
 
-  delete from public.media_tombstones
-  where user_id = p_user_id and media_key = p_media->>'media_key';
+  if exists (
+    select 1 from public.media_tombstones
+    where user_id = p_user_id and media_key = p_media->>'media_key' and deleted_at >= event_revision
+  ) then return false; end if;
 
   insert into public.media_library (
     user_id, id, provider, provider_id, media_type, media_key, title, type, subtype, progress,
@@ -821,9 +943,10 @@ begin
     "apiData" = case when excluded.updated_at >= public.media_library.updated_at then excluded."apiData" else public.media_library."apiData" end,
     updated_at = greatest(excluded.updated_at, public.media_library.updated_at);
 
-  if p_log is not null then
-    delete from public.log_tombstones
-    where user_id = p_user_id and log_id = p_log->>'log_id';
+  if p_log is not null and not exists (
+    select 1 from public.log_tombstones
+    where user_id = p_user_id and log_id = p_log->>'log_id' and deleted_at >= log_revision
+  ) then
     insert into public.media_logs (
       log_id, user_id, media_id, provider, provider_id, media_type, media_key, action_type,
       log_date, review_text, image, season_label, season_year

@@ -2,7 +2,12 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { corsHeaders } from "../_shared/cors.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.42.0"
-import { enforceRateLimit, escapeTelegramHtml, readBoundedJson, safeHttpUrl, verifyTelegramWebhookSecret } from "../_shared/validation.js"
+import { assertGraphqlSuccess, enforceRateLimit, escapeTelegramHtml, readBoundedJson, safeHttpUrl, verifyTelegramWebhookSecret } from "../_shared/validation.js"
+
+const fetchProvider = (url: string, init: RequestInit = {}) => fetch(url, {
+  ...init,
+  signal: AbortSignal.timeout(15_000),
+});
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -393,7 +398,7 @@ for (let i = 0; i < items.length; i++) {
         error = fallbackRes.error || error;
       }
       
-      if (error) console.error('[Phase 3] TMDB Error:', error);
+      if (error) throw new Error('TMDB lookup failed');
       if (data?.results?.length > 0) {
         const match = data.results[0];
         externalId = match.id;
@@ -434,7 +439,7 @@ for (let i = 0; i < items.length; i++) {
         body: { operation: 'searchGames', params: { query: cleanTitle, page: 1 } },
       });
       
-      if (error) console.error('[Phase 3] IGDB Error:', error);
+      if (error) throw new Error('IGDB lookup failed');
       if (data && data.length > 0) {
         let match = data[0]; // fallback to top match
         if (year) {
@@ -491,7 +496,7 @@ for (let i = 0; i < items.length; i++) {
         error = fallbackRes.error || error;
       }
       
-      if (error) console.error('[Phase 3] Metron Error:', error);
+      if (error) throw new Error('Metron lookup failed');
       if (data?.results?.length > 0) {
         const match = data.results[0]; // Top issue #1 match
         
@@ -552,12 +557,13 @@ for (let i = 0; i < items.length; i++) {
       }`;
 
       try {
-        const res = await fetch('https://graphql.anilist.co', {
+        const res = await fetchProvider('https://graphql.anilist.co', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
           body: JSON.stringify({ query, variables: { search: cleanTitle } })
         });
-        const json = await res.json();
+        if (!res.ok) throw new Error(`AniList lookup failed (${res.status})`);
+        const json = assertGraphqlSuccess(await res.json(), 'AniList');
         
         if (json.data?.Page?.media?.length > 0) {
           const results = json.data.Page.media;
@@ -573,12 +579,12 @@ for (let i = 0; i < items.length; i++) {
           posterUrl = match.coverImage?.extraLarge || match.coverImage?.large || null;
         }
       } catch (error) {
-        console.error('[Phase 3] AniList Error:', error);
+        throw new Error('AniList lookup failed');
       }
     } else if (type === 'vn') {
       console.log('[Phase 3] Invoking VNDB.');
       try {
-        const res = await fetch('https://api.vndb.org/kana/vn', {
+        const res = await fetchProvider('https://api.vndb.org/kana/vn', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -587,6 +593,7 @@ for (let i = 0; i < items.length; i++) {
             results: 10
           })
         });
+        if (!res.ok) throw new Error(`VNDB lookup failed (${res.status})`);
         const json = await res.json();
         
         if (json.results?.length > 0) {
@@ -605,7 +612,28 @@ for (let i = 0; i < items.length; i++) {
           posterUrl = match.image?.url ? String(match.image.url) : (typeof match.image === 'string' ? match.image : null);
         }
       } catch (error) {
-        console.error('[Phase 3] VNDB Error:', error);
+        throw new Error('VNDB lookup failed');
+      }
+    } else if (type === 'books') {
+      console.log('[Phase 3] Invoking OpenLibrary.');
+      const url = new URL('https://openlibrary.org/search.json');
+      url.searchParams.set('title', cleanTitle);
+      url.searchParams.set('limit', '10');
+      const res = await fetchProvider(url.toString(), { headers: { Accept: 'application/json' } });
+      if (!res.ok) throw new Error(`OpenLibrary lookup failed (${res.status})`);
+      const json = await res.json();
+      const results = Array.isArray(json.docs) ? json.docs : [];
+      if (results.length > 0) {
+        let match = results[0];
+        if (year) match = results.find((book: any) => book.first_publish_year === year) || match;
+        const workKey = String(match.key || '').replace(/^\/works\//, '');
+        if (workKey) {
+          externalId = workKey;
+          apiMatch = match;
+          canonicalTitle = match.title || cleanTitle;
+          canonicalYear = match.first_publish_year || year;
+          posterUrl = match.cover_i ? `https://covers.openlibrary.org/b/id/${match.cover_i}-L.jpg` : null;
+        }
       }
     }
 
@@ -616,7 +644,7 @@ for (let i = 0; i < items.length; i++) {
     const userId = Deno.env.get('ADMIN_USER_ID');
     if (!userId) {
       console.error('[Phase 4] CRITICAL ERROR: ADMIN_USER_ID is missing from environment variables.');
-      return new Response('Configuration Error', { status: 200, headers: corsHeaders }); // Return 200 to satisfy Telegram
+      return new Response('Configuration Error', { status: 500, headers: corsHeaders });
     }
 
     if (externalId) {

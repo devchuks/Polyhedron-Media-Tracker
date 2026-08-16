@@ -4,7 +4,7 @@ import { supabase } from '../services/supabase';
 import { canonicalizeLog, canonicalizeMediaItem, mediaKeyFor } from '../domain/mediaIdentity';
 import { applyStatusTransition, canonicalizeMediaCollection, mergeProviderMetadata, toggleIssueState, upsertDiaryLog } from '../domain/mediaState';
 import { normalizeBackup } from '../domain/backup';
-import { mergeLibraryState, mergePersistedSnapshots } from '../domain/persistenceMerge';
+import { mergeLibraryState, mergePersistedSnapshots, nextRecordRevision } from '../domain/persistenceMerge';
 import { dateInputFromTimestamp } from '../utils/calendarDate';
 import { createKeyedQueue } from '../utils/keyedQueue';
 import { fetchPaginatedRows } from '../services/cloudPagination';
@@ -28,7 +28,7 @@ const fetchCloudTable = (table, userId, orderColumn, maxRows) => fetchPaginatedR
       .range(from, to);
     return query;
   },
-  { maxRows },
+  { maxRows, getRowKey: row => row[orderColumn] },
 );
 const reportLocalPersistenceError = error => {
   console.error('Local persistence failed:', error);
@@ -257,7 +257,7 @@ export const useMediaStore = create(
 
       // --- CLOUD SYNC HELPERS ---
       isCloudSyncing: false,
-      fetchCloudData: async (knownUser, expectedGeneration = authGeneration) => {
+      fetchCloudData: async (knownUser, expectedGeneration = authGeneration, replaceLocal = false) => {
         set({ isCloudSyncing: true, isLoading: true });
         try {
           const user = knownUser || (await supabase.auth.getUser()).data?.user;
@@ -284,7 +284,10 @@ export const useMediaStore = create(
             deletedMediaKeys: Object.fromEntries((mediaTombstones || []).map(row => [row.media_key, Date.parse(row.deleted_at) || 0])),
             deletedLogIds: Object.fromEntries((logTombstones || []).map(row => [String(row.log_id), Date.parse(row.deleted_at) || 0])),
           };
-          set(mergeLibraryState(get(), cloudState));
+          const mergeBase = replaceLocal
+            ? { media: freshMediaState(), mediaLogs: [], deletedMediaKeys: {}, deletedLogIds: {} }
+            : get();
+          set(mergeLibraryState(mergeBase, cloudState));
           return true;
         } catch (error) {
           console.error('Cloud snapshot failed:', error);
@@ -438,13 +441,11 @@ export const useMediaStore = create(
         if (get().authMode !== 'admin') return;
         const { data } = await supabase.auth.getUser();
         if (!data?.user || identity === null || identity === undefined) return;
-        const mediaKey = mediaKeyFor(identity, category);
-        const revision = Number(identity?.updatedAt) || Date.now();
-        const revisionIso = new Date(revision).toISOString();
-        const { error } = await supabase.from('media_library').update({ ...updates, updated_at: revisionIso })
-          .eq('media_key', mediaKey)
-          .eq('user_id', data.user.id)
-          .lte('updated_at', revisionIso);
+        const { error } = await supabase.rpc('patch_user_media', {
+          p_media_key: mediaKeyFor(identity, category),
+          p_updates: updates,
+          p_revision: new Date(Number(identity.updatedAt) || Date.now()).toISOString(),
+        });
         if (error) throw error;
       },
       deleteItemFromCloud: async (identity, category) => {
@@ -545,8 +546,10 @@ export const useMediaStore = create(
       clearPendingImportQueue: () => set((state) => ({ importQueue: state.importQueue.filter(item => item.ready_to_commit) })),
 
       addMediaItem: (item, category) => {
-        const now = Date.now();
-        const canonicalItem = canonicalizeMediaItem({ ...item, updatedAt: now }, category);
+        const baseItem = canonicalizeMediaItem(item, category);
+        const existingItem = get().media[category]?.find(mediaItem => mediaKeyFor(mediaItem, category) === baseItem.media_key);
+        const revision = nextRecordRevision(baseItem.updatedAt, existingItem?.updatedAt, get().deletedMediaKeys[baseItem.media_key]);
+        const canonicalItem = canonicalizeMediaItem({ ...item, updatedAt: revision }, category);
         set((state) => {
           const exists = state.media[category]?.some((mediaItem) => mediaKeyFor(mediaItem, category) === canonicalItem.media_key);
           const deletedMediaKeys = { ...state.deletedMediaKeys };
@@ -562,16 +565,26 @@ export const useMediaStore = create(
       },
 
       saveMediaWithLog: async (item, category, log) => {
-        const now = Date.now();
-        const canonicalItem = canonicalizeMediaItem({ ...item, updatedAt: now }, category);
-        const canonicalEntry = canonicalizeLog({
+        const baseItem = canonicalizeMediaItem(item, category);
+        const existingItem = get().media[category]?.find(mediaItem => mediaKeyFor(mediaItem, category) === baseItem.media_key);
+        const mediaRevision = nextRecordRevision(baseItem.updatedAt, existingItem?.updatedAt, get().deletedMediaKeys[baseItem.media_key]);
+        const canonicalItem = canonicalizeMediaItem({ ...item, updatedAt: mediaRevision }, category);
+        const baseEntry = canonicalizeLog({
           ...log,
           media_id: canonicalItem.id,
           media_type: category,
           provider: canonicalItem.provider,
           provider_id: canonicalItem.provider_id,
           media_key: canonicalItem.media_key,
-          updatedAt: now,
+        });
+        const existingLog = get().mediaLogs.find(entry => entry.media_key === baseEntry.media_key
+          && dateInputFromTimestamp(entry.log_date) === dateInputFromTimestamp(baseEntry.log_date)
+          && (entry.season_label || null) === (baseEntry.season_label || null));
+        const effectiveLogId = String(existingLog?.log_id || baseEntry.log_id);
+        const logRevision = nextRecordRevision(baseEntry.updatedAt, existingLog?.updatedAt, get().deletedLogIds[effectiveLogId]);
+        const canonicalEntry = canonicalizeLog({
+          ...baseEntry,
+          updatedAt: logRevision,
         });
         let syncedLog;
         set(state => {
@@ -606,7 +619,10 @@ export const useMediaStore = create(
             ...state.media,
             [category]: (state.media[category] || []).map(item => {
               if (mediaKeyFor(item, category) !== mediaKeyFor(identity, category)) return item;
-              updatedItem = canonicalizeMediaItem({ ...mergeProviderMetadata(item, metadataPatch), updatedAt: Date.now() }, category);
+              updatedItem = canonicalizeMediaItem({
+                ...mergeProviderMetadata(item, metadataPatch),
+                updatedAt: nextRecordRevision(item.updatedAt, state.deletedMediaKeys[item.media_key]),
+              }, category);
               return updatedItem;
             }),
           },
@@ -624,7 +640,9 @@ export const useMediaStore = create(
         const existing = get().media[category]?.find(item => mediaKeyFor(item, category) === mediaKeyFor(id, category));
         if (!existing) return;
         const targetKey = mediaKeyFor(existing, category);
-        const deletedAt = Date.now();
+        const relatedLogs = get().mediaLogs.filter(log => mediaKeyFor(log) === targetKey);
+        let deletedAt = nextRecordRevision(existing.updatedAt, get().deletedMediaKeys[targetKey]);
+        for (const log of relatedLogs) deletedAt = nextRecordRevision(deletedAt, log.updatedAt, get().deletedLogIds[String(log.log_id)]);
         set((state) => ({
           media: {
             ...state.media,
@@ -652,7 +670,7 @@ export const useMediaStore = create(
             ...state.media,
             [category]: state.media[category].map((item) => {
               if (mediaKeyFor(item, category) === mediaKeyFor(id, category)) {
-                const now = Date.now();
+                const now = nextRecordRevision(item.updatedAt, state.deletedMediaKeys[item.media_key]);
                 targetItem = { ...applyStatusTransition(item, newStatus, now), updatedAt: now };
                 patchPayload = { status: targetItem.status, dateCompleted: targetItem.dateCompleted };
                 return targetItem;
@@ -674,7 +692,11 @@ export const useMediaStore = create(
           const index = items.findIndex(item => mediaKeyFor(item, type) === mediaKeyFor(id, type));
           if (index === -1) return state;
           const updated = [...items];
-          updated[index] = { ...updated[index], progress: newProgress, updatedAt: Date.now() };
+          updated[index] = {
+            ...updated[index],
+            progress: newProgress,
+            updatedAt: nextRecordRevision(updated[index].updatedAt, state.deletedMediaKeys[updated[index].media_key]),
+          };
           targetItem = updated[index];
           return { media: { ...state.media, [type]: updated } };
         });
@@ -692,7 +714,7 @@ export const useMediaStore = create(
             ...state.media,
             [category]: state.media[category].map((item) =>
               mediaKeyFor(item, category) === mediaKeyFor(id, category)
-                ? (targetItem = { ...item, rating: ratingNum, updatedAt: Date.now() })
+                ? (targetItem = { ...item, rating: ratingNum, updatedAt: nextRecordRevision(item.updatedAt, state.deletedMediaKeys[item.media_key]) })
                 : item
             ),
           },
@@ -710,7 +732,10 @@ export const useMediaStore = create(
           const items = state.media[type] || [];
           const updated = items.map(item => {
             if (mediaKeyFor(item, type) === mediaKeyFor(mediaId, type)) {
-              targetItem = { ...toggleIssueState(item, issueId, allIssueIds), updatedAt: Date.now() };
+              targetItem = {
+                ...toggleIssueState(item, issueId, allIssueIds),
+                updatedAt: nextRecordRevision(item.updatedAt, state.deletedMediaKeys[item.media_key]),
+              };
               patchPayload = {
                 readIssueIds: targetItem.readIssueIds,
                 progress: targetItem.progress,
@@ -766,19 +791,35 @@ export const useMediaStore = create(
             p_logs: cloudLogs,
           });
           if (error) throw error;
+          const refreshed = await get().fetchCloudData(authData.user, authGeneration, true);
+          if (!refreshed) throw new Error('Backup was restored but the authoritative cloud snapshot could not be loaded');
+          return true;
         }
-        const deletedAt = Date.now();
         const restoredMediaKeys = new Set(Object.values(normalized.media).flat().map(item => mediaKeyFor(item, item.type)));
         const restoredLogIds = new Set(normalized.mediaLogs.map(log => String(log.log_id)));
         const deletedMediaKeys = { ...get().deletedMediaKeys };
         const deletedLogIds = { ...get().deletedLogIds };
         for (const [category, items] of Object.entries(get().media)) {
-          for (const item of items) if (!restoredMediaKeys.has(mediaKeyFor(item, category))) deletedMediaKeys[mediaKeyFor(item, category)] = deletedAt;
+          for (const item of items) {
+            const key = mediaKeyFor(item, category);
+            if (!restoredMediaKeys.has(key)) deletedMediaKeys[key] = nextRecordRevision(item.updatedAt, deletedMediaKeys[key]);
+          }
         }
-        for (const log of get().mediaLogs) if (!restoredLogIds.has(String(log.log_id))) deletedLogIds[String(log.log_id)] = deletedAt;
+        for (const log of get().mediaLogs) {
+          const logId = String(log.log_id);
+          if (!restoredLogIds.has(logId)) deletedLogIds[logId] = nextRecordRevision(log.updatedAt, deletedLogIds[logId]);
+        }
+        const existingMedia = new Map(Object.entries(get().media).flatMap(([category, items]) => items.map(item => [mediaKeyFor(item, category), item])));
+        const existingLogs = new Map(get().mediaLogs.map(log => [String(log.log_id), log]));
         set({
-          media: canonicalizeMediaCollection(Object.fromEntries(Object.entries(normalized.media).map(([category, items]) => [category, items.map(item => ({ ...item, updatedAt: deletedAt }))]))),
-          mediaLogs: normalized.mediaLogs.map(log => canonicalizeLog({ ...log, updatedAt: deletedAt })),
+          media: canonicalizeMediaCollection(Object.fromEntries(Object.entries(normalized.media).map(([category, items]) => [category, items.map(item => {
+            const key = mediaKeyFor(item, category);
+            return { ...item, updatedAt: nextRecordRevision(existingMedia.get(key)?.updatedAt, deletedMediaKeys[key]) };
+          })]))),
+          mediaLogs: normalized.mediaLogs.map(log => canonicalizeLog({
+            ...log,
+            updatedAt: nextRecordRevision(existingLogs.get(String(log.log_id))?.updatedAt, deletedLogIds[String(log.log_id)]),
+          })),
           deletedMediaKeys,
           deletedLogIds,
         });
@@ -794,13 +835,18 @@ export const useMediaStore = create(
             if (error) throw error;
           }
         }
-        const deletedAt = Date.now();
         const deletedMediaKeys = { ...get().deletedMediaKeys };
         const deletedLogIds = { ...get().deletedLogIds };
         for (const [category, items] of Object.entries(get().media)) {
-          for (const item of items) deletedMediaKeys[mediaKeyFor(item, category)] = deletedAt;
+          for (const item of items) {
+            const key = mediaKeyFor(item, category);
+            deletedMediaKeys[key] = nextRecordRevision(item.updatedAt, deletedMediaKeys[key]);
+          }
         }
-        for (const log of get().mediaLogs) deletedLogIds[String(log.log_id)] = deletedAt;
+        for (const log of get().mediaLogs) {
+          const logId = String(log.log_id);
+          deletedLogIds[logId] = nextRecordRevision(log.updatedAt, deletedLogIds[logId]);
+        }
         set({ media: freshMediaState(), mediaLogs: [], deletedMediaKeys, deletedLogIds });
         return true;
       },
@@ -817,7 +863,15 @@ export const useMediaStore = create(
 
       // STRICT UPSERT LOGIC (Prevents same-day stacking)
       addDiaryLog: (logEntry) => {
-        const canonicalEntry = canonicalizeLog({ ...logEntry, updatedAt: Date.now() });
+        const baseEntry = canonicalizeLog(logEntry);
+        const existingLog = get().mediaLogs.find(log => log.media_key === baseEntry.media_key
+          && dateInputFromTimestamp(log.log_date) === dateInputFromTimestamp(baseEntry.log_date)
+          && (log.season_label || null) === (baseEntry.season_label || null));
+        const effectiveLogId = String(existingLog?.log_id || baseEntry.log_id);
+        const canonicalEntry = canonicalizeLog({
+          ...baseEntry,
+          updatedAt: nextRecordRevision(baseEntry.updatedAt, existingLog?.updatedAt, get().deletedLogIds[effectiveLogId]),
+        });
         set(state => {
           const deletedLogIds = { ...state.deletedLogIds };
           delete deletedLogIds[String(canonicalEntry.log_id)];
@@ -837,7 +891,7 @@ export const useMediaStore = create(
 
       removeDiaryLog: (logId) => {
         const existingLog = get().mediaLogs.find(log => String(log.log_id) === String(logId));
-        const deletedAt = Date.now();
+        const deletedAt = nextRecordRevision(existingLog?.updatedAt, get().deletedLogIds[String(logId)]);
         set((state) => ({
           mediaLogs: state.mediaLogs.filter(log => String(log.log_id) !== String(logId)),
           deletedLogIds: { ...state.deletedLogIds, [String(logId)]: deletedAt },
@@ -851,7 +905,11 @@ export const useMediaStore = create(
 
       updateDiaryLog: (logId, updates) => {
         set((state) => ({
-          mediaLogs: state.mediaLogs.map(log => log.log_id === logId ? { ...log, ...updates, updatedAt: Date.now() } : log).sort((a, b) => new Date(b.log_date) - new Date(a.log_date))
+          mediaLogs: state.mediaLogs.map(log => log.log_id === logId ? {
+            ...log,
+            ...updates,
+            updatedAt: nextRecordRevision(log.updatedAt, state.deletedLogIds[String(logId)]),
+          } : log).sort((a, b) => new Date(b.log_date) - new Date(a.log_date))
         }));
         const updated = get().mediaLogs.find(l => l.log_id === logId);
         if (updated) void queueLogMutation(updated, () => get().syncLogToCloud(updated)).catch(error => {
@@ -862,7 +920,9 @@ export const useMediaStore = create(
 
       removeMediaLogsByMediaId: (mediaId, category) => {
         const targetKey = mediaKeyFor(mediaId, category);
-        const deletedAt = Date.now();
+        const matchingLogs = get().mediaLogs.filter(log => mediaKeyFor(log) === targetKey);
+        let deletedAt = Date.now();
+        for (const log of matchingLogs) deletedAt = nextRecordRevision(deletedAt, log.updatedAt, get().deletedLogIds[String(log.log_id)]);
         set((state) => ({
           mediaLogs: state.mediaLogs.filter(log => mediaKeyFor(log) !== targetKey),
           deletedLogIds: Object.fromEntries([

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeLibraryState, mergePersistedSnapshots } from '../src/domain/persistenceMerge.js';
+import { mergeLibraryState, mergePersistedSnapshots, nextRecordRevision } from '../src/domain/persistenceMerge.js';
 
 test('concurrent tab snapshots preserve unrelated record updates', () => {
   const first = { media: { movies: [{ id: 550, type: 'movies', title: 'Movie', updatedAt: 20 }], tv: [] }, mediaLogs: [] };
@@ -25,6 +25,37 @@ test('newer tombstones prevent stale snapshots from resurrecting deleted media a
   const merged = mergeLibraryState(stale, deletion);
   assert.equal(merged.media.movies.length, 0);
   assert.equal(merged.mediaLogs.length, 0);
+});
+
+test('per-record revisions permit immediate edits after future-dated tombstones', () => {
+  const futureDeletion = Date.now() + 86_400_000;
+  const deletedMediaKeys = { 'tmdb:movies:12': futureDeletion };
+  const deletedLogIds = { l1: futureDeletion + 5 };
+  const mediaRestoreRevision = nextRecordRevision(deletedMediaKeys['tmdb:movies:12']);
+  const logRestoreRevision = nextRecordRevision(deletedLogIds.l1);
+  const restored = {
+    media: { movies: [{ id: 12, type: 'movies', updatedAt: mediaRestoreRevision }] },
+    mediaLogs: [{ log_id: 'l1', media_id: 12, media_type: 'movies', log_date: '2026-01-01T00:00:00Z', updatedAt: logRestoreRevision }],
+  };
+  const merged = mergeLibraryState({ media: { movies: [] }, mediaLogs: [], deletedMediaKeys, deletedLogIds }, restored);
+  assert.equal(merged.media.movies.length, 1);
+  assert.equal(merged.mediaLogs.length, 1);
+  assert.ok(nextRecordRevision(mediaRestoreRevision) > mediaRestoreRevision);
+  assert.ok(nextRecordRevision(logRestoreRevision) > logRestoreRevision);
+});
+
+test('a newer live parent neutralizes media deletion history without reviving specifically deleted logs', () => {
+  const state = {
+    media: { movies: [{ id: 12, type: 'movies', updatedAt: 300 }] },
+    mediaLogs: [
+      { log_id: 'kept', media_id: 12, media_type: 'movies', log_date: '2026-01-01T00:00:00Z', updatedAt: 50 },
+      { log_id: 'deleted', media_id: 12, media_type: 'movies', log_date: '2026-01-02T00:00:00Z', updatedAt: 50 },
+    ],
+    deletedMediaKeys: { 'tmdb:movies:12': 200 },
+    deletedLogIds: { deleted: 250 },
+  };
+  const merged = mergeLibraryState({}, state);
+  assert.deepEqual(merged.mediaLogs.map(log => log.log_id), ['kept']);
 });
 
 test('owner changes and reset epochs replace private snapshots instead of merging them', () => {
