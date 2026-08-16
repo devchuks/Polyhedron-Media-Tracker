@@ -165,3 +165,35 @@ export const readBoundedJson = async (request, maxBytes = 32_000) => {
   if (text.length > maxBytes) throw new TypeError('Request body is too large');
   return text ? JSON.parse(text) : {};
 };
+
+const rateBuckets = new Map();
+
+export const enforceRateLimit = (request, {
+  limit = 60,
+  windowMs = 60_000,
+  keyPrefix = 'edge',
+  now = Date.now(),
+} = {}) => {
+  const forwarded = request.headers.get('cf-connecting-ip')
+    || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+    || 'unknown';
+  const key = `${keyPrefix}:${forwarded}`;
+  const current = rateBuckets.get(key);
+  const bucket = !current || current.resetAt <= now ? { count: 0, resetAt: now + windowMs } : current;
+  bucket.count += 1;
+  rateBuckets.set(key, bucket);
+  if (rateBuckets.size > 2_000) {
+    for (const [bucketKey, value] of rateBuckets) {
+      if (value.resetAt <= now) rateBuckets.delete(bucketKey);
+    }
+    while (rateBuckets.size > 2_000) {
+      rateBuckets.delete(rateBuckets.keys().next().value);
+    }
+  }
+  if (bucket.count > limit) {
+    const error = new Error('Rate limit exceeded');
+    error.status = 429;
+    error.retryAfterSeconds = Math.max(1, Math.ceil((bucket.resetAt - now) / 1_000));
+    throw error;
+  }
+};

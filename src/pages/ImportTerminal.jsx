@@ -62,8 +62,8 @@ const YOINKER_SCRIPT = `(async () => {
   document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 })();`;
 
-const processCommit = (item, storeActions) => {
-  const { addMediaItem, addDiaryLog, removeImportItem } = storeActions;
+const processCommit = async (item, storeActions) => {
+  const { saveMediaWithLog, removeImportItem } = storeActions;
   const finalItemData = item.selected_candidate;
   const seasonOverride = item.selected_season;
   const selectedType = item.selected_type;
@@ -93,21 +93,20 @@ const processCommit = (item, storeActions) => {
     }
   }
 
-  addMediaItem(libraryPayload, selectedType);
-  
-  addDiaryLog({
+  const diaryLog = {
     log_id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).substring(2), media_id: libraryPayload.id, media_type: selectedType,
     action_type: 'LOGGED', log_date: item.tweet_timestamp, review_text: item.extracted_note || '',
     image: libraryPayload.image, 
     season_label: seasonOverride ? seasonOverride.name : undefined,
     season_year: seasonOverride?.air_date ? seasonOverride.air_date.substring(0, 4) : undefined
-  });
-  
+  };
+
+  await saveMediaWithLog(libraryPayload, selectedType, diaryLog);
   removeImportItem(item.id);
 };
 
 const QueueItem = ({ item, globalIndex, totalCount }) => {
-  const { removeImportItem, updateImportItem, addMediaItem, addDiaryLog, autoSearchOnTypeSelect, moveItemToPosition } = useMediaStore();
+  const { removeImportItem, updateImportItem, saveMediaWithLog, autoSearchOnTypeSelect, moveItemToPosition } = useMediaStore();
   const [editingNote, setEditingNote] = useState(false);
   const [noteText, setNoteText] = useState(item.extracted_note || '');
   const [isSearching, setIsSearching] = useState(false);
@@ -201,7 +200,7 @@ const QueueItem = ({ item, globalIndex, totalCount }) => {
                  max={totalCount}
                />
              </div>
-           <button onClick={() => processCommit(item, { addMediaItem, addDiaryLog, removeImportItem })} className="btn btn-sm btn-success rounded-none font-mono uppercase tracking-widest text-[10px] shadow-md shadow-success/20">
+           <button onClick={() => void processCommit(item, { saveMediaWithLog, removeImportItem }).catch(error => useUIStore.getState().addToast(`Could not save “${item.extracted_title}”: ${error.message}`, 'error'))} className="btn btn-sm btn-success rounded-none font-mono uppercase tracking-widest text-[10px] shadow-md shadow-success/20">
              Add Now
            </button>
            <button onClick={() => updateImportItem(item.id, { ready_to_commit: false, selected_candidate: null, selected_season: null, parent_details: null })} className="btn btn-sm btn-outline border-base-300 rounded-none font-mono uppercase tracking-widest text-[10px]">
@@ -335,7 +334,7 @@ const QueueItem = ({ item, globalIndex, totalCount }) => {
 };
 
 export const ImportTerminal = () => {
-  const { authMode, importQueue, addImportBatch, addManualImportItem, updateImportItem, media, mediaLogs, restoreBackup, addMediaItem, addDiaryLog, removeImportItem, isAutoProcessing, setIsAutoProcessing, isBatchCommitting, setIsBatchCommitting, clearImportQueue, clearPendingImportQueue, autoSearchOnTypeSelect, setAutoSearchOnTypeSelect } = useMediaStore();
+  const { authMode, importQueue, addImportBatch, addManualImportItem, updateImportItem, media, mediaLogs, restoreBackup, saveMediaWithLog, removeImportItem, isAutoProcessing, setIsAutoProcessing, isBatchCommitting, setIsBatchCommitting, clearImportQueue, clearPendingImportQueue, autoSearchOnTypeSelect, setAutoSearchOnTypeSelect } = useMediaStore();
   const [jsonInput, setJsonInput] = useState('');
   const [error, setError] = useState('');
   const [autoProgress, setAutoProgress] = useState({ current: 0, total: 0 });
@@ -532,9 +531,14 @@ export const ImportTerminal = () => {
     setBatchCommitProgress({ current: 0, total: readyItems.length });
 
     for (let i = 0; i < readyItems.length; i++) {
-      processCommit(readyItems[i], { addMediaItem, addDiaryLog, removeImportItem });
-      setBatchCommitProgress({ current: i + 1, total: readyItems.length });
-      await new Promise(resolve => setTimeout(resolve, 800)); // Increased trickle delay to prevent browser crashes
+      try {
+        await processCommit(readyItems[i], { saveMediaWithLog, removeImportItem });
+        setBatchCommitProgress({ current: i + 1, total: readyItems.length });
+      } catch (error) {
+        useUIStore.getState().addToast(`Batch paused at “${readyItems[i].extracted_title}”: ${error.message}`, 'error');
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 800));
     }
     setIsBatchCommitting(false);
   };

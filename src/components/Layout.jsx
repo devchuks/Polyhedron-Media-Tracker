@@ -202,7 +202,7 @@ export const Sidebar = () => {
 
 export const AppLayout = () => {
   const navigate = useNavigate();
-  const { authMode, _hasHydrated, initAuthSubscription } = useMediaStore();
+  const { authMode, _hasHydrated, isLoading, initAuthSubscription } = useMediaStore();
 
   const [searchState, setSearchState] = useState({
     isOpen: false, isLoading: false, query: '', type: 'movies', results: [], page: 1, totalPages: 1
@@ -263,22 +263,26 @@ export const AppLayout = () => {
   };
 
   const handleSelectItem = async (apiItem) => {
+    let selectedItem = apiItem;
     if (searchState.type === 'comics' && typeof apiItem.id === 'string' && apiItem.id.startsWith('issue_')) {
       setSearchState(prev => ({ ...prev, isLoading: true }));
       try {
         const issueId = apiItem.id.replace('issue_', '');
         const issueDetails = await apiRegistry.getComicIssueDetails(issueId);
         if (issueDetails?.series?.id) {
-          apiItem.id = `series_${issueDetails.series.id}`;
-          apiItem.title = issueDetails.series.name || apiItem.title;
+          selectedItem = {
+            ...apiItem,
+            id: `series_${issueDetails.series.id}`,
+            title: issueDetails.series.name || apiItem.title,
+          };
         }
       } catch(e) { console.error(e); }
     }
     setSearchState(prev => ({ ...prev, isOpen: false, isLoading: false }));
-    navigate(`/media/${searchState.type}/${apiItem.id}`, { state: { previewData: apiItem } });
+    navigate(`/media/${searchState.type}/${selectedItem.id}`, { state: { previewData: selectedItem } });
   };
 
-  if (!_hasHydrated) return <div className="min-h-screen bg-base-200"></div>;
+  if (!_hasHydrated || (isLoading && !authMode)) return <div className="min-h-screen bg-base-200"></div>;
   if (!authMode) return <Gate />;
 
   return (

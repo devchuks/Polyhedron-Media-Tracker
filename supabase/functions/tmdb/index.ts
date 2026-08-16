@@ -1,12 +1,15 @@
 ﻿// @ts-nocheck
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { corsHeaders } from "../_shared/cors.ts"
-import { assertAllowedTmdbRequest, readBoundedJson } from "../_shared/validation.js"
+import { assertAllowedTmdbRequest, enforceRateLimit, readBoundedJson } from "../_shared/validation.js"
+import { enforceDurableRateLimit } from "../_shared/durableQuota.ts"
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
   try {
+    enforceRateLimit(req, { keyPrefix: 'tmdb', limit: 90 })
+    await enforceDurableRateLimit(req, 'tmdb', 90)
     const body = await readBoundedJson(req)
     const { path, query } = assertAllowedTmdbRequest(body.path, body.query || {})
 
@@ -66,10 +69,10 @@ serve(async (req) => {
     return new Response(JSON.stringify(data), { headers: responseHeaders })
   } catch (error) {
     console.error("Edge Function error:", error.message)
-    const status = error instanceof TypeError ? 400 : 500
-    return new Response(JSON.stringify({ error: status === 400 ? error.message : 'Internal server error' }), {
+    const status = error.status || (error instanceof TypeError ? 400 : 500)
+    return new Response(JSON.stringify({ error: status === 400 || status === 429 ? error.message : 'Internal server error' }), {
       status,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Content-Encoding': 'identity' }
+      headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Content-Encoding': 'identity', ...(status === 429 ? { 'Retry-After': String(error.retryAfterSeconds) } : {}) }
     })
   }
 })

@@ -67,6 +67,12 @@ export const mergePersistedSnapshots = (currentValue, incomingValue) => {
   try {
     const current = JSON.parse(currentValue);
     const incoming = JSON.parse(incomingValue);
+    const currentEpoch = Number(current.state?.storageEpoch) || 0;
+    const incomingEpoch = Number(incoming.state?.storageEpoch) || 0;
+    const currentOwner = current.state?.ownerId ?? null;
+    const incomingOwner = incoming.state?.ownerId ?? null;
+    if (currentEpoch > incomingEpoch) return currentValue;
+    if (incomingEpoch > currentEpoch || currentOwner !== incomingOwner) return incomingValue;
     const mergedLibrary = mergeLibraryState(current.state, incoming.state);
     return JSON.stringify({
       ...incoming,

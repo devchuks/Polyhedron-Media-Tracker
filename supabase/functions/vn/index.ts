@@ -1,6 +1,7 @@
 // /supabase/functions/vn/index.ts
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { buildVndbRequest, readBoundedJson } from "../_shared/validation.js";
+import { buildVndbRequest, enforceRateLimit, readBoundedJson } from "../_shared/validation.js";
+import { enforceDurableRateLimit } from "../_shared/durableQuota.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -14,6 +15,8 @@ serve(async (req) => {
   }
 
   try {
+    enforceRateLimit(req, { keyPrefix: 'vndb', limit: 90 });
+    await enforceDurableRateLimit(req, 'vndb', 90);
     const { operation, params } = await readBoundedJson(req);
     const body = buildVndbRequest(operation, params || {});
 
@@ -40,10 +43,10 @@ serve(async (req) => {
     });
   } catch (err) {
     console.error("[VN Edge] Internal error:", err);
-    const status = err instanceof TypeError ? 400 : 500;
-    return new Response(JSON.stringify({ error: status === 400 ? err.message : 'Internal server error' }), {
+    const status = err.status || (err instanceof TypeError ? 400 : 500);
+    return new Response(JSON.stringify({ error: status === 400 || status === 429 ? err.message : 'Internal server error' }), {
       status,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      headers: { ...corsHeaders, "Content-Type": "application/json", ...(status === 429 ? { "Retry-After": String(err.retryAfterSeconds) } : {}) },
     });
   }
 });

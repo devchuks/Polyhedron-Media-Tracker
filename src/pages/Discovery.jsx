@@ -5,8 +5,19 @@ import { ImageWithFallback, getMediaTypeColors, getSubtype, stripHtml } from '..
 import { supabase } from '../services/supabase';
 import { useMediaStore } from '../store/useMediaStore';
 import { FunctionsHttpError } from '@supabase/supabase-js';
+import { apiClient } from '../utils/apiClient';
 
 const TABS = ['movies', 'tv', 'games', 'anime', 'manga', 'comics'];
+
+const invokeDiscoveryFunction = async (name, body) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    return await supabase.functions.invoke(name, { body, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+};
 
 // Helper to determine AniList Seasons dynamically
 const getAniListSeason = (isNext = false) => {
@@ -66,7 +77,7 @@ export const Discovery = () => {
           const tmdbType = activeTab === 'movies' ? 'movie' : 'tv';
           const fetchTMDB = async (endpoint, page = 1) => {
             try {
-              const res = await supabase.functions.invoke('tmdb', { body: { path: endpoint, query: { page } } });
+              const res = await invokeDiscoveryFunction('tmdb', { path: endpoint, query: { page } });
               if (res.error) throw res.error;
               return { results: res.data?.results || [] };
             } catch (err) {
@@ -129,12 +140,11 @@ export const Discovery = () => {
                 variables.seasonYear = s.seasonYear;
               }
               
-              const res = await fetch('https://graphql.anilist.co', {
+              const json = await apiClient('https://graphql.anilist.co', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
                 body: JSON.stringify({ query, variables })
               });
-              const json = await res.json();
               if (json.errors) throw new Error(json.errors[0].message);
               return json.data?.Page?.media || [];
             } catch (err) {
@@ -167,8 +177,8 @@ export const Discovery = () => {
         } else if (activeTab === 'games') {
           const fetchIGDB = async (section) => {
             try {
-              const { data, error } = await supabase.functions.invoke('igdb', { 
-                body: { operation: 'discoverySection', params: { section } },
+              const { data, error } = await invokeDiscoveryFunction('igdb', {
+                operation: 'discoverySection', params: { section },
               });
               if (error) throw error;
               if (data?.error || data?.message) throw new Error(data.error || data.message || JSON.stringify(data));
@@ -207,8 +217,8 @@ export const Discovery = () => {
 } else if (activeTab === 'comics') {
           const fetchMetron = async (endpoint) => {
             try {
-              const { data, error } = await supabase.functions.invoke('metron', { 
-                body: { endpoint, path: endpoint, method: 'GET' } 
+              const { data, error } = await invokeDiscoveryFunction('metron', {
+                endpoint, path: endpoint, method: 'GET',
               });
               if (error) throw error;
               if (data?.error || data?.message) throw new Error(data.error || data.message || JSON.stringify(data));
@@ -316,7 +326,7 @@ export const Discovery = () => {
     else if (categoryKey === 'popular') endpoint = `/${tmdbType}/popular`;
 
     try {
-      const res = await supabase.functions.invoke('tmdb', { body: { path: endpoint, query: { page } } });
+      const res = await invokeDiscoveryFunction('tmdb', { path: endpoint, query: { page } });
       if (res.error) throw res.error;
       const results = res.data?.results || [];
 

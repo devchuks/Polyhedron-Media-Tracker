@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { apiRegistry } from '../services/apiRegistry';
 import { MediaCard, ComicIssueModal, formatMarkdownLinks } from '../components/UI';
@@ -180,7 +180,7 @@ export const Explore = () => {
       setIsLoading(false);
     }
     return () => { isMounted = false; };
-  }, [api, type, id]);
+  }, [api, type, id, entityCacheKey, exploreCache, setExploreCache]);
 
   useEffect(() => {
     if (type === 'person') return;
@@ -250,7 +250,7 @@ export const Explore = () => {
       setIsGridLoading(false);
     }
     return () => { isMounted = false; };
-  }, [api, type, id, mediaFilter, sortOrder, roleFilter]);
+  }, [api, type, id, mediaFilter, sortOrder, roleFilter, exploreCache, setExploreCache]);
 
   const handleDiscoverPageChange = async (newPage) => {
     if (isFetchingMore || newPage < 1 || newPage > totalPages) return;

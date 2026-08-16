@@ -2,7 +2,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { corsHeaders } from "../_shared/cors.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.42.0"
-import { escapeTelegramHtml, readBoundedJson, safeHttpUrl, verifyTelegramWebhookSecret } from "../_shared/validation.js"
+import { enforceRateLimit, escapeTelegramHtml, readBoundedJson, safeHttpUrl, verifyTelegramWebhookSecret } from "../_shared/validation.js"
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -16,6 +16,15 @@ serve(async (req) => {
     return new Response('Method Not Allowed', { status: 405, headers: corsHeaders });
   }
 
+  try {
+    enforceRateLimit(req, { keyPrefix: 'telegram', limit: 30 });
+  } catch (error) {
+    return new Response('Too Many Requests', {
+      status: 429,
+      headers: { ...corsHeaders, 'Retry-After': String(error.retryAfterSeconds || 60) },
+    });
+  }
+
   const providedWebhookSecret = req.headers.get('x-telegram-bot-api-secret-token') || '';
   if (!verifyTelegramWebhookSecret(providedWebhookSecret, TELEGRAM_WEBHOOK_SECRET || '')) {
     return new Response('Unauthorized', { status: 401, headers: corsHeaders });
@@ -25,7 +34,6 @@ serve(async (req) => {
     console.error('Telegram logger configuration is incomplete.');
     return new Response('Configuration Error', { status: 500, headers: corsHeaders });
   }
-
   try {
     const body = await readBoundedJson(req, 32_000);
     if (!Number.isSafeInteger(body.update_id)) {
@@ -219,7 +227,7 @@ if (!geminiRes.ok) {
   console.error(`[Phase 2] Gemini API Error (${geminiRes.status}).`);
 
   return new Response('Gemini API request failed.', {
-    status: 200,
+    status: 502,
     headers: corsHeaders
   });
 }
@@ -233,7 +241,7 @@ if (!responseText) {
   console.error("[Phase 2] Gemini failed to return structured output.");
 
   return new Response('Failed to parse message with LLM.', {
-    status: 200,
+    status: 502,
     headers: corsHeaders
   });
 }
@@ -247,7 +255,7 @@ try {
   console.error("[Phase 2] Structured output parsing failure.");
 
   return new Response('LLM returned invalid structured JSON.', {
-    status: 200,
+    status: 502,
     headers: corsHeaders
   });
 }
@@ -296,11 +304,24 @@ const userId = Deno.env.get('ADMIN_USER_ID');
 
 if (!userId) {
   console.error('[Phase 4] CRITICAL ERROR: ADMIN_USER_ID is missing from environment variables.');
-  return new Response('Configuration Error', { status: 200, headers: corsHeaders }); 
+  return new Response('Configuration Error', { status: 500, headers: corsHeaders });
 }
 
+const { data: stablePlan, error: planError } = await supabaseAdmin.rpc('prepare_telegram_batch', {
+  p_event_id: String(body.update_id),
+  p_user_id: userId,
+  p_plan: items,
+});
+if (planError || !Array.isArray(stablePlan)) {
+  console.error('Unable to persist the Telegram batch plan.');
+  return new Response('Batch preparation failed', { status: 500, headers: corsHeaders });
+}
+items = stablePlan;
+
 // BATCH PROCESSING LOOP
+let failedItems = 0;
 for (let i = 0; i < items.length; i++) {
+  try {
   const item = items[i];
 
   // Confidence guard
@@ -784,6 +805,11 @@ for (let i = 0; i < items.length; i++) {
         rewatchCount: rewatchCount,
         ...(safeProgress && { progress: safeProgress }),
         ...(type === 'comics' && { readIssueIds: updatedReadIssues }),
+        updated_at: isoDate,
+        _mutation: {
+          rewatch_increment: existingMedia?.status === 'completed' && isSeriesComplete ? 1 : 0,
+          add_read_issue: type === 'comics' && specificIssueId !== null ? String(specificIssueId) : null,
+        },
         apiData: { 
           raw: apiMatch || existingMedia?.apiData?.raw || {},
           image: safeImage,
@@ -869,39 +895,50 @@ ${safeProgress ? `<b>Progress:</b> ${escapedProgress}\n` : ''}<b>Status:</b> ${e
 <b>Link:</b> <a href="${deepLink}">View in Polyhedron</a>
       `.trim();
 
-      await fetch(telegramUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: messageHtml,
-          parse_mode: 'HTML'
-        })
-      });
+      try {
+        const feedbackResponse = await fetch(telegramUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: chatId, text: messageHtml, parse_mode: 'HTML' })
+        });
+        if (!feedbackResponse.ok) console.warn(`Telegram feedback failed with status ${feedbackResponse.status}.`);
+      } catch {
+        console.warn('Telegram feedback delivery failed after a successful database commit.');
+      }
     } else {
       // API missing fallback logging
-      await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: `❌ Could not find an automatic match for <b>${escapeTelegramHtml(cleanTitle)}</b>`,
-          parse_mode: 'HTML'
-        })
-      });
+      try {
+        await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: `❌ Could not find an automatic match for <b>${escapeTelegramHtml(cleanTitle)}</b>`,
+            parse_mode: 'HTML'
+          })
+        });
+      } catch {
+        console.warn('Telegram no-match feedback delivery failed.');
+      }
     }
 
     // Safe artificial sleep to bypass any 3rd party API (TMDB/IGDB/AniList) rate limits.
     if (i < items.length - 1) {
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
+  } catch (itemError) {
+    failedItems += 1;
+    console.error(`Telegram item ${i + 1} failed and remains retryable.`);
+  }
   }
 
-    // Standard success response for Telegram webhook
+    if (failedItems > 0) {
+      return new Response('One or more items remain retryable', { status: 500, headers: corsHeaders });
+    }
     return new Response('Webhook processed successfully', { status: 200, headers: corsHeaders });
 
   } catch (err) {
     console.error('Error processing authenticated Telegram webhook.');
-    return new Response('Internal Server Error', { status: 200, headers: corsHeaders });
+    return new Response('Internal Server Error', { status: 500, headers: corsHeaders });
   }
 });

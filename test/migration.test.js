@@ -18,6 +18,12 @@ test('database migration defines canonical ownership, all CRUD RLS policies, and
   assert.match(sql, /create or replace function public\.upsert_user_media/i);
   assert.match(sql, /where public\.media_library\.updated_at <= excluded\.updated_at/i);
   assert.match(sql, /create table if not exists public\.media_tombstones/i);
+  assert.match(sql, /create table if not exists public\.log_tombstones/i);
+  assert.match(sql, /replica identity full/i);
+  assert.match(sql, /primary key \(user_id, log_id\)/i);
+  assert.match(sql, /create or replace function public\.upsert_user_media_with_log/i);
+  assert.match(sql, /create or replace function public\.prepare_telegram_batch/i);
+  assert.match(sql, /create or replace function public\.consume_edge_quota/i);
   assert.match(sql, /create or replace function public\.apply_telegram_media_event/i);
   assert.match(sql, /raise exception 'Canonical identity migration stopped: duplicate/i);
 });

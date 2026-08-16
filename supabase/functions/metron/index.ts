@@ -1,7 +1,8 @@
 ﻿// @ts-nocheck
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { corsHeaders } from "../_shared/cors.ts"
-import { assertAllowedMetronPath, readBoundedJson } from "../_shared/validation.js"
+import { assertAllowedMetronPath, enforceRateLimit, readBoundedJson } from "../_shared/validation.js"
+import { enforceDurableRateLimit } from "../_shared/durableQuota.ts"
 
 const METRON_BASE = "https://metron.cloud";
 
@@ -12,6 +13,8 @@ serve(async (req) => {
   }
 
   try {
+    enforceRateLimit(req, { keyPrefix: 'metron', limit: 60 });
+    await enforceDurableRateLimit(req, 'metron', 60);
     // 1. Parse the incoming request
     const body = await readBoundedJson(req);
     const path = assertAllowedMetronPath(body.endpoint || body.path || '');
@@ -64,10 +67,10 @@ serve(async (req) => {
 
   } catch (error) {
     console.error("[Metron Edge] Unhandled error:", error);
-    const status = error instanceof TypeError ? 400 : 500;
+    const status = error.status || (error instanceof TypeError ? 400 : 500);
     return new Response(
-      JSON.stringify({ error: status === 400 ? error.message : 'Internal server error' }),
-      { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      JSON.stringify({ error: status === 400 || status === 429 ? error.message : 'Internal server error' }),
+      { status, headers: { ...corsHeaders, 'Content-Type': 'application/json', ...(status === 429 ? { 'Retry-After': String(error.retryAfterSeconds) } : {}) } }
     );
   }
 });

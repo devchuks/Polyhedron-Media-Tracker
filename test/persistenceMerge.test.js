@@ -26,3 +26,23 @@ test('newer tombstones prevent stale snapshots from resurrecting deleted media a
   assert.equal(merged.media.movies.length, 0);
   assert.equal(merged.mediaLogs.length, 0);
 });
+
+test('owner changes and reset epochs replace private snapshots instead of merging them', () => {
+  const admin = JSON.stringify({
+    version: 4,
+    state: { ownerId: 'admin-a', storageEpoch: 10, media: { movies: [{ id: 1, type: 'movies' }] }, mediaLogs: [] },
+  });
+  const guest = JSON.stringify({
+    version: 4,
+    state: { ownerId: 'guest', storageEpoch: 11, media: { movies: [] }, mediaLogs: [] },
+  });
+  assert.equal(mergePersistedSnapshots(admin, guest), guest);
+  assert.equal(mergePersistedSnapshots(guest, admin), guest, 'a stale tab cannot overwrite a newer logout epoch');
+
+  const accountB = JSON.stringify({
+    version: 4,
+    state: { ownerId: 'admin-b', storageEpoch: 12, media: { movies: [{ id: 2, type: 'movies' }] }, mediaLogs: [] },
+  });
+  const merged = JSON.parse(mergePersistedSnapshots(guest, accountB));
+  assert.deepEqual(merged.state.media.movies.map(item => item.id), [2]);
+});

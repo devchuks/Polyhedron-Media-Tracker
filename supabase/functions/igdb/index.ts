@@ -1,11 +1,14 @@
 ﻿// @ts-nocheck
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { corsHeaders } from "../_shared/cors.ts"
-import { buildIgdbRequest, readBoundedJson } from "../_shared/validation.js"
+import { buildIgdbRequest, enforceRateLimit, readBoundedJson } from "../_shared/validation.js"
+import { enforceDurableRateLimit } from "../_shared/durableQuota.ts"
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   try {
+    enforceRateLimit(req, { keyPrefix: 'igdb', limit: 60 })
+    await enforceDurableRateLimit(req, 'igdb', 60)
     const { operation, params } = await readBoundedJson(req)
     const { endpoint, query } = buildIgdbRequest(operation, params || {})
 
@@ -41,7 +44,7 @@ serve(async (req) => {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
     })
   } catch (error) {
-    const status = error instanceof TypeError ? 400 : 500
-    return new Response(JSON.stringify({ error: status === 400 ? error.message : 'Internal server error' }), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    const status = error.status || (error instanceof TypeError ? 400 : 500)
+    return new Response(JSON.stringify({ error: status === 400 || status === 429 ? error.message : 'Internal server error' }), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json', ...(status === 429 ? { 'Retry-After': String(error.retryAfterSeconds) } : {}) } })
   }
 })

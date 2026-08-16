@@ -19,4 +19,7 @@ test('malformed backup shapes are rejected before state mutation', () => {
   assert.throws(() => normalizeBackup({ media: {}, mediaLogs: {} }), /mediaLogs/i);
   assert.throws(() => normalizeBackup({ media: { movies: [{ title: 'Missing ID' }] }, mediaLogs: [] }), /identifier/i);
   assert.throws(() => normalizeBackup({ media: { movies: [{ id: 1, status: 'completed' }] }, mediaLogs: [] }), /completion date/i);
+  assert.throws(() => normalizeBackup({ media: { movies: [{ id: 1 }, { id: 1 }] }, mediaLogs: [] }), /duplicate media/i);
+  assert.throws(() => normalizeBackup({ media: {}, mediaLogs: [{ log_id: 'orphan', media_id: 1, media_type: 'movies', log_date: '2026-01-01' }] }), /orphan/i);
+  assert.throws(() => normalizeBackup({ media: { podcasts: [] }, mediaLogs: [] }), /unsupported media categories/i);
 });

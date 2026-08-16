@@ -5,6 +5,7 @@ import {
   assertAllowedMetronPath,
   assertAllowedTmdbRequest,
   buildIgdbRequest,
+  enforceRateLimit,
   escapeTelegramHtml,
   verifyTelegramWebhookSecret,
 } from '../supabase/functions/_shared/validation.js';
@@ -28,4 +29,13 @@ test('Telegram webhook authentication and generated HTML fail closed', () => {
   assert.equal(verifyTelegramWebhookSecret('', 'secret'), false);
   assert.equal(verifyTelegramWebhookSecret('secret', ''), false);
   assert.equal(escapeTelegramHtml('<b>unsafe & title</b>'), '&lt;b&gt;unsafe &amp; title&lt;/b&gt;');
+});
+
+test('Edge rate limiter rejects excess requests and supplies retry metadata', () => {
+  const request = new Request('https://edge.test', { headers: { 'x-forwarded-for': '203.0.113.88' } });
+  enforceRateLimit(request, { keyPrefix: 'test', limit: 1, now: 1_000, windowMs: 10_000 });
+  assert.throws(
+    () => enforceRateLimit(request, { keyPrefix: 'test', limit: 1, now: 1_001, windowMs: 10_000 }),
+    error => error.status === 429 && error.retryAfterSeconds > 0,
+  );
 });
