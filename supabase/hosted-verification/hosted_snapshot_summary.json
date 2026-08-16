@@ -1,0 +1,90 @@
+{
+  "capturedAt": "2026-08-16",
+  "projectName": "Polyhedron",
+  "inspectionMode": "read-only Supabase Management API catalog SELECTs",
+  "server": {
+    "postgresVersion": "17.6",
+    "extensionsRelevantToMigration": {
+      "pgcrypto": "1.3",
+      "plpgsql": "1.0",
+      "uuid-ossp": "1.1"
+    }
+  },
+  "relations": {
+    "media_library": {
+      "rowCount": 703,
+      "ownerCount": 1,
+      "primaryKey": ["id", "user_id"],
+      "ownerForeignKey": "user_id -> auth.users.id (NO ACTION)",
+      "rlsEnabled": true,
+      "rlsForced": false,
+      "replicaIdentity": "DEFAULT",
+      "realtimePublished": true
+    },
+    "media_logs": {
+      "rowCount": 658,
+      "ownerCount": 1,
+      "primaryKey": ["log_id"],
+      "ownerForeignKey": "user_id -> auth.users.id (NO ACTION)",
+      "rlsEnabled": true,
+      "rlsForced": false,
+      "replicaIdentity": "DEFAULT",
+      "realtimePublished": true
+    }
+  },
+  "existingPolicies": [
+    {
+      "table": "media_library",
+      "name": "Users can manage their own library",
+      "command": "ALL",
+      "role": "public",
+      "ownerPredicate": "auth.uid() = user_id"
+    },
+    {
+      "table": "media_logs",
+      "name": "Users can manage their own logs",
+      "command": "ALL",
+      "role": "public",
+      "ownerPredicate": "auth.uid() = user_id"
+    }
+  ],
+  "existingPublicFunctions": [
+    "rls_auto_enable()"
+  ],
+  "existingRemediationObjects": [],
+  "dataPreflight": {
+    "ownershipGaps": 0,
+    "unsupportedMediaRows": 0,
+    "unsupportedLogRows": 0,
+    "candidateCanonicalCollisionGroups": 0,
+    "rawIdCrossTypeCollisionGroups": 0,
+    "ownerLogIdDuplicateGroups": 0,
+    "globalLogIdDuplicateGroups": 0,
+    "canonicalOrphanLogs": 2,
+    "completedWithoutCompletionDate": 5,
+    "unsupportedStatuses": 0,
+    "ratingsOutOfRange": 0,
+    "invalidJsonShapes": 0,
+    "sameDayIdentityDuplicateGroups": 1
+  },
+  "blockerCharacteristics": {
+    "orphanLogs": {
+      "count": 2,
+      "types": {"manga": 1, "vn": 1},
+      "actions": {"READ": 1, "PLAYED": 1},
+      "withReviewText": 2,
+      "withImage": 2,
+      "imageMatchesExistingOwnedMedia": 0
+    },
+    "completedWithoutCompletionDate": {
+      "count": 5,
+      "types": {"movies": 5},
+      "withLinkedWatchLog": 2,
+      "withoutLinkedLog": 3,
+      "withDateStarted": 3,
+      "withAddedAt": 5
+    }
+  },
+  "productionMutationPerformed": false,
+  "productionMigrationExecuted": false
+}

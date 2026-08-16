@@ -69,10 +69,22 @@ begin
     select 1 from public.media_library
     where status is null or status not in ('planned', 'in progress', 'completed', 'dropped')
        or rating is null or rating < 0 or rating > 10
+       or "rewatchCount" is null or "rewatchCount" < 0
+       or "readIssueIds" is null or jsonb_typeof("readIssueIds") <> 'array'
+       or "apiData" is null or jsonb_typeof("apiData") <> 'object'
        or (status = 'completed' and "dateCompleted" is null)
        or (status <> 'completed' and "dateCompleted" is not null)
   ) then
-    raise exception 'Canonical identity migration stopped: status, rating, or completion-date invariants require explicit repair';
+    raise exception 'Canonical identity migration stopped: library status, rating, completion, counter, or JSON invariants require explicit repair';
+  end if;
+  if exists (
+    select 1 from public.media_logs
+    where media_type is null
+       or action_type is null
+       or log_date is null
+       or review_text is null
+  ) then
+    raise exception 'Canonical identity migration stopped: required diary fields require explicit repair';
   end if;
 end
 $$;
@@ -218,14 +230,30 @@ alter table public.media_library
   alter column provider_id set not null,
   alter column media_type set not null,
   alter column media_key set not null,
-  alter column updated_at set not null;
+  alter column updated_at set not null,
+  alter column status set default 'planned',
+  alter column status set not null,
+  alter column rating set default 0,
+  alter column rating set not null,
+  alter column "rewatchCount" set default 0,
+  alter column "rewatchCount" set not null,
+  alter column "readIssueIds" set default '[]'::jsonb,
+  alter column "readIssueIds" set not null,
+  alter column "apiData" set default '{}'::jsonb,
+  alter column "apiData" set not null;
 
 alter table public.media_logs
   alter column user_id set not null,
   alter column provider set not null,
   alter column provider_id set not null,
+  alter column media_type set not null,
   alter column media_key set not null,
-  alter column updated_at set not null;
+  alter column updated_at set not null,
+  alter column action_type set default 'LOGGED',
+  alter column action_type set not null,
+  alter column log_date set not null,
+  alter column review_text set default '',
+  alter column review_text set not null;
 
 -- Remove legacy FKs/identity constraints which make raw IDs globally unique.
 do $$
@@ -316,12 +344,43 @@ alter table public.media_library validate constraint media_library_rating_check;
 alter table public.media_library validate constraint media_library_completion_date_check;
 
 do $$
+declare
+  constraint_row record;
+  relation_name regclass;
 begin
+  foreach relation_name in array array['public.media_library'::regclass, 'public.media_logs'::regclass]
+  loop
+    for constraint_row in
+      select c.conname
+      from pg_constraint c
+      where c.conrelid = relation_name
+        and c.contype = 'f'
+        and c.confrelid = 'auth.users'::regclass
+        and cardinality(c.conkey) = 1
+        and cardinality(c.confkey) = 1
+        and exists (
+          select 1 from unnest(c.conkey) key(attnum)
+          join pg_attribute a on a.attrelid = c.conrelid and a.attnum = key.attnum
+          where a.attname = 'user_id'
+        )
+        and exists (
+          select 1 from unnest(c.confkey) key(attnum)
+          join pg_attribute a on a.attrelid = c.confrelid and a.attnum = key.attnum
+          where a.attname = 'id'
+        )
+        and c.confdeltype <> 'c'
+    loop
+      execute format('alter table %s drop constraint %I', relation_name, constraint_row.conname);
+    end loop;
+  end loop;
+
   if not exists (
     select 1 from pg_constraint c
     where c.conrelid = 'public.media_library'::regclass
       and c.contype = 'f'
       and c.confrelid = 'auth.users'::regclass
+      and c.confdeltype = 'c'
+      and cardinality(c.conkey) = 1
       and exists (
         select 1 from unnest(c.conkey) key(attnum)
         join pg_attribute a on a.attrelid = c.conrelid and a.attnum = key.attnum
@@ -336,6 +395,8 @@ begin
     where c.conrelid = 'public.media_logs'::regclass
       and c.contype = 'f'
       and c.confrelid = 'auth.users'::regclass
+      and c.confdeltype = 'c'
+      and cardinality(c.conkey) = 1
       and exists (
         select 1 from unnest(c.conkey) key(attnum)
         join pg_attribute a on a.attrelid = c.conrelid and a.attnum = key.attnum
@@ -376,14 +437,40 @@ alter table public.media_logs enable row level security;
 alter table public.media_logs force row level security;
 
 do $$
-declare policy_row record;
 begin
-  for policy_row in select policyname, tablename from pg_policies where schemaname = 'public' and tablename in ('media_library', 'media_logs')
-  loop
-    execute format('drop policy %I on public.%I', policy_row.policyname, policy_row.tablename);
-  end loop;
+  if exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename in ('media_library', 'media_logs')
+      and policyname not in (
+        'Users can manage their own library',
+        'Users can manage their own logs',
+        'media_library_select_own',
+        'media_library_insert_own',
+        'media_library_update_own',
+        'media_library_delete_own',
+        'media_logs_select_own',
+        'media_logs_insert_own',
+        'media_logs_update_own',
+        'media_logs_delete_own'
+      )
+  ) then
+    raise exception 'Canonical identity migration stopped: unrecognized library or log RLS policies require explicit review';
+  end if;
 end
 $$;
+
+drop policy if exists "Users can manage their own library" on public.media_library;
+drop policy if exists "Users can manage their own logs" on public.media_logs;
+drop policy if exists media_library_select_own on public.media_library;
+drop policy if exists media_library_insert_own on public.media_library;
+drop policy if exists media_library_update_own on public.media_library;
+drop policy if exists media_library_delete_own on public.media_library;
+drop policy if exists media_logs_select_own on public.media_logs;
+drop policy if exists media_logs_insert_own on public.media_logs;
+drop policy if exists media_logs_update_own on public.media_logs;
+drop policy if exists media_logs_delete_own on public.media_logs;
 
 create policy media_library_select_own on public.media_library for select to authenticated using (auth.uid() = user_id);
 create policy media_library_insert_own on public.media_library for insert to authenticated with check (auth.uid() = user_id);
@@ -395,7 +482,7 @@ create policy media_logs_insert_own on public.media_logs for insert to authentic
 create policy media_logs_update_own on public.media_logs for update to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy media_logs_delete_own on public.media_logs for delete to authenticated using (auth.uid() = user_id);
 
-revoke all on public.media_library, public.media_logs from anon;
+revoke all on public.media_library, public.media_logs from anon, authenticated;
 grant select, insert, update, delete on public.media_library, public.media_logs to authenticated;
 
 create table if not exists public.media_tombstones (
@@ -406,7 +493,7 @@ create table if not exists public.media_tombstones (
 );
 alter table public.media_tombstones enable row level security;
 alter table public.media_tombstones force row level security;
-revoke all on public.media_tombstones from anon;
+revoke all on public.media_tombstones from anon, authenticated;
 grant select, insert, update, delete on public.media_tombstones to authenticated;
 drop policy if exists media_tombstones_own on public.media_tombstones;
 create policy media_tombstones_own on public.media_tombstones for all to authenticated
@@ -420,7 +507,7 @@ create table if not exists public.log_tombstones (
 );
 alter table public.log_tombstones enable row level security;
 alter table public.log_tombstones force row level security;
-revoke all on public.log_tombstones from anon;
+revoke all on public.log_tombstones from anon, authenticated;
 grant select, insert, update, delete on public.log_tombstones to authenticated;
 drop policy if exists log_tombstones_own on public.log_tombstones;
 create policy log_tombstones_own on public.log_tombstones for all to authenticated

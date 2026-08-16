@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const migrationPath = new URL('../supabase/migrations/202608160001_canonical_identity_rls.sql', import.meta.url);
+const configPath = new URL('../supabase/config.toml', import.meta.url);
 
 test('database migration defines canonical ownership, all CRUD RLS policies, and atomic RPCs', async () => {
   const sql = await readFile(migrationPath, 'utf8');
@@ -40,4 +41,15 @@ test('database migration defines canonical ownership, all CRUD RLS policies, and
   assert.match(sql, /media_key = p_media->>'media_key' and deleted_at >= event_revision/i);
   assert.match(sql, /log_id = p_log->>'log_id' and deleted_at >= log_revision/i);
   assert.match(sql, /raise exception 'Canonical identity migration stopped: duplicate/i);
+  assert.match(sql, /confdeltype <> 'c'[\s\S]*drop constraint/i);
+  assert.match(sql, /foreign key \(user_id\) references auth\.users\(id\) on delete cascade/i);
+  assert.match(sql, /alter column media_type set not null[\s\S]*alter column action_type set not null[\s\S]*alter column log_date set not null/i);
+  assert.match(sql, /revoke all on public\.media_library, public\.media_logs from anon, authenticated/i);
+  assert.match(sql, /unrecognized library or log RLS policies require explicit review/i);
+  assert.doesNotMatch(sql, /for policy_row in select policyname, tablename from pg_policies/i);
+});
+
+test('local disposable database matches the hosted PostgreSQL major version', async () => {
+  const config = await readFile(configPath, 'utf8');
+  assert.match(config, /\[db\][\s\S]*major_version\s*=\s*17/i);
 });
