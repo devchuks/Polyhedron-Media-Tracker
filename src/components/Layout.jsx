@@ -202,7 +202,7 @@ export const Sidebar = () => {
 
 export const AppLayout = () => {
   const navigate = useNavigate();
-  const { authMode, _hasHydrated } = useMediaStore();
+  const { authMode, _hasHydrated, initAuthSubscription } = useMediaStore();
 
   const [searchState, setSearchState] = useState({
     isOpen: false, isLoading: false, query: '', type: 'movies', results: [], page: 1, totalPages: 1
@@ -218,6 +218,10 @@ export const AppLayout = () => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    initAuthSubscription();
+  }, [initAuthSubscription]);
 
   // Prevent native pull-to-refresh on mobile browsers
   useEffect(() => {

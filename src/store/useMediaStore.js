@@ -1,18 +1,39 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { supabase } from '../services/supabase';
+import { canonicalizeLog, canonicalizeMediaItem, mediaKeyFor } from '../domain/mediaIdentity';
+import { applyStatusTransition, canonicalizeMediaCollection, mergeProviderMetadata, toggleIssueState, upsertDiaryLog } from '../domain/mediaState';
+import { normalizeBackup } from '../domain/backup';
+import { mergeLibraryState, mergePersistedSnapshots } from '../domain/persistenceMerge';
+import { dateInputFromTimestamp } from '../utils/calendarDate';
+import { createKeyedQueue } from '../utils/keyedQueue';
 
 const initialMediaState = { tv: [], movies: [], games: [], vn: [], anime: [], manga: [], books: [], comics: [] };
+const freshMediaState = () => Object.fromEntries(Object.keys(initialMediaState).map(key => [key, []]));
+let authGeneration = 0;
+const cloudMutationQueue = createKeyedQueue();
+const queueMediaMutation = (mediaKey, operation) => cloudMutationQueue.enqueue(`media:${mediaKey}`, operation);
+const queueLogMutation = (logId, operation) => cloudMutationQueue.enqueue(`log:${logId}`, operation);
+const reportLocalPersistenceError = error => {
+  console.error('Local persistence failed:', error);
+  queueMicrotask(() => useUIStore.getState().addToast('Local storage failed. This change may not survive a reload.', 'error'));
+};
 
 // 1. Singleton Database Connection to stop I/O thrashing
 let dbPromise = null;
 const getDB = () => {
   if (!dbPromise) {
-    dbPromise = new Promise((resolve) => {
+    dbPromise = new Promise((resolve, reject) => {
       const request = indexedDB.open('polyhedron-db', 1);
-      request.onupgradeneeded = () => request.result.createObjectStore('keyval');
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains('keyval')) request.result.createObjectStore('keyval');
+      };
       request.onsuccess = () => resolve(request.result);
-      request.onerror = () => resolve(null);
+      request.onerror = () => {
+        const error = request.error || new Error('Unable to open local database');
+        reportLocalPersistenceError(error);
+        reject(error);
+      };
     });
   }
   return dbPromise;
@@ -21,7 +42,7 @@ const getDB = () => {
 const idbSyncChannel = typeof window !== 'undefined' && window.BroadcastChannel ? new BroadcastChannel('polyhedron-idb-sync') : null;
 if (idbSyncChannel) {
   idbSyncChannel.onmessage = (e) => {
-    // Only rehydrate the zustand store if another tab wrote to the database
+    // Rehydrate a record-merged snapshot written by another tab.
     if (e.data === 'IDB_UPDATED') useMediaStore.persist.rehydrate();
   };
 }
@@ -30,40 +51,117 @@ const idbStorage = {
   getItem: async (name) => {
     const db = await getDB();
     if (!db) return null;
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const tx = db.transaction('keyval', 'readonly');
       const store = tx.objectStore('keyval');
+      let settled = false;
+      const fail = error => {
+        if (settled) return;
+        settled = true;
+        reportLocalPersistenceError(error);
+        reject(error);
+      };
       const getReq = store.get(name);
-      getReq.onsuccess = () => resolve(getReq.result || null);
-      getReq.onerror = () => resolve(null);
+      getReq.onsuccess = () => { settled = true; resolve(getReq.result || null); };
+      getReq.onerror = () => fail(getReq.error || new Error('Unable to read local state'));
+      tx.onerror = () => fail(tx.error || new Error('Unable to read local state'));
+      tx.onabort = () => fail(tx.error || new Error('Local read transaction was aborted'));
     });
   },
   setItem: async (name, value) => {
     const db = await getDB();
     if (!db) return;
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const tx = db.transaction('keyval', 'readwrite');
       const store = tx.objectStore('keyval');
-      store.put(value, name);
+      let settled = false;
+      const fail = error => {
+        if (settled) return;
+        settled = true;
+        reportLocalPersistenceError(error);
+        reject(error);
+      };
+      const readRequest = store.get(name);
+      let mergedValue = value;
+      readRequest.onsuccess = () => {
+        mergedValue = mergePersistedSnapshots(readRequest.result, value);
+        store.put(mergedValue, name);
+      };
+      readRequest.onerror = () => tx.abort();
       tx.oncomplete = () => {
+        settled = true;
         if (idbSyncChannel) idbSyncChannel.postMessage('IDB_UPDATED');
+        else {
+          try { localStorage.setItem('polyhedron-idb-pulse', `${Date.now()}:${Math.random()}`); }
+          catch { console.warn('Cross-tab synchronization is unavailable in this browser.'); }
+        }
+        if (mergedValue !== value) queueMicrotask(() => useMediaStore.persist.rehydrate());
         resolve();
       };
+      tx.onerror = () => fail(tx.error || new Error('Unable to persist local state'));
+      tx.onabort = () => fail(tx.error || new Error('Local persistence transaction was aborted'));
     });
   },
   removeItem: async (name) => {
     const db = await getDB();
     if (!db) return;
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const tx = db.transaction('keyval', 'readwrite');
       const store = tx.objectStore('keyval');
+      let settled = false;
+      const fail = error => {
+        if (settled) return;
+        settled = true;
+        reportLocalPersistenceError(error);
+        reject(error);
+      };
       store.delete(name);
       tx.oncomplete = () => {
+        settled = true;
         if (idbSyncChannel) idbSyncChannel.postMessage('IDB_UPDATED');
         resolve();
       };
+      tx.onerror = () => fail(tx.error || new Error('Unable to clear local state'));
+      tx.onabort = () => fail(tx.error || new Error('Local clear transaction was aborted'));
     });
   },
+};
+
+const normalizeCloudItem = item => canonicalizeMediaItem({
+  ...item,
+  addedAt: item.addedAt ?? item.addedat,
+  dateStarted: item.dateStarted ?? item.datestarted,
+  dateCompleted: item.dateCompleted ?? item.datecompleted,
+  rewatchCount: item.rewatchCount ?? item.rewatchcount,
+      readIssueIds: item.readIssueIds ?? item.readissueids ?? [],
+      apiData: item.apiData ?? item.apidata ?? {},
+      updatedAt: Number.isFinite(Date.parse(item.updated_at)) ? Date.parse(item.updated_at) : (item.updatedAt || 0),
+}, item.media_type || item.type);
+
+const mediaCloudRow = (item, category, userId) => {
+  const canonical = canonicalizeMediaItem(item, category);
+  return {
+    id: String(canonical.id),
+    user_id: userId,
+    provider: canonical.provider,
+    provider_id: canonical.provider_id,
+    media_type: canonical.type,
+    media_key: canonical.media_key,
+    title: canonical.title,
+    type: canonical.type,
+    subtype: canonical.subtype || null,
+    progress: canonical.progress || null,
+    status: canonical.status || 'planned',
+    rating: canonical.rating || 0,
+    addedAt: canonical.addedAt || Date.now(),
+    dateStarted: canonical.dateStarted || null,
+    dateCompleted: canonical.dateCompleted || null,
+    rewatchCount: canonical.rewatchCount || 0,
+    readIssueIds: canonical.readIssueIds || [],
+    image: canonical.image || null,
+    apiData: canonical.apiData || {},
+    updated_at: new Date(canonical.updatedAt || Date.now()).toISOString(),
+  };
 };
 
 export const useMediaStore = create(
@@ -73,88 +171,116 @@ export const useMediaStore = create(
       setHasHydrated: (state) => set({ _hasHydrated: state }),
 
       authMode: null,
-      setAuthMode: (mode) => {
+      authSubscription: null,
+      isLoading: true,
+      setAuthMode: async (mode) => {
+        const generation = ++authGeneration;
         if (mode === 'admin') {
-          set({ authMode: mode, isCloudSyncing: true });
-          get().fetchCloudData().then(() => get().initRealtimeSubscription());
+          const { data, error } = await supabase.auth.getUser();
+          if (error || !data?.user || generation !== authGeneration) {
+            set({ authMode: null, isCloudSyncing: false, isLoading: false, media: freshMediaState(), mediaLogs: [], deletedMediaKeys: {}, deletedLogIds: {} });
+            return false;
+          }
+          set({ authMode: mode, isCloudSyncing: true, isLoading: true });
+          const synced = await get().fetchCloudData(data.user, generation);
+          if (synced && generation === authGeneration) await get().initRealtimeSubscription(data.user);
+          return synced;
         } else {
           if (get().clearRealtimeSubscription) get().clearRealtimeSubscription();
           set({ 
             authMode: mode,
-            media: { tv: [], movies: [], games: [], vn: [], anime: [], manga: [], books: [], comics: [] },
-            mediaLogs: []
+            media: freshMediaState(),
+            mediaLogs: [],
+            deletedMediaKeys: {},
+            deletedLogIds: {},
+            isCloudSyncing: false,
+            isLoading: false,
           });
+          return true;
         }
+      },
+      initAuthSubscription: () => {
+        if (get().authSubscription) return;
+        const { data } = supabase.auth.onAuthStateChange((event, session) => {
+          if ((event === 'SIGNED_OUT' || !session?.user) && get().authMode === 'admin') {
+            void get().setAuthMode(null);
+          }
+        });
+        set({ authSubscription: data.subscription });
       },
 
       // --- CLOUD SYNC HELPERS ---
       isCloudSyncing: false,
-      fetchCloudData: async () => {
-        set({ isCloudSyncing: true });
+      fetchCloudData: async (knownUser, expectedGeneration = authGeneration) => {
+        set({ isCloudSyncing: true, isLoading: true });
         try {
-          const { data: authData } = await supabase.auth.getUser();
-          if (!authData?.user) return;
-          const { data: libraryData, error: libErr } = await supabase.from('media_library').select('*');
-          const { data: logsData, error: logErr } = await supabase.from('media_logs').select('*');
-          
-          if (libErr) console.error("Library Sync Error:", libErr);
-          if (logErr) console.error("Logs Sync Error:", logErr);
+          const user = knownUser || (await supabase.auth.getUser()).data?.user;
+          if (!user || expectedGeneration !== authGeneration || get().authMode !== 'admin') return false;
+          const [{ data: libraryData, error: libErr }, { data: logsData, error: logErr }] = await Promise.all([
+            supabase.from('media_library').select('*').eq('user_id', user.id),
+            supabase.from('media_logs').select('*').eq('user_id', user.id),
+          ]);
+          if (libErr) throw libErr;
+          if (logErr) throw logErr;
+          if (expectedGeneration !== authGeneration || get().authMode !== 'admin') return false;
 
-          if (libraryData) {
-            const newMedia = { tv: [], movies: [], games: [], vn: [], anime: [], manga: [], books: [], comics: [] };
-            libraryData.forEach(item => { 
-              const normalizedItem = {
-                ...item,
-                addedAt: item.addedAt ?? item.addedat,
-                dateStarted: item.dateStarted ?? item.datestarted,
-                dateCompleted: item.dateCompleted ?? item.datecompleted,
-                rewatchCount: item.rewatchCount ?? item.rewatchcount,
-                readIssueIds: item.readIssueIds ?? item.readissueids ?? [],
-                apiData: item.apiData ?? item.apidata ?? {},
-              };
-              if (newMedia[normalizedItem.type]) newMedia[normalizedItem.type].push(normalizedItem); 
-            });
-            set({ media: newMedia });
-          }
-          if (logsData) {
-            set({ mediaLogs: logsData.sort((a, b) => new Date(b.log_date) - new Date(a.log_date)) });
-          }
+          const cloudMedia = freshMediaState();
+          (libraryData || []).forEach(item => {
+            const normalizedItem = normalizeCloudItem(item);
+            if (cloudMedia[normalizedItem.type]) cloudMedia[normalizedItem.type].push(normalizedItem);
+          });
+          const cloudState = {
+            media: cloudMedia,
+            mediaLogs: (logsData || []).map(log => canonicalizeLog({
+              ...log,
+              updatedAt: Number.isFinite(Date.parse(log.updated_at)) ? Date.parse(log.updated_at) : 0,
+            })),
+          };
+          set(mergeLibraryState(get(), cloudState));
+          return true;
+        } catch (error) {
+          console.error('Cloud snapshot failed:', error);
+          useUIStore.getState().addToast('Cloud synchronization failed. Local data was not replaced.', 'error');
+          return false;
         } finally {
-          set({ isCloudSyncing: false });
+          if (expectedGeneration === authGeneration) set({ isCloudSyncing: false, isLoading: false });
         }
       },
 
       realtimeSubscription: null,
-      initRealtimeSubscription: () => {
+      initRealtimeSubscription: async (knownUser) => {
         if (get().realtimeSubscription) return; // Prevent duplicate connections
-        
-        const channel = supabase.channel('polyhedron-sync')
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'media_library' }, (payload) => {
+        const user = knownUser || (await supabase.auth.getUser()).data?.user;
+        if (!user || get().authMode !== 'admin') return;
+        const channel = supabase.channel(`polyhedron-sync-${user.id}`)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'media_library', filter: `user_id=eq.${user.id}` }, (payload) => {
             const { eventType, new: rawRecord, old: oldRecord } = payload;
+            let targetKey;
+            try { targetKey = mediaKeyFor(eventType === 'DELETE' ? oldRecord : rawRecord, rawRecord?.type || oldRecord?.type); }
+            catch { void get().fetchCloudData(user); return; }
             set((state) => {
               const newMedia = { ...state.media };
               if (eventType === 'DELETE') {
-                for (const key in newMedia) newMedia[key] = newMedia[key].filter(m => String(m.id) !== String(oldRecord.id));
+                for (const key in newMedia) newMedia[key] = newMedia[key].filter(m => mediaKeyFor(m, key) !== targetKey);
+                return {
+                  media: newMedia,
+                  deletedMediaKeys: { ...state.deletedMediaKeys, [targetKey]: Date.now() },
+                };
               } else {
                 const type = rawRecord.type || oldRecord?.type;
                 if (!type) return state; // Ignore corrupted payloads
-                
-                const existingItem = state.media[type]?.find(m => String(m.id) === String(rawRecord.id));
+                const normalizedRecord = normalizeCloudItem(rawRecord);
+                const existingItem = state.media[type]?.find(m => mediaKeyFor(m, type) === targetKey);
+                if ((existingItem?.updatedAt || 0) > (normalizedRecord.updatedAt || 0)) return state;
                 const newRecord = {
                   ...existingItem, // 2. Protect existing local fields (like TOAST columns) from being erased
-                  ...rawRecord,
-                  addedAt: rawRecord.addedAt ?? rawRecord.addedat ?? existingItem?.addedAt,
-                  dateStarted: rawRecord.dateStarted ?? rawRecord.datestarted ?? existingItem?.dateStarted,
-                  dateCompleted: rawRecord.dateCompleted ?? rawRecord.datecompleted ?? existingItem?.dateCompleted,
-                  rewatchCount: rawRecord.rewatchCount ?? rawRecord.rewatchcount ?? existingItem?.rewatchCount,
-                  readIssueIds: rawRecord.readIssueIds ?? rawRecord.readissueids ?? existingItem?.readIssueIds ?? [],
-                  apiData: (rawRecord.apiData && Object.keys(rawRecord.apiData).length > 0) ? rawRecord.apiData : 
-                           (rawRecord.apidata && Object.keys(rawRecord.apidata).length > 0) ? rawRecord.apidata : 
+                  ...normalizedRecord,
+                  apiData: (normalizedRecord.apiData && Object.keys(normalizedRecord.apiData).length > 0) ? normalizedRecord.apiData :
                            existingItem?.apiData ?? {},
                 };
                 if (newMedia[type]) {
                   newMedia[type] = [...newMedia[type]]; // 3. Fix Array Mutation Trap to force React to re-render
-                  const index = newMedia[type].findIndex(m => String(m.id) === String(newRecord.id));
+                  const index = newMedia[type].findIndex(m => mediaKeyFor(m, type) === targetKey);
                   if (index !== -1) newMedia[type][index] = { ...newMedia[type][index], ...newRecord };
                   else newMedia[type] = [newRecord, ...newMedia[type]];
                 }
@@ -162,21 +288,38 @@ export const useMediaStore = create(
               return { media: newMedia };
             });
           })
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'media_logs' }, (payload) => {
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'media_logs', filter: `user_id=eq.${user.id}` }, (payload) => {
             const { eventType, new: newRecord, old: oldRecord } = payload;
             set((state) => {
               let newLogs = [...state.mediaLogs];
-              if (eventType === 'DELETE') newLogs = newLogs.filter(l => String(l.log_id) !== String(oldRecord.log_id));
+              if (eventType === 'DELETE') {
+                const logId = String(oldRecord.log_id);
+                return {
+                  mediaLogs: newLogs.filter(l => String(l.log_id) !== logId),
+                  deletedLogIds: { ...state.deletedLogIds, [logId]: Date.now() },
+                };
+              }
               else {
-                const index = newLogs.findIndex(l => String(l.log_id) === String(newRecord.log_id));
-                if (index !== -1) newLogs[index] = { ...newLogs[index], ...newRecord };
-                else newLogs.push(newRecord);
+                const canonicalRecord = canonicalizeLog({
+                  ...newRecord,
+                  updatedAt: Number.isFinite(Date.parse(newRecord.updated_at)) ? Date.parse(newRecord.updated_at) : 0,
+                });
+                const index = newLogs.findIndex(l => String(l.log_id) === String(canonicalRecord.log_id));
+                if (index !== -1 && (newLogs[index].updatedAt || 0) > (canonicalRecord.updatedAt || 0)) return state;
+                if (index !== -1) newLogs[index] = { ...newLogs[index], ...canonicalRecord };
+                else newLogs.push(canonicalRecord);
                 newLogs.sort((a, b) => new Date(b.log_date) - new Date(a.log_date));
               }
               return { mediaLogs: newLogs };
             });
           })
-          .subscribe();
+          .subscribe(status => {
+            if (status === 'SUBSCRIBED') void get().fetchCloudData(user);
+            if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+              useUIStore.getState().addToast('Realtime synchronization was interrupted; refreshing cloud data.', 'error');
+              void get().fetchCloudData(user);
+            }
+          });
         set({ realtimeSubscription: channel });
       },
       clearRealtimeSubscription: () => {
@@ -191,37 +334,60 @@ export const useMediaStore = create(
         if (get().authMode !== 'admin') return;
         const { data } = await supabase.auth.getUser();
         if (!data?.user || !item) return;
-        const { error } = await supabase.from('media_library').upsert({
-          id: String(item.id), user_id: data.user.id, title: item.title, type: category,
-          subtype: item.subtype || null, progress: item.progress || null, status: item.status || 'planned',
-          rating: item.rating || 0, "addedAt": item.addedAt || Date.now(), "dateStarted": item.dateStarted || null,
-          "dateCompleted": item.dateCompleted || null, "rewatchCount": item.rewatchCount || 0,
-          "readIssueIds": item.readIssueIds || [], image: item.image || null, "apiData": item.apiData || {}
+        const { error } = await supabase.rpc('upsert_user_media', {
+          p_media: mediaCloudRow(item, category, data.user.id),
         });
-        if (error) console.error("Supabase Item Sync Error:", error);
+        if (error) throw error;
       },
-      patchItemInCloud: async (id, updates) => {
+      patchItemInCloud: async (identity, category, updates) => {
         if (get().authMode !== 'admin') return;
         const { data } = await supabase.auth.getUser();
-        if (!data?.user || !id) return;
-        const { error } = await supabase.from('media_library').update(updates).eq('id', String(id)).eq('user_id', data.user.id);
-        if (error) console.error("Supabase Item Patch Error:", error);
+        if (!data?.user || identity === null || identity === undefined) return;
+        const mediaKey = mediaKeyFor(identity, category);
+        const revision = Number(identity?.updatedAt) || Date.now();
+        const revisionIso = new Date(revision).toISOString();
+        const { error } = await supabase.from('media_library').update({ ...updates, updated_at: revisionIso })
+          .eq('media_key', mediaKey)
+          .eq('user_id', data.user.id)
+          .lte('updated_at', revisionIso);
+        if (error) throw error;
       },
-      deleteItemFromCloud: async (id) => {
-        if (get().authMode === 'admin') await supabase.from('media_library').delete().eq('id', String(id));
+      deleteItemFromCloud: async (identity, category) => {
+        if (get().authMode !== 'admin') return;
+        const { data } = await supabase.auth.getUser();
+        if (!data?.user) throw new Error('No authenticated user');
+        const deletedAt = new Date(Number(identity?.deletedAt) || Date.now()).toISOString();
+        const { error } = await supabase.rpc('delete_user_media', {
+          p_media_key: mediaKeyFor(identity, category),
+          p_deleted_at: deletedAt,
+        });
+        if (error) throw error;
       },
       syncLogToCloud: async (log) => {
         if (get().authMode !== 'admin') return;
         const { data } = await supabase.auth.getUser();
         if (!data?.user) return;
-        const { error } = await supabase.from('media_logs').upsert({ ...log, user_id: data.user.id });
-        if (error) console.error("Supabase Log Sync Error:", error);
+        const canonical = canonicalizeLog(log);
+        const { error } = await supabase.rpc('upsert_user_log', {
+          p_log: { ...canonical, user_id: data.user.id, updated_at: new Date(canonical.updatedAt || Date.now()).toISOString() },
+        });
+        if (error) throw error;
       },
       deleteLogFromCloud: async (logId) => {
-        if (get().authMode === 'admin') await supabase.from('media_logs').delete().eq('log_id', logId);
+        if (get().authMode !== 'admin') return;
+        const { data } = await supabase.auth.getUser();
+        if (!data?.user) throw new Error('No authenticated user');
+        const { error } = await supabase.from('media_logs').delete().eq('log_id', logId).eq('user_id', data.user.id);
+        if (error) throw error;
       },
-      deleteLogsByMediaIdFromCloud: async (mediaId) => {
-        if (get().authMode === 'admin') await supabase.from('media_logs').delete().eq('media_id', String(mediaId));
+      deleteLogsByMediaIdFromCloud: async (identity, category) => {
+        if (get().authMode !== 'admin') return;
+        const { data } = await supabase.auth.getUser();
+        if (!data?.user) throw new Error('No authenticated user');
+        const { error } = await supabase.from('media_logs').delete()
+          .eq('media_key', mediaKeyFor(identity, category))
+          .eq('user_id', data.user.id);
+        if (error) throw error;
       },
       // --------------------------
 
@@ -260,6 +426,8 @@ export const useMediaStore = create(
       }),
 
       media: initialMediaState,
+      deletedMediaKeys: {},
+      deletedLogIds: {},
       importQueue: [], 
       mediaLogs: [],
       
@@ -267,100 +435,150 @@ export const useMediaStore = create(
       clearPendingImportQueue: () => set((state) => ({ importQueue: state.importQueue.filter(item => item.ready_to_commit) })),
 
       addMediaItem: (item, category) => {
+        const now = Date.now();
+        const canonicalItem = canonicalizeMediaItem({ ...item, updatedAt: now }, category);
         set((state) => {
-          const exists = state.media[category]?.some((m) => String(m.id) === String(item.id));
-          if (exists) return { media: { ...state.media, [category]: state.media[category].map(m => String(m.id) === String(item.id) ? item : m) } };
-          return { media: { ...state.media, [category]: [item, ...state.media[category]] } };
+          const exists = state.media[category]?.some((mediaItem) => mediaKeyFor(mediaItem, category) === canonicalItem.media_key);
+          const deletedMediaKeys = { ...state.deletedMediaKeys };
+          delete deletedMediaKeys[canonicalItem.media_key];
+          if (exists) return { deletedMediaKeys, media: { ...state.media, [category]: state.media[category].map(mediaItem => mediaKeyFor(mediaItem, category) === canonicalItem.media_key ? canonicalItem : mediaItem) } };
+          return { deletedMediaKeys, media: { ...state.media, [category]: [canonicalItem, ...state.media[category]] } };
         });
-        const updated = get().media[category].find(m => String(m.id) === String(item.id));
-        get().syncItemToCloud(updated, category);
+        const updated = get().media[category].find(mediaItem => mediaKeyFor(mediaItem, category) === canonicalItem.media_key);
+        void queueMediaMutation(canonicalItem.media_key, () => get().syncItemToCloud(updated, category)).catch(error => {
+          console.error('Supabase item sync error:', error);
+          useUIStore.getState().addToast(`Saved locally, but cloud sync failed for “${canonicalItem.title}”.`, 'error');
+        });
+      },
+
+      patchProviderMetadata: (identity, category, metadataPatch) => {
+        let updatedItem;
+        set(state => ({
+          media: {
+            ...state.media,
+            [category]: (state.media[category] || []).map(item => {
+              if (mediaKeyFor(item, category) !== mediaKeyFor(identity, category)) return item;
+              updatedItem = canonicalizeMediaItem({ ...mergeProviderMetadata(item, metadataPatch), updatedAt: Date.now() }, category);
+              return updatedItem;
+            }),
+          },
+        }));
+        if (updatedItem) {
+          const patch = { title: updatedItem.title, image: updatedItem.image, apiData: updatedItem.apiData };
+          void queueMediaMutation(updatedItem.media_key, () => get().patchItemInCloud(updatedItem, category, patch)).catch(error => {
+            console.error('Supabase provider metadata sync error:', error);
+            useUIStore.getState().addToast('Provider details updated locally but did not sync to the cloud.', 'error');
+          });
+        }
       },
 
       removeMediaItem: (id, category) => {
+        const existing = get().media[category]?.find(item => mediaKeyFor(item, category) === mediaKeyFor(id, category));
+        if (!existing) return;
+        const targetKey = mediaKeyFor(existing, category);
+        const deletedAt = Date.now();
         set((state) => ({
           media: {
             ...state.media,
-            [category]: state.media[category].filter((item) => String(item.id) !== String(id)),
+            [category]: state.media[category].filter((item) => mediaKeyFor(item, category) !== targetKey),
           },
-          mediaLogs: state.mediaLogs.filter(log => String(log.media_id) !== String(id))
+          mediaLogs: state.mediaLogs.filter(log => mediaKeyFor(log) !== targetKey),
+          deletedMediaKeys: { ...state.deletedMediaKeys, [targetKey]: deletedAt },
+          deletedLogIds: Object.fromEntries([
+            ...Object.entries(state.deletedLogIds),
+            ...state.mediaLogs.filter(log => mediaKeyFor(log) === targetKey).map(log => [String(log.log_id), deletedAt]),
+          ]),
         }));
-        get().deleteItemFromCloud(id);
-        get().deleteLogsByMediaIdFromCloud(id);
+        void queueMediaMutation(targetKey, () => get().deleteItemFromCloud({ ...existing, deletedAt }, category)).catch(error => {
+          console.error('Supabase media delete error:', error);
+          useUIStore.getState().addToast(`Cloud deletion failed for “${existing.title}”; refreshing authoritative data.`, 'error');
+          void get().fetchCloudData();
+        });
       },
 
       updateMediaStatus: (id, category, newStatus) => {
         let patchPayload = {};
+        let targetItem;
         set((state) => ({
           media: {
             ...state.media,
             [category]: state.media[category].map((item) => {
-              if (String(item.id) === String(id)) {
+              if (mediaKeyFor(item, category) === mediaKeyFor(id, category)) {
                 const now = Date.now();
-                const newDateCompleted = newStatus === 'completed' ? now : null;
-                patchPayload = { status: newStatus, "dateCompleted": newDateCompleted };
-                return { ...item, status: newStatus, updatedAt: now, dateCompleted: newDateCompleted };
+                targetItem = { ...applyStatusTransition(item, newStatus, now), updatedAt: now };
+                patchPayload = { status: targetItem.status, dateCompleted: targetItem.dateCompleted };
+                return targetItem;
               }
               return item;
             }),
           },
         }));
-        if (Object.keys(patchPayload).length > 0) get().patchItemInCloud(id, patchPayload);
+        if (targetItem) void queueMediaMutation(targetItem.media_key, () => get().patchItemInCloud(targetItem, category, patchPayload)).catch(error => {
+          console.error('Supabase status patch error:', error);
+          useUIStore.getState().addToast('Status changed locally but cloud sync failed.', 'error');
+        });
       },
 
       updateMediaProgress: (id, type, newProgress) => {
+        let targetItem;
         set(state => {
           const items = state.media[type] || [];
-          const index = items.findIndex(item => String(item.id) === String(id));
+          const index = items.findIndex(item => mediaKeyFor(item, type) === mediaKeyFor(id, type));
           if (index === -1) return state;
           const updated = [...items];
-          updated[index] = { ...updated[index], progress: newProgress };
+          updated[index] = { ...updated[index], progress: newProgress, updatedAt: Date.now() };
+          targetItem = updated[index];
           return { media: { ...state.media, [type]: updated } };
         });
-        get().patchItemInCloud(id, { progress: newProgress });
+        if (targetItem) void queueMediaMutation(targetItem.media_key, () => get().patchItemInCloud(targetItem, type, { progress: newProgress })).catch(error => {
+          console.error('Supabase progress patch error:', error);
+          useUIStore.getState().addToast('Progress changed locally but cloud sync failed.', 'error');
+        });
       },
 
       updateMediaRating: (id, category, newRating) => {
-        const ratingNum = parseInt(newRating) || 0;
+        const ratingNum = Math.min(10, Math.max(0, parseInt(newRating, 10) || 0));
+        let targetItem;
         set((state) => ({
           media: {
             ...state.media,
             [category]: state.media[category].map((item) =>
-              String(item.id) === String(id) ? { ...item, rating: ratingNum } : item
+              mediaKeyFor(item, category) === mediaKeyFor(id, category)
+                ? (targetItem = { ...item, rating: ratingNum, updatedAt: Date.now() })
+                : item
             ),
           },
         }));
-        get().patchItemInCloud(id, { rating: ratingNum });
+        if (targetItem) void queueMediaMutation(targetItem.media_key, () => get().patchItemInCloud(targetItem, category, { rating: ratingNum })).catch(error => {
+          console.error('Supabase rating patch error:', error);
+          useUIStore.getState().addToast('Rating changed locally but cloud sync failed.', 'error');
+        });
       },
 
       toggleIssueRead: (mediaId, type, issueId, allIssueIds) => {
         let patchPayload = {};
+        let targetItem;
         set((state) => {
           const items = state.media[type] || [];
           const updated = items.map(item => {
-            if (String(item.id) === String(mediaId)) {
-              const currentRead = item.readIssueIds || [];
-              const isRead = currentRead.includes(issueId);
-              let newReadIds;
-              if (!isRead) {
-                const targetIndex = allIssueIds.indexOf(issueId);
-                if (targetIndex === -1) newReadIds = [...currentRead, issueId];
-                else newReadIds = Array.from(new Set([...currentRead, ...allIssueIds.slice(0, targetIndex + 1)]));
-              } else newReadIds = currentRead.filter(id => id !== issueId);
-              const totalIssues = item.raw?.issuesCount || item.raw?.issue_count || allIssueIds.length || 0;
-              const allRead = totalIssues > 0 && newReadIds.length >= totalIssues;
-              let newStatus = item.status, newDateCompleted = item.dateCompleted;
-              if (allRead && newStatus !== 'completed') { newStatus = 'completed'; newDateCompleted = Date.now(); }
-              else if (!allRead && newStatus === 'completed') { newStatus = 'in progress'; newDateCompleted = null; }
-              else if (newReadIds.length > 0 && newStatus !== 'in progress' && newStatus !== 'completed') newStatus = 'in progress';
-              
-              patchPayload = { "readIssueIds": newReadIds, progress: `${newReadIds.length} Issues`, status: newStatus, "dateCompleted": newDateCompleted };
-              return { ...item, readIssueIds: newReadIds, progress: `${newReadIds.length} Issues`, status: newStatus, dateCompleted: newDateCompleted };
+            if (mediaKeyFor(item, type) === mediaKeyFor(mediaId, type)) {
+              targetItem = { ...toggleIssueState(item, issueId, allIssueIds), updatedAt: Date.now() };
+              patchPayload = {
+                readIssueIds: targetItem.readIssueIds,
+                progress: targetItem.progress,
+                status: targetItem.status,
+                dateCompleted: targetItem.dateCompleted,
+              };
+              return targetItem;
             }
             return item;
           });
           return { media: { ...state.media, [type]: updated } };
         });
-        if (Object.keys(patchPayload).length > 0) get().patchItemInCloud(mediaId, patchPayload);
+        if (targetItem) void queueMediaMutation(targetItem.media_key, () => get().patchItemInCloud(targetItem, type, patchPayload)).catch(error => {
+          console.error('Supabase issue patch error:', error);
+          useUIStore.getState().addToast('Issue progress changed locally but cloud sync failed.', 'error');
+        });
       },
 
       addImportBatch: (items) => set((state) => {
@@ -388,42 +606,55 @@ export const useMediaStore = create(
       }),
 
       restoreBackup: async (backupData) => {
-        set((state) => ({
-          media: backupData.media || state.media,
-          mediaLogs: backupData.mediaLogs || state.mediaLogs
-        }));
+        const normalized = normalizeBackup(backupData);
+        await cloudMutationQueue.drain();
         if (get().authMode === 'admin') {
           const { data: authData } = await supabase.auth.getUser();
-          if (!authData?.user) return;
-          const allMedia = Object.entries(backupData.media || {}).flatMap(([type, items]) => items.map(item => ({ id: String(item.id), user_id: authData.user.id, title: item.title, type, subtype: item.subtype || null, progress: item.progress || null, status: item.status || 'planned', rating: item.rating || 0, "addedAt": item.addedAt || Date.now(), "dateStarted": item.dateStarted || null, "dateCompleted": item.dateCompleted || null, "rewatchCount": item.rewatchCount || 0, "readIssueIds": item.readIssueIds || [], image: item.image || null, "apiData": item.apiData || {} })));
-          if (allMedia.length) {
-            const { error: mediaErr } = await supabase.from('media_library').upsert(allMedia);
-            if (mediaErr) console.error("Restore Media Error:", mediaErr);
-          }
-          
-          const allLogs = (backupData.mediaLogs || []).map(log => ({
-            log_id: String(log.log_id), user_id: authData.user.id, media_id: String(log.media_id),
-            media_type: log.media_type, action_type: log.action_type || 'LOGGED',
-            log_date: log.log_date, review_text: log.review_text || '',
-            image: log.image || null, season_label: log.season_label || null, season_year: log.season_year || null
-          }));
-          
-          if (allLogs.length) {
-            const { error: logErr } = await supabase.from('media_logs').upsert(allLogs);
-            if (logErr) console.error("Restore Logs Error:", logErr);
-          }
+          if (!authData?.user) throw new Error('No authenticated user');
+          const cloudMedia = Object.entries(normalized.media).flatMap(([category, items]) => items.map(item => mediaCloudRow(item, category, authData.user.id)));
+          const cloudLogs = normalized.mediaLogs.map(log => ({ ...canonicalizeLog(log), user_id: authData.user.id }));
+          const { error } = await supabase.rpc('replace_user_library', {
+            p_media: cloudMedia,
+            p_logs: cloudLogs,
+          });
+          if (error) throw error;
         }
+        const deletedAt = Date.now();
+        const restoredMediaKeys = new Set(Object.values(normalized.media).flat().map(item => mediaKeyFor(item, item.type)));
+        const restoredLogIds = new Set(normalized.mediaLogs.map(log => String(log.log_id)));
+        const deletedMediaKeys = { ...get().deletedMediaKeys };
+        const deletedLogIds = { ...get().deletedLogIds };
+        for (const [category, items] of Object.entries(get().media)) {
+          for (const item of items) if (!restoredMediaKeys.has(mediaKeyFor(item, category))) deletedMediaKeys[mediaKeyFor(item, category)] = deletedAt;
+        }
+        for (const log of get().mediaLogs) if (!restoredLogIds.has(String(log.log_id))) deletedLogIds[String(log.log_id)] = deletedAt;
+        set({
+          media: canonicalizeMediaCollection(Object.fromEntries(Object.entries(normalized.media).map(([category, items]) => [category, items.map(item => ({ ...item, updatedAt: deletedAt }))]))),
+          mediaLogs: normalized.mediaLogs.map(log => canonicalizeLog({ ...log, updatedAt: deletedAt })),
+          deletedMediaKeys,
+          deletedLogIds,
+        });
+        return true;
       },
 
       nukeCloudData: async () => {
+        await cloudMutationQueue.drain();
         if (get().authMode === 'admin') {
           const { data: authData } = await supabase.auth.getUser();
           if (authData?.user) {
-            await supabase.from('media_library').delete().eq('user_id', authData.user.id);
-            await supabase.from('media_logs').delete().eq('user_id', authData.user.id);
+            const { error } = await supabase.rpc('reset_user_library');
+            if (error) throw error;
           }
         }
-        set({ media: { tv: [], movies: [], games: [], vn: [], anime: [], manga: [], books: [], comics: [] }, mediaLogs: [] });
+        const deletedAt = Date.now();
+        const deletedMediaKeys = { ...get().deletedMediaKeys };
+        const deletedLogIds = { ...get().deletedLogIds };
+        for (const [category, items] of Object.entries(get().media)) {
+          for (const item of items) deletedMediaKeys[mediaKeyFor(item, category)] = deletedAt;
+        }
+        for (const log of get().mediaLogs) deletedLogIds[String(log.log_id)] = deletedAt;
+        set({ media: freshMediaState(), mediaLogs: [], deletedMediaKeys, deletedLogIds });
+        return true;
       },
 
       updateImportItem: (id, updates) => set((state) => ({
@@ -438,64 +669,91 @@ export const useMediaStore = create(
 
       // STRICT UPSERT LOGIC (Prevents same-day stacking)
       addDiaryLog: (logEntry) => {
-        set((state) => {
-          const logDateString = new Date(logEntry.log_date).toISOString().split('T')[0];
-          const existingIndex = state.mediaLogs.findIndex(l => 
-            String(l.media_id) === String(logEntry.media_id) && 
-            new Date(l.log_date).toISOString().split('T')[0] === logDateString &&
-            ((l.season_label || null) === (logEntry.season_label || null))
-          );
-          let newLogs = [...state.mediaLogs];
-          if (existingIndex !== -1) {
-            newLogs[existingIndex] = { ...newLogs[existingIndex], ...logEntry, review_text: logEntry.review_text || newLogs[existingIndex].review_text };
-          } else {
-            newLogs.push(logEntry);
-          }
-          return { mediaLogs: newLogs.sort((a, b) => new Date(b.log_date) - new Date(a.log_date)) };
+        const canonicalEntry = canonicalizeLog({ ...logEntry, updatedAt: Date.now() });
+        set(state => {
+          const deletedLogIds = { ...state.deletedLogIds };
+          delete deletedLogIds[String(canonicalEntry.log_id)];
+          return { mediaLogs: upsertDiaryLog(state.mediaLogs, canonicalEntry), deletedLogIds };
         });
-        const logDateString = new Date(logEntry.log_date).toISOString().split('T')[0];
-        const syncedLog = get().mediaLogs.find(l => 
-          String(l.media_id) === String(logEntry.media_id) && 
-          new Date(l.log_date).toISOString().split('T')[0] === logDateString &&
-          ((l.season_label || null) === (logEntry.season_label || null))
-        );
-        if (syncedLog) get().syncLogToCloud(syncedLog);
+        const syncedLog = get().mediaLogs.find(log => {
+          const sameDay = dateInputFromTimestamp(log.log_date) === dateInputFromTimestamp(canonicalEntry.log_date);
+          return mediaKeyFor(log) === canonicalEntry.media_key
+            && sameDay
+            && (log.season_label || null) === (canonicalEntry.season_label || null);
+        });
+        if (syncedLog) void queueLogMutation(syncedLog.log_id, () => get().syncLogToCloud(syncedLog)).catch(error => {
+          console.error('Supabase diary sync error:', error);
+          useUIStore.getState().addToast('Diary entry saved locally but cloud sync failed.', 'error');
+        });
       },
 
       removeDiaryLog: (logId) => {
-        set((state) => ({ mediaLogs: state.mediaLogs.filter(log => log.log_id !== logId) }));
-        get().deleteLogFromCloud(logId);
+        set((state) => ({
+          mediaLogs: state.mediaLogs.filter(log => log.log_id !== logId),
+          deletedLogIds: { ...state.deletedLogIds, [String(logId)]: Date.now() },
+        }));
+        void queueLogMutation(logId, () => get().deleteLogFromCloud(logId)).catch(error => {
+          console.error('Supabase diary delete error:', error);
+          useUIStore.getState().addToast('Diary deletion failed in the cloud; refreshing data.', 'error');
+          void get().fetchCloudData();
+        });
       },
 
       updateDiaryLog: (logId, updates) => {
         set((state) => ({
-          mediaLogs: state.mediaLogs.map(log => log.log_id === logId ? { ...log, ...updates } : log).sort((a, b) => new Date(b.log_date) - new Date(a.log_date))
+          mediaLogs: state.mediaLogs.map(log => log.log_id === logId ? { ...log, ...updates, updatedAt: Date.now() } : log).sort((a, b) => new Date(b.log_date) - new Date(a.log_date))
         }));
         const updated = get().mediaLogs.find(l => l.log_id === logId);
-        if (updated) get().syncLogToCloud(updated);
+        if (updated) void queueLogMutation(updated.log_id, () => get().syncLogToCloud(updated)).catch(error => {
+          console.error('Supabase diary update error:', error);
+          useUIStore.getState().addToast('Diary edit saved locally but cloud sync failed.', 'error');
+        });
       },
 
-      removeMediaLogsByMediaId: (mediaId) => {
+      removeMediaLogsByMediaId: (mediaId, category) => {
+        const targetKey = mediaKeyFor(mediaId, category);
+        const deletedAt = Date.now();
         set((state) => ({
-          mediaLogs: state.mediaLogs.filter(log => String(log.media_id) !== String(mediaId))
+          mediaLogs: state.mediaLogs.filter(log => mediaKeyFor(log) !== targetKey),
+          deletedLogIds: Object.fromEntries([
+            ...Object.entries(state.deletedLogIds),
+            ...state.mediaLogs.filter(log => mediaKeyFor(log) === targetKey).map(log => [String(log.log_id), deletedAt]),
+          ]),
         }));
-        get().deleteLogsByMediaIdFromCloud(mediaId);
+        void get().deleteLogsByMediaIdFromCloud(mediaId, category).catch(error => {
+          console.error('Supabase diary cascade delete error:', error);
+          useUIStore.getState().addToast('Cloud diary cleanup failed.', 'error');
+        });
       },
 
     }),
     {
       name: 'polyhedron-storage',
       storage: createJSONStorage(() => idbStorage),
+      version: 3,
+      migrate: persistedState => ({
+        ...persistedState,
+        media: canonicalizeMediaCollection(persistedState?.media || freshMediaState()),
+        mediaLogs: (persistedState?.mediaLogs || []).map(canonicalizeLog),
+        deletedMediaKeys: persistedState?.deletedMediaKeys || {},
+        deletedLogIds: persistedState?.deletedLogIds || {},
+      }),
       onRehydrateStorage: () => (state) => { 
         if (!state?._hasHydrated) {
           state?.setHasHydrated(true); 
           if (state?.authMode === 'admin') {
-            state.fetchCloudData().then(() => state.initRealtimeSubscription());
+            void state.setAuthMode('admin');
+          } else {
+            useMediaStore.setState({ isLoading: false });
           }
         }
       },
       partialize: (state) => {
-        const { _hasHydrated, isAutoProcessing, isBatchCommitting, isCloudSyncing, realtimeSubscription, activeDiaryModal, exploreCache, ...stateToSave } = state;
+        const stateToSave = { ...state };
+        for (const transientKey of [
+          '_hasHydrated', 'isAutoProcessing', 'isBatchCommitting', 'isCloudSyncing', 'isLoading',
+          'realtimeSubscription', 'authSubscription', 'activeDiaryModal', 'exploreCache',
+        ]) delete stateToSave[transientKey];
         const slimMedia = {};
         for (const key in stateToSave.media) {
           slimMedia[key] = stateToSave.media[key].map(item => {
@@ -539,7 +797,7 @@ export const useUIStore = create((set) => ({
 
 if (typeof window !== 'undefined') {
   window.addEventListener('storage', (event) => {
-    if (event.key === 'polyhedron-storage') {
+    if (event.key === 'polyhedron-idb-pulse') {
       useMediaStore.persist.rehydrate();
     }
   });

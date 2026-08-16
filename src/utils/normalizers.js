@@ -1,3 +1,5 @@
+import { canonicalizeMediaItem } from '../domain/mediaIdentity.js';
+
 const TMDB_GENRES = {
   28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy", 80: "Crime", 99: "Documentary", 
   18: "Drama", 10751: "Family", 14: "Fantasy", 36: "History", 27: "Horror", 10402: "Music", 
@@ -16,7 +18,7 @@ export const normalizeTMDB = (item, type) => {
   const genres = item.genre_ids?.slice(0, 2).map(id => TMDB_GENRES[id]).filter(Boolean).join(' / ');
   const fallback = type === 'tv' ? 'TV Series' : 'Feature Film';
 
-  return {
+  return canonicalizeMediaItem({
     id: item.id,
     title: item.title || item.name || "Unknown Title",
     type: type,
@@ -29,10 +31,10 @@ export const normalizeTMDB = (item, type) => {
     url: `https://www.themoviedb.org/${type === 'tv' ? 'tv' : 'movie'}/${item.id}`,
     apiSource: 'tmdb',
     raw: item
-  };
+  }, type);
 };
 
-export const normalizeIGDB = (item) => ({
+export const normalizeIGDB = (item) => canonicalizeMediaItem({
   id: `igdb_${item.id}`,
   title: item.name || "Unknown Title",
   type: 'games',
@@ -45,10 +47,10 @@ export const normalizeIGDB = (item) => ({
   url: item.url || `https://www.igdb.com/games/${item.slug}`,
   apiSource: 'igdb',
   raw: item
-});
+}, 'games');
 
 export const normalizeAniList = (item, type) => {
-  let dynamicSubtitle = '';
+  let dynamicSubtitle;
   if (type === 'anime') {
     const studio = item.studios?.nodes?.[0]?.name || 'Unknown Studio';
     dynamicSubtitle = `${studio} • ${item.episodes || '?'} Eps`;
@@ -59,7 +61,7 @@ export const normalizeAniList = (item, type) => {
     dynamicSubtitle = `${creator} • ${item.chapters || '?'} Chps`;
   }
 
-  return {
+  return canonicalizeMediaItem({
     id: item.id,
     title: item.title?.english || item.title?.romaji || item.title?.native || "Unknown Title",
     type: type,
@@ -72,7 +74,7 @@ export const normalizeAniList = (item, type) => {
     url: item.siteUrl || `https://anilist.co/${type.toLowerCase()}/${item.id}`,
     apiSource: 'anilist',
     raw: item
-  };
+  }, type);
 };
 
 export function extractMetronStaff(credits = []) {
@@ -111,7 +113,7 @@ export function extractMetronStaff(credits = []) {
 }
 
 export const normalizeMetron = (item) => {
-  const isIssueResult = item.hasOwnProperty('cover_date') || item.hasOwnProperty('number');
+  const isIssueResult = Object.hasOwn(item, 'cover_date') || Object.hasOwn(item, 'number');
   
   let seriesId;
   if (isIssueResult) {
@@ -141,7 +143,7 @@ export const normalizeMetron = (item) => {
     subtitle = `${subtitle.split(' • ')[0]} • ${item.grouped_issue_count} Issue${item.grouped_issue_count > 1 ? 's' : ''}`;
   }
 
-  return {
+  return canonicalizeMediaItem({
     id,
     title: rawTitle,
     type: 'comics',
@@ -161,13 +163,13 @@ export const normalizeMetron = (item) => {
       publisherId,
       issuesCount: isIssueResult ? null : item.issue_count,
     },
-  };
+  }, 'comics');
 };
 
 export const normalizeVNDB = (item) => {
   const engTitleObj = item.titles?.find(t => t.lang === 'en' || t.lang === 'eng');
   const displayTitle = engTitleObj?.latin || engTitleObj?.title || item.title || "Unknown VN";
-  return {
+  return canonicalizeMediaItem({
     id: item.id,
     title: displayTitle,
     type: 'vn',
@@ -180,7 +182,7 @@ export const normalizeVNDB = (item) => {
     url: `https://vndb.org/${item.id}`,
     apiSource: 'vndb',
     raw: item
-  };
+  }, 'vn');
 };
 
 export const normalizeOpenLibrary = (item) => {
@@ -204,7 +206,7 @@ export const normalizeOpenLibrary = (item) => {
     ? `${authors.slice(0, 2).join(', ')}${authors.length > 2 ? ' et al.' : ''} • ${publisher || 'Unknown Publisher'}`
     : 'Unknown Author';
 
-  return {
+  return canonicalizeMediaItem({
     id: item.workId?.replace('/works/', '') || item.key?.replace('/works/', ''),
     title: item.title || "Unknown Book",
     type: 'books',
@@ -223,7 +225,7 @@ export const normalizeOpenLibrary = (item) => {
       subjects,
       authors, 
     },
-  };
+  }, 'books');
 };
 
 export const processDetailRaw = (rawDetails, type) => {

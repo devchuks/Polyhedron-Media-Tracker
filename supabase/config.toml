@@ -1,0 +1,31 @@
+project_id = "polyhedron-local-remediation"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+major_version = 15
+
+[studio]
+enabled = true
+port = 54323
+
+[functions.telegram-logger]
+verify_jwt = false
+
+[functions.tmdb]
+verify_jwt = true
+
+[functions.igdb]
+verify_jwt = true
+
+[functions.metron]
+verify_jwt = true
+
+[functions.vn]
+verify_jwt = true

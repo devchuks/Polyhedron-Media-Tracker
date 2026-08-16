@@ -1,6 +1,7 @@
 ﻿// @ts-nocheck
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { corsHeaders } from "../_shared/cors.ts"
+import { assertAllowedMetronPath, readBoundedJson } from "../_shared/validation.js"
 
 const METRON_BASE = "https://metron.cloud";
 
@@ -12,24 +13,14 @@ serve(async (req) => {
 
   try {
     // 1. Parse the incoming request
-    const body = await req.json();
-    let path = body.endpoint || body.path || '';
-
-    // Remove any leading "/api" that the caller might include, because we are
-    // always going to prepend /api ourselves.  This makes the edge function
-    // forgiving whether the frontend sends /api/issue/… or just /issue/…
-    if (path.startsWith('/api/')) {
-      path = path.slice(4); // strip /api
-    }
-    if (!path.startsWith('/')) {
-      path = '/' + path;
-    }
+    const body = await readBoundedJson(req);
+    const path = assertAllowedMetronPath(body.endpoint || body.path || '');
 
     // 2. Verify credentials exist
-    const USERNAME = Deno.env.get('VITE_METRON_USERNAME');
-    const PASSWORD = Deno.env.get('VITE_METRON_PASSWORD');
+    const USERNAME = Deno.env.get('METRON_USERNAME');
+    const PASSWORD = Deno.env.get('METRON_PASSWORD');
     if (!USERNAME || !PASSWORD) {
-      console.error("[Metron Edge] Missing environment variables VITE_METRON_USERNAME / VITE_METRON_PASSWORD");
+      console.error("[Metron Edge] Missing server credentials");
       return new Response(
         JSON.stringify({ error: "Metron credentials not configured on server." }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -39,7 +30,7 @@ serve(async (req) => {
     const credentials = btoa(`${USERNAME}:${PASSWORD}`);
     const url = `${METRON_BASE}/api${path}`;
 
-    console.log(`[Metron Edge] Fetching: ${url}`);
+    console.log(`[Metron Edge] Fetching allowlisted path ${new URL(url).pathname}`);
 
     // 3. Call Metron API
     const metronResp = await fetch(url, {
@@ -53,18 +44,10 @@ serve(async (req) => {
 
     // 4. Handle non-2xx responses by forwarding the Metron error to the caller
     if (!metronResp.ok) {
-      let errorBody = '';
-      const contentType = metronResp.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
-        errorBody = JSON.stringify(await metronResp.json());
-      } else {
-        errorBody = await metronResp.text();
-      }
-      console.error(`[Metron Edge] Metron error (${metronResp.status}):`, errorBody);
+      console.error(`[Metron Edge] Metron returned status ${metronResp.status}.`);
       return new Response(
         JSON.stringify({
           error: `Metron API returned ${metronResp.status}`,
-          details: errorBody,
         }),
         {
           status: metronResp.status,
@@ -81,9 +64,10 @@ serve(async (req) => {
 
   } catch (error) {
     console.error("[Metron Edge] Unhandled error:", error);
+    const status = error instanceof TypeError ? 400 : 500;
     return new Response(
-      JSON.stringify({ error: error.message || 'Internal server error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      JSON.stringify({ error: status === 400 ? error.message : 'Internal server error' }),
+      { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 });

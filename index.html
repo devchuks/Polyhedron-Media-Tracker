@@ -13,15 +13,9 @@
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:title" content="Polyhedron" />
     <meta name="twitter:description" content="Unified media tracker. Log and keep track of movies, TV shows, games, anime, manga, visual novels, books and comics all in one place." />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https: wss:; frame-src https://www.youtube.com https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'self'" />
     <title>Polyhedron</title>
-    <script>
-  (function() {
-    var theme = localStorage.getItem('theme');
-    if (theme) {
-      document.documentElement.setAttribute('data-theme', theme);
-    }
-  })();
-</script>
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>

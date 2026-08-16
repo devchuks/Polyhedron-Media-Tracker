@@ -205,80 +205,20 @@ const Settings = () => {
   const [isNuking, setIsNuking] = useState(false);
   const store = useMediaStore();
 
-  const handleClearStorage = () => {
+  const handleClearStorage = async () => {
     if (window.confirm('Delete ALL local data? This cannot be undone.')) {
       setIsClearing(true);
       localStorage.clear();
       sessionStorage.clear();
-      useMediaStore.persist.clearStorage(); // Safely clear Zustand's persist cache without locking the DB
-      setTimeout(() => window.location.reload(), 500);
-    }
-  };
-
-  const handlePopulateData = async () => {
-    setIsPopulating(true);
-    setPopLog('Picking 5 random items per category...');
-
-    for (const [type, queries] of Object.entries(DEMO_QUERIES)) {
-      const selected = shuffleAndPick(queries);
-      for (const query of selected) {
-        try {
-          setPopLog(prev => prev + `\nSearching ${type}: "${query}"`);
-          let result;
-          switch (type) {
-            case 'movies': result = await apiRegistry.searchMovies(query, 1); break;
-            case 'tv': result = await apiRegistry.searchTV(query, 1); break;
-            case 'games': result = await apiRegistry.searchGames(query, 1); break;
-            case 'anime': result = await apiRegistry.searchAnime(query, 1); break;
-            case 'manga': result = await apiRegistry.searchManga(query, 1); break;
-            case 'comics': result = await apiRegistry.searchComics(query, 1); break;
-            case 'vn': result = await apiRegistry.searchVNs(query, 1); break;
-            case 'books': result = await apiRegistry.searchBooks(query, 1); break;
-            default: continue;
-          }
-
-          if (result?.results?.length > 0) {
-            const item = result.results[0];
-            const status = RANDOM_STATUS[Math.floor(Math.random() * RANDOM_STATUS.length)];
-            const rating = Math.random() > 0.3 ? Math.ceil(Math.random() * 10) : 0;
-
-            let progress = 'Not Started';
-            if (status === 'completed') {
-              if (type === 'tv' || type === 'anime') progress = `${item.raw?.number_of_episodes || item.raw?.episodes || 1} Episodes`;
-              else if (type === 'manga' || type === 'comics') progress = `${item.raw?.chapters || item.raw?.count_of_issues || item.raw?.issuesCount || 1} Chapters`;
-            } else if (status === 'in progress') {
-              if (type === 'tv') progress = `S01 E${Math.ceil(Math.random() * 5)}`;
-              else if (type === 'anime') progress = `${Math.ceil(Math.random() * 6)} Episodes`;
-              else if (type === 'manga' || type === 'comics') progress = `${Math.ceil(Math.random() * 30)} Chapters`;
-              else if (type === 'games' || type === 'vn') progress = `${Math.ceil(Math.random() * 40)}%`;
-            }
-
-            store.addMediaItem({
-              id: item.id,
-              title: item.title,
-              type,
-              subtype: type,
-              progress,
-              status,
-              rating,
-              addedAt: Date.now() - Math.floor(Math.random() * 1000000000),
-              dateStarted: status === 'in progress' || status === 'completed' ? Date.now() - 86400000 : null,
-              dateCompleted: status === 'completed' ? Date.now() : null,
-              apiData: item
-            }, type);
-
-            setPopLog(prev => prev + ` -> Added: ${item.title}`);
-          }
-
-          await new Promise(resolve => setTimeout(resolve, ADD_DELAY_MS));
-        } catch (err) {
-          setPopLog(prev => prev + ` -> Failed: ${err.message}`);
-        }
+      try {
+        await useMediaStore.persist.clearStorage();
+        window.location.reload();
+      } catch (error) {
+        console.error('Local clear failed:', error);
+        alert('Local data could not be fully cleared. Please retry.');
+        setIsClearing(false);
       }
     }
-
-    setPopLog(prev => prev + '\nFinished! 40 items added (5 per type).');
-    setIsPopulating(false);
   };
 
   const handleNukeCloudData = async () => {
@@ -288,6 +228,9 @@ const Settings = () => {
         try {
           await store.nukeCloudData();
           alert('Your databank has been completely wiped.');
+        } catch (error) {
+          console.error('Cloud reset failed:', error);
+          alert('Cloud reset failed. Your local data was not cleared.');
         } finally {
           setIsNuking(false);
         }
@@ -315,7 +258,7 @@ const Settings = () => {
           <>
             <div className="divider my-1 opacity-20"></div>
             <h2 className="text-sm font-black uppercase tracking-widest text-error flex items-center gap-2 mt-2"><AlertTriangle className="w-4 h-4" /> Cloud Databank</h2>
-            <p className="text-xs font-mono text-base-content/70">Completely wipe your Supabase cloud database. This will delete all saved media and logs globally.</p>
+            <p className="text-xs font-mono text-base-content/70">Delete all media and diary logs owned by your authenticated account.</p>
             <button
               onClick={handleNukeCloudData}
               disabled={isClearing || isNuking}

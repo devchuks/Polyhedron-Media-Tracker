@@ -4,6 +4,7 @@ import { apiRegistry } from '../services/apiRegistry';
 import { MediaCard, ComicIssueModal, formatMarkdownLinks } from '../components/UI';
 import { useMediaStore } from '../store/useMediaStore';
 import { ArrowLeft, Loader2, User, Clapperboard, Gamepad2, ChevronLeft, ChevronDown, ChevronRight, Tv, Image as ImageIcon, X, Eye } from 'lucide-react';
+import { safeExternalUrl } from '../utils/urlSafety';
 
 export const Explore = () => {
   const { api, type, id } = useParams();
@@ -58,14 +59,17 @@ export const Explore = () => {
   const [modalDetails, setModalDetails] = useState(null);
   const [modalIssues, setModalIssues] = useState([]);
   const [isModalLoading, setIsModalLoading] = useState(false);
+  const modalRequestRef = useRef(0);
 
   useEffect(() => {
     window.scrollTo(0, 0);
     
-    if (exploreCache[entityCacheKey]) {
-      const pData = exploreCache[entityCacheKey].data.personData;
+    const entityCache = exploreCache[entityCacheKey];
+    const entityCacheIsFresh = entityCache && Date.now() - entityCache.timestamp < 30 * 60_000;
+    if (entityCacheIsFresh) {
+      const pData = entityCache.data.personData;
       setData(pData);
-      setEntityData(exploreCache[entityCacheKey].data.companyData);
+      setEntityData(entityCache.data.companyData);
       setIsLoading(false);
       
       if (pData && type === 'person') {
@@ -182,9 +186,11 @@ export const Explore = () => {
     if (type === 'person') return;
     
     const gridKey = `grid_${api}_${type}_${id}_${mediaFilter}_${sortOrder}_${roleFilter}_1`;
-    if (exploreCache[gridKey]) {
-      setDiscoverResults(exploreCache[gridKey].data.results);
-      setTotalPages(exploreCache[gridKey].data.totalPages);
+    const gridCache = exploreCache[gridKey];
+    const gridCacheIsFresh = gridCache && Date.now() - gridCache.timestamp < 30 * 60_000;
+    if (gridCacheIsFresh) {
+      setDiscoverResults(gridCache.data.results);
+      setTotalPages(gridCache.data.totalPages);
       setIsGridLoading(false);
       setPage(1);
       return;
@@ -253,9 +259,10 @@ export const Explore = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
     const newGridCacheKey = `grid_${api}_${type}_${id}_${mediaFilter}_${sortOrder}_${roleFilter}_${newPage}`;
-    if (exploreCache[newGridCacheKey]) {
-      setDiscoverResults(exploreCache[newGridCacheKey].data.results);
-      setTotalPages(exploreCache[newGridCacheKey].data.totalPages);
+    const pageCache = exploreCache[newGridCacheKey];
+    if (pageCache && Date.now() - pageCache.timestamp < 30 * 60_000) {
+      setDiscoverResults(pageCache.data.results);
+      setTotalPages(pageCache.data.totalPages);
       setIsFetchingMore(false);
       return;
     }
@@ -353,6 +360,7 @@ export const Explore = () => {
 
   const handleComicCardClick = async (item) => {
     let targetId = item.id;
+    let previewData = item;
     if (api === 'metron' && type === 'publisher' && typeof targetId === 'string' && targetId.startsWith('issue_')) {
       setIsGridLoading(true);
       try {
@@ -360,13 +368,12 @@ export const Explore = () => {
         const issueData = await apiRegistry.getComicIssueDetails(issueId);
         if (issueData?.series?.id) {
           targetId = `series_${issueData.series.id}`;
-          item.id = targetId;
-          item.title = issueData.series.name || item.title;
+          previewData = { ...item, id: targetId, title: issueData.series.name || item.title };
         }
       } catch (e) { console.error(e); }
       setIsGridLoading(false);
     }
-    navigate(`/media/comics/${targetId}`, { state: { previewData: item } });
+    navigate(`/media/comics/${targetId}`, { state: { previewData } });
   };
 
   const handleComicCardHover = (item) => {
@@ -377,15 +384,16 @@ export const Explore = () => {
   };
 
   const handleModalNavigate = async (issue) => {
+    const requestId = ++modalRequestRef.current;
     setSelectedIssue(issue);
     setIsModalLoading(true);
     try {
       const details = await apiRegistry.getComicIssueDetails(issue.id);
-      setModalDetails(details);
+      if (requestId === modalRequestRef.current) setModalDetails(details);
     } catch (e) {
       console.error(e);
     }
-    setIsModalLoading(false);
+    if (requestId === modalRequestRef.current) setIsModalLoading(false);
   };
 
   useEffect(() => { setPersonPage(1); }, [mediaFilter, roleFilter, sortOrder]);
@@ -469,12 +477,12 @@ export const Explore = () => {
             
             {api === 'vndb' && type === 'staff' && data?.extlinks?.length > 0 && (
               <div className="mb-3 md:mb-4 text-[10px] font-mono font-bold uppercase tracking-widest text-base-content/60 truncate w-full">
-                {data.extlinks.map((link, idx) => (
+                {data.extlinks.filter(link => safeExternalUrl(link.url)).map((link, idx, safeLinks) => (
                   <span key={idx}>
-                    <a href={link.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:text-primary/70 transition-colors">
+                    <a href={safeExternalUrl(link.url)} target="_blank" rel="noopener noreferrer" className="text-primary hover:text-primary/70 transition-colors">
                       {link.label}
                     </a>
-                    {idx < data.extlinks.length - 1 && <span className="opacity-30 mx-2">|</span>}
+                    {idx < safeLinks.length - 1 && <span className="opacity-30 mx-2">|</span>}
                   </span>
                 ))}
               </div>
@@ -639,10 +647,8 @@ export const Explore = () => {
                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
                  {(selectedCreatorSeries.raw.creator_issues || []).sort((a,b) => parseFloat(a.number) - parseFloat(b.number)).map(issue => (
                      <div key={issue.id} onClick={() => {
-                       setSelectedIssue(issue);
-                       setIsModalLoading(true);
                        setModalIssues(selectedCreatorSeries.raw.creator_issues);
-                       apiRegistry.getComicIssueDetails(issue.id).then(details => { setModalDetails(details); setIsModalLoading(false); });
+                       void handleModalNavigate(issue);
                      }} className="cursor-pointer group border border-base-300 bg-base-200 hover:border-primary transition-colors flex flex-col h-full shadow-sm hover:shadow-md">
                        <div className="aspect-[2/3] w-full bg-base-300 overflow-hidden relative border-b border-base-300">
                          {issue.image ? <img src={`https://wsrv.nl/?url=${encodeURIComponent(issue.image)}&w=300&output=webp`} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 grayscale-[15%] group-hover:grayscale-0" /> : <div className="w-full h-full flex items-center justify-center text-[10px] font-mono text-base-content/30 uppercase tracking-widest">No Img</div>}
@@ -670,7 +676,7 @@ export const Explore = () => {
           isPreview={true}
           onToggleRead={() => {}} 
           allIssues={modalIssues}
-          onClose={() => { setSelectedIssue(null); setModalDetails(null); }}
+          onClose={() => { modalRequestRef.current += 1; setSelectedIssue(null); setModalDetails(null); setIsModalLoading(false); }}
           onNavigatePrev={() => {
              const idx = modalIssues.findIndex(i => i.id === selectedIssue?.id);
              if (idx > 0) handleModalNavigate(modalIssues[idx - 1]);

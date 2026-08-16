@@ -4,6 +4,7 @@ import { apiRegistry } from '../services/apiRegistry';
 import { Loader2, Check, X, Edit3, Save, Terminal, Play, Upload, FileJson, ChevronUp, ChevronDown, Plus, ShieldAlert } from 'lucide-react';
 import { ImageWithFallback, getSubtype } from '../components/UI';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
+import { createBackup } from '../domain/backup';
 
 const YOINKER_SCRIPT = `(async () => {
   console.log("🚀 Starting Twitter Yoinker...");
@@ -347,6 +348,13 @@ export const ImportTerminal = () => {
 
   const yoinkFileRef = useRef(null);
   const restoreFileRef = useRef(null);
+  const readyItems = importQueue.filter(item => item.ready_to_commit);
+  const pendingItems = importQueue.filter(item => !item.ready_to_commit);
+  const rowVirtualizer = useWindowVirtualizer({
+    count: pendingItems.length,
+    estimateSize: () => 180,
+    overscan: 5,
+  });
 
   if (authMode !== 'admin') {
     return (
@@ -361,7 +369,7 @@ export const ImportTerminal = () => {
   }
 
   const handleExportLibrary = () => {
-    const backup = { media, mediaLogs };
+    const backup = createBackup(media, mediaLogs);
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backup, null, 2));
     const a = document.createElement('a');
     a.href = dataStr; a.download = `polyhedron_full_library_backup_${new Date().toISOString().split('T')[0]}.json`;
@@ -460,7 +468,7 @@ export const ImportTerminal = () => {
       
       if (parsed.media && parsed.mediaLogs) {
         if (window.confirm("This will overwrite your current library with the backup. Proceed?")) {
-          restoreBackup(parsed);
+          await restoreBackup(parsed);
           alert("Library Restored Successfully!");
         }
       } else {
@@ -517,15 +525,7 @@ export const ImportTerminal = () => {
 
   const itemsReadyToProcess = importQueue.filter(item => item.selected_type && !item.ready_to_commit && !item.has_searched && (!item.candidates || item.candidates.length === 0)).length;
   
-  const readyItems = importQueue.filter(item => item.ready_to_commit);
-  const pendingItems = importQueue.filter(item => !item.ready_to_commit);
   const readyToCommitCount = readyItems.length;
-
-  const rowVirtualizer = useWindowVirtualizer({
-    count: pendingItems.length,
-    estimateSize: () => 180,
-    overscan: 5,
-  });
 
   const handleBatchCommit = async () => {
     setIsBatchCommitting(true);

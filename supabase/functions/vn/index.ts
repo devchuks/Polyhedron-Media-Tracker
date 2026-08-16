@@ -1,5 +1,6 @@
 // /supabase/functions/vn/index.ts
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { buildVndbRequest, readBoundedJson } from "../_shared/validation.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -13,8 +14,8 @@ serve(async (req) => {
   }
 
   try {
-    const body = await req.json();
-    console.log("[VN Edge] Forwarding to VNDB:", JSON.stringify(body));
+    const { operation, params } = await readBoundedJson(req);
+    const body = buildVndbRequest(operation, params || {});
 
     const vndbRes = await fetch("https://api.vndb.org/kana/vn", {
       method: "POST",
@@ -26,9 +27,8 @@ serve(async (req) => {
     });
 
     if (!vndbRes.ok) {
-      const text = await vndbRes.text();
-      console.error("[VN Edge] VNDB error:", vndbRes.status, text);
-      return new Response(JSON.stringify({ error: text }), {
+      console.error("[VN Edge] VNDB returned status:", vndbRes.status);
+      return new Response(JSON.stringify({ error: `VNDB returned status ${vndbRes.status}` }), {
         status: vndbRes.status,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -40,8 +40,9 @@ serve(async (req) => {
     });
   } catch (err) {
     console.error("[VN Edge] Internal error:", err);
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500,
+    const status = err instanceof TypeError ? 400 : 500;
+    return new Response(JSON.stringify({ error: status === 400 ? err.message : 'Internal server error' }), {
+      status,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

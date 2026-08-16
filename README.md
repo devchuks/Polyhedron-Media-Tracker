@@ -26,4 +26,15 @@ To securely manage API keys and bypass browser CORS limitations, most external r
 *   **Frontend:** React, Vite, TailwindCSS, DaisyUI, Zustand (State Management).
 *   **Backend:** Supabase PostgreSQL, Supabase Auth.
 *   **Serverless:** Deno Edge Functions proxy external APIs securely.
-*   **Security:** Row Level Security (RLS) ensures user data is completely isolated. JWT tokens handle secure session management.
+*   **Security:** The repository includes owner-scoped RLS policies, canonical identity constraints, and atomic RPCs in `supabase/migrations`. These controls must be applied and verified in each hosted environment; client state is never an authorization boundary.
+
+## Local validation
+
+```sh
+npm install
+npm test
+npm run lint
+npm run build
+```
+
+Copy `.env.example` to a local untracked `.env` and supply only the browser-safe Supabase URL and anon key there. Provider credentials and webhook secrets belong in the Supabase Edge Function secret manager under the non-`VITE_` names documented in `.env.example`.

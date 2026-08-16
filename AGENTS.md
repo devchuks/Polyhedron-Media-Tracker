@@ -1,0 +1,46 @@
+# Polyhedron Engineering Guide
+
+## Architecture
+
+Polyhedron is a Vite/React 19 single-page application. React Router owns navigation, Zustand owns client state, IndexedDB persists guest state, and Supabase Auth/Postgres/Realtime persist authenticated state. Provider adapters and normalizers live under `src/services` and `src/utils`. Supabase Edge Functions under `supabase/functions` proxy selected third-party APIs. Database migrations belong under `supabase/migrations` and must be reviewable without contacting a hosted project.
+
+## Tooling and commands
+
+- Package manager: npm (the authoritative lockfile is `package-lock.json`).
+- Install dependencies: `npm ci`.
+- Development server: `npm run dev`.
+- Tests: `npm test`.
+- Lint: `npm run lint`.
+- Production build: `npm run build`.
+- Typecheck: none is configured; this is a JavaScript codebase and must not be converted to TypeScript as incidental work.
+
+## Domain invariants
+
+- Raw third-party provider IDs are not globally unique. Canonical identity includes provider, media type, and provider ID; all identity-sensitive lookups, updates, deletes, logs, caches, routes, imports, and exports must preserve that context.
+- Destructive operations must use proper ownership and canonical identity. A raw ID, UI category, or client-side mode alone is never a safe delete predicate.
+- Provider metadata must not overwrite newer user-controlled state such as status, progress, rating, dates, review text, or read issue IDs.
+- Diary entries have stable log identities. Updating a same-day entry must preserve its `log_id`, while distinct media types/providers with colliding raw IDs must remain independent.
+- Completion dates and completion status move together: completed items have a completion date; leaving completed clears it unless a workflow explicitly preserves historical completion in a diary record.
+- Issue IDs are compared canonically across string/number input, and partial issue lists must never imply that an entire series is complete.
+- Untrusted HTML must never be rendered unsanitized. Prefer rendering text/React nodes; any exceptional HTML boundary requires an allowlist sanitizer and a regression test.
+- External URLs require safe protocol validation. Only intended `http:` and `https:` links may open externally; reject active schemes such as `javascript:` and unsafe generated URLs.
+- Stale async provider responses must not update state for a newer route, query, modal selection, or user edit.
+
+## Security and database invariants
+
+- Client state must never be treated as an authorization boundary. In particular, `authMode` is presentation state, not permission evidence.
+- Every cloud read/write must be scoped to the authenticated owner even when RLS is expected to provide defense in depth.
+- RLS must enforce owner-only SELECT, INSERT, UPDATE, and DELETE for both `media_library` and `media_logs`; realtime visibility must follow the same ownership boundary.
+- Edge Functions must authenticate callers where appropriate, use fixed upstream hosts, validate structured operations and identifiers, bound request sizes/pagination, and never accept unrestricted upstream paths or query languages.
+- Service-role credentials and third-party secrets never belong in browser bundles, logs, tests, or committed files.
+- Existing real user data must be preserved. Do not reset or mutate a hosted Supabase project during local development.
+- Migrations require backfill consideration. Every identity/schema change must document collision handling, legacy compatibility, existing-user-data impact, rollback constraints, and whether it has been executed.
+- Multi-record destructive workflows should be atomic where practical, with ownership checked inside the database transaction or RPC.
+
+## Testing conventions
+
+- Every confirmed defect fix should have a regression test where practical. Tests should reproduce the failure mode, not merely exercise the happy path.
+- Keep domain transitions and identity/security helpers in small pure modules so Node-based unit tests can validate them without browser automation.
+- Mock network/Supabase boundaries in unit tests. Never point automated tests at a real hosted database.
+- Database/RLS tests may run only against an explicitly local disposable Supabase instance.
+- Relevant tests, linting, and the production build must be run before work is considered complete. Run typechecking too if a typecheck command is added later.

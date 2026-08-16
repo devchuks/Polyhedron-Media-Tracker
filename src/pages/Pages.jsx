@@ -8,6 +8,9 @@ import { apiRegistry } from '../services/apiRegistry';
 import { processDetailRaw } from '../utils/normalizers';
 import { NotFound } from './NotFound';
 import { populateDemoData } from './Settings';
+import { filterDashboardItems, findMediaForLog, normalizeProviderScore } from '../domain/mediaState';
+import { canonicalizeMediaItem, mediaKeyFor } from '../domain/mediaIdentity';
+import { safeExternalUrl } from '../utils/urlSafety';
 
 const VALID_CATEGORIES = ['tv', 'movies', 'games', 'vn', 'anime', 'manga', 'books', 'comics'];
 
@@ -139,14 +142,7 @@ export const Dashboard = () => {
     const allItems = Object.values(media).flat();
     const getAddedTime = (item) => item.addedAt || item.dateAdded || 0;
     
-    let filtered = allItems;
-    if (filter !== 'all') {
-      filtered = filtered.filter(item => item.status === filter);
-    }
-    if (searchQuery.trim()) {
-      const lowerQ = searchQuery.toLowerCase();
-      filtered = allItems.filter(item => item.title?.toLowerCase().includes(lowerQ));
-    }
+    const filtered = filterDashboardItems(allItems, filter, searchQuery);
     
     const recent = filtered.sort((a, b) => getAddedTime(b) - getAddedTime(a));
     
@@ -156,7 +152,7 @@ export const Dashboard = () => {
       .slice(0, 20);
 
     const recentLogs = (mediaLogs || []).slice(0, 5).map(log => {
-      const mediaItem = allItems.find(m => String(m.id) === String(log.media_id));
+      const mediaItem = findMediaForLog(media, log);
       return { ...log, mediaItem };
     }).filter(log => log.mediaItem);
 
@@ -315,9 +311,7 @@ export const Dashboard = () => {
 
 export const MediaCategory = () => {
   const { category } = useParams();
-  
-  if (!VALID_CATEGORIES.includes(category)) return <NotFound />;
-  
+  const isValidCategory = VALID_CATEGORIES.includes(category);
   const items = useMediaStore((state) => state.media[category]) || [];
   const isLoading = useMediaStore((state) => state.isLoading);
   const viewMode = useUIStore((state) => state.viewMode);
@@ -378,6 +372,8 @@ export const MediaCategory = () => {
 
   const totalPages = Math.ceil(processedItems.length / ITEMS_PER_PAGE) || 1;
   const paginatedItems = processedItems.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+
+  if (!isValidCategory) return <NotFound />;
 
   return (
     <div className="flex flex-col gap-4 animate-in fade-in duration-300 pb-10 min-h-screen text-base-content">
@@ -473,14 +469,12 @@ export const DetailView = () => {
   const { type, id } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
-  
-  if (!VALID_CATEGORIES.includes(type)) return <NotFound />;
-  
+  const isValidType = VALID_CATEGORIES.includes(type);
   const storeItem = useMediaStore((state) => state.media[type]?.find(m => 
     String(m.id) === String(id) || 
     (type === 'comics' && String(id).startsWith('series_') && String(m.apiData?.raw?.id) === String(id).replace('series_', ''))
   ));
-  const addMediaItem = useMediaStore((state) => state.addMediaItem);
+  const patchProviderMetadata = useMediaStore((state) => state.patchProviderMetadata);
   const toggleIssueRead = useMediaStore((state) => state.toggleIssueRead);
   const setGlobalLightbox = useMediaStore((state) => state.setGlobalLightbox);
   const mediaLogs = useMediaStore((state) => state.mediaLogs);
@@ -500,11 +494,9 @@ export const DetailView = () => {
   const [showTrailer, setShowTrailer] = useState(false);
   const [loadedBannerSrc, setLoadedBannerSrc] = useState(null);
   const activeFetchIdRef = useRef(null);
-  const [currentId, setCurrentId] = useState(id);
+  const routeKey = `${type}:${id}`;
 
-  // STRICT SYNCHRONOUS STATE RESET: Prevents UI flashing and sticky loading states between route changes
-  if (id !== currentId) {
-    setCurrentId(id);
+  useEffect(() => {
     setPreviewItem(location.state?.previewData || null);
     setIsDeepFetching(false);
     setRecs([]);
@@ -517,7 +509,7 @@ export const DetailView = () => {
     setShowTrailer(false);
     setLoadedBannerSrc(null);
     activeFetchIdRef.current = null;
-  }
+  }, [routeKey, location.state]);
 
   const apiData = storeItem ? storeItem.apiData : previewItem;
   const raw = apiData?.raw || {};
@@ -543,25 +535,35 @@ export const DetailView = () => {
 
   const cleanId = String(id).split('_season_')[0].split('_issue_')[0];
   const itemLogs = React.useMemo(() => {
-    if (!mediaLogs) return [];
-    return mediaLogs
-      .filter(log => String(log.media_id).startsWith(cleanId));
-  }, [mediaLogs, cleanId]);
+    if (!mediaLogs || !isValidType) return [];
+    let targetKey;
+    try {
+      targetKey = storeItem
+        ? mediaKeyFor(storeItem, type)
+        : mediaKeyFor(canonicalizeMediaItem(previewItem || { id }, type), type);
+    } catch {
+      return [];
+    }
+    return mediaLogs.filter(log => {
+      try { return mediaKeyFor(log) === targetKey; } catch { return false; }
+    });
+  }, [mediaLogs, id, isValidType, previewItem, storeItem, type]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [id]);
 
   useEffect(() => {
+    if (!isValidType) return;
     const targetItem = storeItem ? storeItem.apiData : previewItem;
     if (!targetItem || targetItem.raw?.deepFetched) return;
-    if (activeFetchIdRef.current === id) return; // STRICT LOCK: Prevent concurrent duplicate fetches
+    if (activeFetchIdRef.current === routeKey) return; // STRICT LOCK: Prevent concurrent duplicate fetches
     
     let isMounted = true; setIsDeepFetching(true);
-    activeFetchIdRef.current = id;
+    activeFetchIdRef.current = routeKey;
     
     apiRegistry.getMediaDetails(id, type).then(rawDetails => {
-        if (!isMounted || !rawDetails) return;
+        if (!isMounted || !rawDetails || activeFetchIdRef.current !== routeKey) return;
         
         const processed = processDetailRaw(rawDetails, type);
         const updatedRaw = { ...targetItem.raw, ...rawDetails, ...processed, deepFetched: true };
@@ -585,21 +587,21 @@ export const DetailView = () => {
 
         const updatedImage = rawDetails.image || targetItem.image || previewItem?.image || null;
 
-        if (isPreview) setPreviewItem(prev => ({ ...prev, title: updatedTitle, image: updatedImage, raw: updatedRaw, year: updatedYear, url: updatedUrl || prev.url }));
-        else addMediaItem({ ...storeItem, title: updatedTitle, image: updatedImage, apiData: { ...storeItem.apiData, image: updatedImage, raw: updatedRaw, year: updatedYear, url: updatedUrl || storeItem.apiData.url } }, type);
-    }).catch(err => { 
+        if (isPreview) setPreviewItem(prev => ({ ...prev, title: updatedTitle, image: updatedImage, raw: updatedRaw, year: updatedYear, url: updatedUrl || prev?.url }));
+        else patchProviderMetadata(storeItem, type, { title: updatedTitle, image: updatedImage, apiData: { ...storeItem.apiData, image: updatedImage, raw: updatedRaw, year: updatedYear, url: updatedUrl || storeItem.apiData.url } });
+    }).catch(() => {
       // Error caught by apiRegistry, let it fail silently
     }).finally(() => {
       if (isMounted) {
         setIsDeepFetching(false);
-        activeFetchIdRef.current = null;
+        if (activeFetchIdRef.current === routeKey) activeFetchIdRef.current = null;
       }
     });
-    return () => { isMounted = false; activeFetchIdRef.current = null; };
-  }, [id, type]); // REMOVED volatile dependencies to prevent looping
+    return () => { isMounted = false; if (activeFetchIdRef.current === routeKey) activeFetchIdRef.current = null; };
+  }, [id, isPreview, isValidType, patchProviderMetadata, previewItem, routeKey, storeItem, type]);
 
   useEffect(() => {
-    if (!cleanId) return;
+    if (!cleanId || !isValidType) return;
     let isMounted = true;
     setLoadingRecs(true);
     apiRegistry.getRecommendations(cleanId, type).then(res => { 
@@ -612,7 +614,7 @@ export const DetailView = () => {
       }).catch(() => { if (isMounted) { setEpisodes([]); setLoadingEps(false); } });
     }
     return () => { isMounted = false; };
-  }, [cleanId, type, raw.number_of_seasons, apiData?.raw?.number_of_seasons]);
+  }, [cleanId, type, isValidType, raw.number_of_seasons, apiData?.raw?.number_of_seasons]);
 
   const fetchSeason = async (tvId, seasonNum) => {
     setLoadingEps(true);
@@ -622,6 +624,7 @@ export const DetailView = () => {
 
   const titleText = storeItem ? storeItem.title : previewItem?.title || apiData?.title || "Unknown Title";
 
+  if (!isValidType) return <NotFound />;
   if (!apiData) return <div className="p-10 font-mono text-base-content/50 font-bold animate-pulse">Loading details...</div>;
 
   const trailerUrl = (() => {
@@ -673,7 +676,7 @@ export const DetailView = () => {
   const validRels = raw.relations?.edges?.filter(e => ['ADAPTATION', 'SOURCE'].includes(e.relationType)) || [];
   const platforms = type === 'games' && raw.platforms ? raw.platforms.map(p => p.name || p.platform?.name).filter(Boolean) : raw.platforms?.map(p => p.platform?.name || p).filter(Boolean) || [];
   const typeColors = getMediaTypeColors(type);
-  const unifiedScore = raw.total_rating || raw.vote_average || raw.averageScore || (raw.rating && type === 'games' ? raw.rating * 20 : raw.rating ? raw.rating / 10 : 0) || apiData.score;
+  const unifiedScore = normalizeProviderScore(type, raw, apiData.score);
   const vnLengthMap = ['', 'Very Short (< 2h)', 'Short (2 - 10h)', 'Medium (10 - 30h)', 'Long (30 - 50h)', 'Very Long (> 50h)'];
   const comicReadIssueIds = storeItem?.readIssueIds || [];
 
@@ -683,7 +686,7 @@ export const DetailView = () => {
       {bannerSrc && (
         <div className="absolute z-0 -top-4 lg:-top-6 -left-4 lg:-left-6 -right-4 lg:-right-6 h-56 lg:h-72 overflow-hidden pointer-events-none" style={{ WebkitMaskImage: 'linear-gradient(to bottom, black 50%, transparent 100%)', maskImage: 'linear-gradient(to bottom, black 50%, transparent 100%)' }}>
           <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-black/10 to-transparent z-10" />
-          <img key={bannerSrc} src={bannerSrc} onLoad={() => setLoadedBannerSrc(bannerSrc)} ref={(el) => { if (el?.complete) setLoadedBannerSrc(bannerSrc); }} className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-700 ease-in-out ${loadedBannerSrc === bannerSrc ? 'opacity-75' : 'opacity-0'}`} alt="" />
+          <img key={bannerSrc} src={bannerSrc} onLoad={() => setLoadedBannerSrc(bannerSrc)} className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-700 ease-in-out ${loadedBannerSrc === bannerSrc ? 'opacity-75' : 'opacity-0'}`} alt="" />
         </div>
       )}
       <div className="relative z-10 mb-3 lg:mb-4">
@@ -763,7 +766,7 @@ export const DetailView = () => {
                 {type === 'comics' && <MetaItem label="Issues" value={raw.issuesCount} />}
                 <MetaItem label="Status" value={type === 'comics' && raw.status?.toLowerCase() === 'cancelled' ? null : raw.status?.replace(/_/g, ' ')} />
                 {type === 'comics' && genres?.length > 0 && (<MetaItem label="Genres" value={genres.map(g => typeof g === 'object' ? g.name : g).join(', ')} />)}
-                {apiData?.url && (<span><span className="font-bold text-base-content">Source:</span>{' '}<a href={apiData.url} target="_blank" rel="noreferrer" className="hover:text-primary transition-colors inline-flex items-center gap-1">{{ tv: 'TMDB', movies: 'TMDB', games: 'IGDB', anime: 'AniList', manga: 'AniList', vn: 'VNDB', books: 'OpenLibrary', comics: 'Metron' }[type] || 'Database'} <ExternalLink className="w-3 h-3" /></a></span>)}
+                {safeExternalUrl(apiData?.url) && (<span><span className="font-bold text-base-content">Source:</span>{' '}<a href={safeExternalUrl(apiData.url)} target="_blank" rel="noreferrer" className="hover:text-primary transition-colors inline-flex items-center gap-1">{{ tv: 'TMDB', movies: 'TMDB', games: 'IGDB', anime: 'AniList', manga: 'AniList', vn: 'VNDB', books: 'OpenLibrary', comics: 'Metron' }[type] || 'Database'} <ExternalLink className="w-3 h-3" /></a></span>)}
                 {/* Check that rating actually has a value before trying to render stars to prevent undefined crashes */}
                 {unifiedScore > 0 && <span className="flex items-center gap-1 text-warning ml-auto sm:ml-0 font-bold"><Star className="w-3 h-3 fill-warning" /> {type === 'anime' || type === 'manga' ? `${unifiedScore}%` : type === 'games' ? `${Math.round(unifiedScore)}/100` : Number(unifiedScore).toFixed(1)}</span>}
               </div>

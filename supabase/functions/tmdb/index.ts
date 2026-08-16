@@ -1,18 +1,16 @@
 ﻿// @ts-nocheck
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { corsHeaders } from "../_shared/cors.ts"
+import { assertAllowedTmdbRequest, readBoundedJson } from "../_shared/validation.js"
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
   try {
-    const bodyText = await req.text()
-    const body = bodyText ? JSON.parse(bodyText) : {}
-    const { path, query = {} } = body
+    const body = await readBoundedJson(req)
+    const { path, query } = assertAllowedTmdbRequest(body.path, body.query || {})
 
-    if (!path) throw new Error('Missing "path" parameter in request body')
-
-    const apiKey = Deno.env.get('VITE_TMDB_KEY') || Deno.env.get('TMDB_API_KEY')
+    const apiKey = Deno.env.get('TMDB_API_KEY')
     if (!apiKey) throw new Error('TMDB API Key is not configured')
 
     const url = new URL(`https://api.themoviedb.org/3${path.startsWith('/') ? path : `/${path}`}`)
@@ -50,7 +48,6 @@ serve(async (req) => {
     try {
       data = JSON.parse(jsonText)
     } catch (parseErr) {
-      console.error("Raw response (first 500 chars):", jsonText.slice(0, 500))
       throw new Error(`TMDB returned invalid JSON: ${parseErr.message}`)
     }
 
@@ -69,8 +66,9 @@ serve(async (req) => {
     return new Response(JSON.stringify(data), { headers: responseHeaders })
   } catch (error) {
     console.error("Edge Function error:", error.message)
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
+    const status = error instanceof TypeError ? 400 : 500
+    return new Response(JSON.stringify({ error: status === 400 ? error.message : 'Internal server error' }), {
+      status,
       headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Content-Encoding': 'identity' }
     })
   }

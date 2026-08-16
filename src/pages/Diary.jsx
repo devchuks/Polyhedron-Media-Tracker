@@ -3,6 +3,8 @@ import { useMediaStore } from '../store/useMediaStore';
 import { ImageWithFallback, getMediaTypeColors, formatFancyDate, resolveMediaImage } from '../components/UI';
 import { Link } from 'react-router-dom';
 import { Clock, Trash2, Edit3, Save, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
+import { findMediaForLog } from '../domain/mediaState';
+import { dateInputFromTimestamp, timestampFromDateInput } from '../utils/calendarDate';
 
 const ExpandableReview = ({ text }) => {
   const [expanded, setExpanded] = useState(false);
@@ -27,7 +29,7 @@ const ExpandableReview = ({ text }) => {
 };
 
 export const Diary = () => {
-  const { mediaLogs, media, removeDiaryLog, removeMediaItem, updateDiaryLog } = useMediaStore();
+  const { mediaLogs, media, removeDiaryLog, updateDiaryLog } = useMediaStore();
   const isLoading = useMediaStore((state) => state.isLoading);
   const [editingId, setEditingId] = useState(null);
   const [editDate, setEditDate] = useState('');
@@ -42,16 +44,8 @@ export const Diary = () => {
   }, [currentPage, isJumping]);
 
   const enrichedLogs = useMemo(() => {
-    const mediaMap = new Map();
-    for (const category in media) {
-      if (!media[category]) continue;
-      for (const item of media[category]) {
-        mediaMap.set(String(item.id), item);
-      }
-    }
-
     return mediaLogs.map(log => {
-      const mediaItem = mediaMap.get(String(log.media_id));
+      const mediaItem = findMediaForLog(media, log);
       return { ...log, mediaItem };
     }).filter(log => log.mediaItem);
   }, [mediaLogs, media]);
@@ -116,12 +110,14 @@ export const Diary = () => {
 
   const startEdit = (log) => {
     setEditingId(log.log_id);
-    setEditDate(new Date(log.log_date).toISOString().split('T')[0]);
+    setEditDate(dateInputFromTimestamp(log.log_date));
     setEditNote(log.review_text || '');
   };
 
   const saveEdit = () => {
-    updateDiaryLog(editingId, { log_date: new Date(editDate).toISOString(), review_text: editNote });
+    const timestamp = timestampFromDateInput(editDate);
+    if (timestamp === null) return;
+    updateDiaryLog(editingId, { log_date: new Date(timestamp).toISOString(), review_text: editNote });
     setEditingId(null);
   };
 
@@ -212,7 +208,7 @@ export const Diary = () => {
                                  <textarea className="textarea textarea-bordered textarea-sm rounded-none font-sans min-h-[80px] focus:outline-none focus:border-primary bg-base-100" value={editNote} onChange={e => setEditNote(e.target.value)} placeholder="Add a note..."></textarea>
                                  <div className="flex gap-2 justify-end mt-1">
                                    <button onClick={() => setEditingId(null)} className="btn btn-xs btn-ghost rounded-none font-mono uppercase tracking-widest text-[9px]">Cancel</button>
-                                   <button onClick={saveEdit} className="btn btn-xs btn-primary rounded-none font-mono uppercase tracking-widest text-[9px]"><Save className="w-3 h-3 mr-1"/> Save</button>
+                                   <button disabled={!editDate} onClick={saveEdit} className="btn btn-xs btn-primary rounded-none font-mono uppercase tracking-widest text-[9px]"><Save className="w-3 h-3 mr-1"/> Save</button>
                                  </div>
                                </div>
                             ) : (

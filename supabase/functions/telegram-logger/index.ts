@@ -2,20 +2,35 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { corsHeaders } from "../_shared/cors.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.42.0"
+import { escapeTelegramHtml, readBoundedJson, safeHttpUrl, verifyTelegramWebhookSecret } from "../_shared/validation.js"
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   const TELEGRAM_CHAT_ID = Deno.env.get('TELEGRAM_CHAT_ID');
   const TELEGRAM_BOT_TOKEN = Deno.env.get('TELEGRAM_BOT_TOKEN');
+  const TELEGRAM_WEBHOOK_SECRET = Deno.env.get('TELEGRAM_WEBHOOK_SECRET');
 
   // Telegram webhooks are always POST requests
   if (req.method !== 'POST') {
     return new Response('Method Not Allowed', { status: 405, headers: corsHeaders });
   }
 
+  const providedWebhookSecret = req.headers.get('x-telegram-bot-api-secret-token') || '';
+  if (!verifyTelegramWebhookSecret(providedWebhookSecret, TELEGRAM_WEBHOOK_SECRET || '')) {
+    return new Response('Unauthorized', { status: 401, headers: corsHeaders });
+  }
+
+  if (!TELEGRAM_CHAT_ID || !TELEGRAM_BOT_TOKEN) {
+    console.error('Telegram logger configuration is incomplete.');
+    return new Response('Configuration Error', { status: 500, headers: corsHeaders });
+  }
+
   try {
-    const body = await req.json();
+    const body = await readBoundedJson(req, 32_000);
+    if (!Number.isSafeInteger(body.update_id)) {
+      return new Response('Invalid Telegram update identifier.', { status: 400, headers: corsHeaders });
+    }
 
     // 1. Payload Extraction
     // Telegram wraps the actual message in an update object
@@ -32,7 +47,7 @@ serve(async (req) => {
     // Strict comparison. String() is used because TELEGRAM_CHAT_ID from Deno.env is a string,
     // but message.chat.id from Telegram is an integer.
     if (String(chatId) !== TELEGRAM_CHAT_ID) {
-      console.warn(`Unauthorized access attempt from Chat ID: ${chatId}`);
+      console.warn('Rejected a Telegram update from an unauthorized chat.');
       // Return 200 to safely close the connection and prevent Telegram from retrying the webhook
       return new Response('Unauthorized, but acknowledged.', { status: 200, headers: corsHeaders });
     }
@@ -48,7 +63,7 @@ serve(async (req) => {
     // Input sanitization: limit length to prevent massive token usage/injection bloat
     const text = rawText.slice(0, 1000).trim();
 
-    console.log(`Received authorized message at ${timestamp}:\n${text}`);
+    console.log(`Received authorized Telegram update ${body.update_id ?? 'unknown'} at ${timestamp}.`);
 
 // --- Phase 2 - LLM Parsing Engine (Gemini 2.0 Flash Structured Outputs) ---
 
@@ -201,12 +216,7 @@ const geminiRes = await fetch(geminiUrl, {
 });
 
 if (!geminiRes.ok) {
-  const errorText = await geminiRes.text();
-
-  console.error(
-    `[Phase 2] Gemini API Error (${geminiRes.status}):`,
-    errorText
-  );
+  console.error(`[Phase 2] Gemini API Error (${geminiRes.status}).`);
 
   return new Response('Gemini API request failed.', {
     status: 200,
@@ -220,10 +230,7 @@ const responseText =
   geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
 
 if (!responseText) {
-  console.error(
-    "[Phase 2] Gemini failed to return structured output:",
-    geminiData
-  );
+  console.error("[Phase 2] Gemini failed to return structured output.");
 
   return new Response('Failed to parse message with LLM.', {
     status: 200,
@@ -237,10 +244,7 @@ try {
   // Structured outputs should always return valid JSON now
   parsedJson = JSON.parse(responseText);
 } catch (e) {
-  console.error(
-    "[Phase 2] Structured output parsing failure:",
-    responseText
-  );
+  console.error("[Phase 2] Structured output parsing failure.");
 
   return new Response('LLM returned invalid structured JSON.', {
     status: 200,
@@ -262,6 +266,9 @@ if (items.length === 0) {
   console.warn("[Phase 2] No items extracted from the message.");
   return new Response('No items found.', { status: 200, headers: corsHeaders });
 }
+if (items.length > 10) {
+  return new Response('Too many media items in one update.', { status: 200, headers: corsHeaders });
+}
 
 if (items.length > 1) {
   await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
@@ -276,7 +283,12 @@ if (items.length > 1) {
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? Deno.env.get('VITE_SUPABASE_URL') ?? '';
 const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-const anonKey = Deno.env.get('VITE_SUPABASE_ANON_KEY') ?? Deno.env.get('SUPABASE_ANON_KEY') ?? serviceRoleKey;
+const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? Deno.env.get('VITE_SUPABASE_ANON_KEY') ?? '';
+
+if (!supabaseUrl || !serviceRoleKey || !anonKey) {
+  console.error('Supabase logger configuration is incomplete.');
+  return new Response('Configuration Error', { status: 500, headers: corsHeaders });
+}
 
 const supabase = createClient(supabaseUrl, anonKey);
 const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
@@ -322,7 +334,7 @@ for (let i = 0; i < items.length; i++) {
 
   let reviewText = typeof item.reviewText === 'string' ? item.reviewText.trim() : '';
 
-  console.log(`[Phase 2 Resolved] Item ${i+1}/${items.length} | Action: ${action} | Title: ${cleanTitle} | Year: ${year} | Season: ${season} | Progress: ${issue} (${progressUnit}) | Type: ${type} | Rating: ${rating}/10 | Confidence: ${confidence}`);
+  console.log(`[Phase 2 Resolved] Item ${i+1}/${items.length} | Action: ${action} | Type: ${type} | Confidence: ${confidence}`);
 
   // --- Phase 3 - Autonomous API Resolution ---
 
@@ -349,12 +361,12 @@ for (let i = 0; i < items.length; i++) {
         else queryParams.year = year;
       }
 
-      console.log(`[Phase 3] Invoking TMDB for ${cleanTitle}`);
+      console.log('[Phase 3] Invoking TMDB.');
       let { data, error } = await supabase.functions.invoke('tmdb', { body: { path, query: queryParams } });
       
       // Fallback: If TMDB strict year search returns nothing, retry without the year constraint
       if (data?.results?.length === 0 && year) {
-        console.log(`[Phase 3] Strict year search failed. Retrying TMDB without year for ${cleanTitle}...`);
+        console.log('[Phase 3] Strict TMDB search failed; retrying without year.');
         const fallbackRes = await supabase.functions.invoke('tmdb', { body: { path, query: { query: cleanTitle } } });
         data = fallbackRes.data;
         error = fallbackRes.error || error;
@@ -396,10 +408,10 @@ for (let i = 0; i < items.length; i++) {
         }
       }
     } else if (type === 'games') {
-      console.log(`[Phase 3] Invoking IGDB for ${cleanTitle}`);
-      // Fetch up to 10 to allow strict year filtering locally
-      const igdbQuery = `search "${cleanTitle}"; fields name,cover.url,first_release_date; limit 10;`;
-      const { data, error } = await supabase.functions.invoke('igdb', { body: { endpoint: 'games', query: igdbQuery } });
+      console.log('[Phase 3] Invoking IGDB.');
+      const { data, error } = await supabase.functions.invoke('igdb', {
+        body: { operation: 'searchGames', params: { query: cleanTitle, page: 1 } },
+      });
       
       if (error) console.error('[Phase 3] IGDB Error:', error);
       if (data && data.length > 0) {
@@ -412,8 +424,9 @@ for (let i = 0; i < items.length; i++) {
         externalId = match.id;
 
         // Deep-fetch full details
-        const detailsQuery = `fields *, cover.url, genres.name, platforms.name, release_dates.y; where id = ${externalId};`;
-        const { data: fullDetails } = await supabase.functions.invoke('igdb', { body: { endpoint: 'games', query: detailsQuery } });
+        const { data: fullDetails } = await supabase.functions.invoke('igdb', {
+          body: { operation: 'gameDetails', params: { id: externalId } },
+        });
         apiMatch = (fullDetails && fullDetails.length > 0) ? fullDetails[0] : match;
 
         canonicalTitle = apiMatch.name;
@@ -424,7 +437,7 @@ for (let i = 0; i < items.length; i++) {
         }
       }
     } else if (type === 'comics') {
-      console.log(`[Phase 3] Invoking Metron for ${cleanTitle}`);
+      console.log('[Phase 3] Invoking Metron.');
       
       // Try to resolve the specific issue ID if one was provided in the log
       if (issue !== null) {
@@ -448,7 +461,7 @@ for (let i = 0; i < items.length; i++) {
       
       // Fallback: If Metron strict year search returns nothing, retry without the year constraint
       if (data?.results?.length === 0 && year) {
-        console.log(`[Phase 3] Strict year search failed. Retrying Metron without year for ${cleanTitle}...`);
+        console.log('[Phase 3] Strict Metron search failed; retrying without year.');
         const fallbackParams = new URLSearchParams();
         fallbackParams.append('series_name', cleanTitle);
         fallbackParams.append('number', '1');
@@ -495,7 +508,7 @@ for (let i = 0; i < items.length; i++) {
         posterUrl = apiMatch?.image || match.image || null; 
       }
     } else if (type === 'anime' || type === 'manga') {
-      console.log(`[Phase 3] Invoking AniList for ${cleanTitle}`);
+      console.log('[Phase 3] Invoking AniList.');
       const mediaType = type === 'anime' ? 'ANIME' : 'MANGA';
       const query = `query ($search: String) {
         Page(page: 1, perPage: 10) {
@@ -542,7 +555,7 @@ for (let i = 0; i < items.length; i++) {
         console.error('[Phase 3] AniList Error:', error);
       }
     } else if (type === 'vn') {
-      console.log(`[Phase 3] Invoking VNDB for ${cleanTitle}`);
+      console.log('[Phase 3] Invoking VNDB.');
       try {
         const res = await fetch('https://api.vndb.org/kana/vn', {
           method: 'POST',
@@ -575,7 +588,7 @@ for (let i = 0; i < items.length; i++) {
       }
     }
 
-    console.log(`[Phase 3 Resolved] ID: ${externalId} | Canonical: ${canonicalTitle} (${canonicalYear}) | Season Yr: ${seasonYear} | Episodes: ${episodeCount} | Poster: ${posterUrl}`);
+    console.log(`[Phase 3 Resolved] Provider match: ${externalId ? 'yes' : 'no'}.`);
 
     // --- Phase 4 - Database Execution and Upsert Logic ---
 
@@ -590,6 +603,13 @@ for (let i = 0; i < items.length; i++) {
       let mediaId = String(externalId);
       if (type === 'comics') mediaId = isComicSeries ? `series_${externalId}` : `issue_${externalId}`;
       else if (type === 'games') mediaId = `igdb_${externalId}`;
+      const providerByType = {
+        movies: 'tmdb', tv: 'tmdb', comics: 'metron', games: 'igdb', anime: 'anilist',
+        manga: 'anilist', vn: 'vndb', books: 'openlibrary',
+      };
+      const provider = providerByType[type];
+      const providerId = type === 'comics' ? mediaId : String(externalId);
+      const mediaKey = `${provider}:${type}:${providerId}`;
       
       // Advance timestamp minimally to guarantee chronological ordering in the UI 
       const timestampMs = new Date(timestamp * 1000).getTime() + i;
@@ -599,7 +619,7 @@ for (let i = 0; i < items.length; i++) {
       const { data: existingMedia } = await supabaseAdmin
         .from('media_library')
         .select('*') // Get everything to preserve existing fields safely
-        .eq('id', mediaId)
+        .eq('media_key', mediaKey)
         .eq('user_id', userId)
         .maybeSingle();
 
@@ -714,10 +734,11 @@ for (let i = 0; i < items.length; i++) {
       }
 
       // Append specific issue to read array if one was parsed
-      let updatedReadIssues = existingMedia?.readIssueIds || [];
+      let updatedReadIssues = (existingMedia?.readIssueIds || []).map(String);
       if (type === 'comics' && specificIssueId !== null) {
-        if (!updatedReadIssues.includes(specificIssueId)) {
-          updatedReadIssues = [...updatedReadIssues, specificIssueId];
+        const canonicalIssueId = String(specificIssueId);
+        if (!updatedReadIssues.includes(canonicalIssueId)) {
+          updatedReadIssues = [...updatedReadIssues, canonicalIssueId];
         }
       }
 
@@ -747,11 +768,15 @@ for (let i = 0; i < items.length; i++) {
       const mediaPayload = {
         id: mediaId,
         user_id: userId,
+        provider,
+        provider_id: providerId,
+        media_type: type,
+        media_key: mediaKey,
         title: safeTitle,
         type: safeType,
         subtype: safeSubtype,
         image: safeImage,
-        rating: rating || existingMedia?.rating || 0,
+        rating: rating !== null ? rating : (existingMedia?.rating || 0),
         addedAt: existingMedia?.addedAt || timestampMs,
         dateCompleted: isSeriesComplete ? timestampMs : (safeStatus === 'completed' ? existingMedia?.dateCompleted : null),
         dateStarted: existingMedia?.dateStarted || timestampMs,
@@ -767,12 +792,9 @@ for (let i = 0; i < items.length; i++) {
         }
       };
 
-      const { error: mediaError } = await supabaseAdmin.from('media_library').upsert(mediaPayload);
-      if (mediaError) console.error('[Phase 4] Media Library Upsert Error:', mediaError);
-
-      // 2. Diary Insert (media_logs table) ONLY if it's a completion
+      let logPayload = null;
       if (shouldLogToDiary) {
-        const logId = crypto.randomUUID();
+        const logId = `telegram:${body.update_id}:${i}`;
 
         let actionType = 'WATCHED';
         if (type === 'games' || type === 'vn') actionType = 'PLAYED';
@@ -792,11 +814,14 @@ for (let i = 0; i < items.length; i++) {
           }
         }
 
-        const logPayload = {
+        logPayload = {
           log_id: logId,
           media_id: mediaId,
           user_id: userId,
+          provider,
+          provider_id: providerId,
           media_type: type,
+          media_key: mediaKey,
           action_type: actionType,
           log_date: isoDate,
           season_label: logSeasonLabel,
@@ -804,28 +829,44 @@ for (let i = 0; i < items.length; i++) {
           image: safeImage,
           review_text: reviewText
         };
-
-        const { error: logError } = await supabaseAdmin.from('media_logs').insert(logPayload);
-        if (logError) console.error('[Phase 4] Media Logs Upsert Error:', logError);
-        else console.log(`[Phase 4] Successfully inserted diary log for ${mediaId}`);
       } else {
         console.log(`[Phase 4] Progress update only. Skipped diary log for ${mediaId}`);
+      }
+
+      const eventId = `${body.update_id}:${i}`;
+      const { data: applied, error: transactionError } = await supabaseAdmin.rpc('apply_telegram_media_event', {
+        p_event_id: eventId,
+        p_user_id: userId,
+        p_media: mediaPayload,
+        p_log: logPayload,
+      });
+      if (transactionError) throw new Error(`Telegram media transaction failed: ${transactionError.code || 'unknown'}`);
+      if (!applied) {
+        console.log(`Ignored duplicate Telegram event ${eventId}.`);
+        continue;
       }
 
       // --- Phase 5 - Feedback Loop & Deep Linking ---
       const telegramUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
       
       // Invisible link trick to force Telegram to show the high-res poster as a preview
-      const posterLink = posterUrl ? `<a href="${posterUrl}">&#8203;</a>` : '';
+      const safePosterUrl = safeHttpUrl(posterUrl);
+      const posterLink = safePosterUrl ? `<a href="${escapeTelegramHtml(safePosterUrl)}">&#8203;</a>` : '';
       const typeLabel = type === 'movies' ? 'Movie' : type === 'tv' ? 'TV' : type === 'comics' ? 'Comic' : type === 'games' ? 'Game' : type === 'anime' ? 'Anime' : type === 'manga' ? 'Manga' : type === 'vn' ? 'VN' : 'Book';
+      const escapedTitle = escapeTelegramHtml(safeTitle);
+      const escapedProgress = escapeTelegramHtml(safeProgress || '');
+      const escapedStatus = escapeTelegramHtml(safeStatus.toUpperCase());
+      const escapedType = escapeTelegramHtml(typeLabel);
+      const escapedYear = escapeTelegramHtml(canonicalYear || '?');
+      const deepLink = `https://project-polyhedron.netlify.app/media/${encodeURIComponent(type)}/${encodeURIComponent(mediaId)}`;
       
       const messageHtml = `
 <b>✅ Cataloged Successfully</b>${posterLink}
-<b>Title:</b> ${safeTitle} (${canonicalYear || '?'})
-<b>Type:</b> ${typeLabel}
-${safeProgress ? `<b>Progress:</b> ${safeProgress}\n` : ''}<b>Status:</b> ${safeStatus.toUpperCase()}
+<b>Title:</b> ${escapedTitle} (${escapedYear})
+<b>Type:</b> ${escapedType}
+${safeProgress ? `<b>Progress:</b> ${escapedProgress}\n` : ''}<b>Status:</b> ${escapedStatus}
 <b>Rating:</b> ${rating ? rating + '/10' : 'None'}
-<b>Link:</b> <a href="https://project-polyhedron.netlify.app/media/${type}/${mediaId}">View in Polyhedron</a>
+<b>Link:</b> <a href="${deepLink}">View in Polyhedron</a>
       `.trim();
 
       await fetch(telegramUrl, {
@@ -844,7 +885,7 @@ ${safeProgress ? `<b>Progress:</b> ${safeProgress}\n` : ''}<b>Status:</b> ${safe
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chat_id: chatId,
-          text: `❌ Could not find an automatic match for <b>${cleanTitle}</b>`,
+          text: `❌ Could not find an automatic match for <b>${escapeTelegramHtml(cleanTitle)}</b>`,
           parse_mode: 'HTML'
         })
       });
@@ -860,7 +901,7 @@ ${safeProgress ? `<b>Progress:</b> ${safeProgress}\n` : ''}<b>Status:</b> ${safe
     return new Response('Webhook processed successfully', { status: 200, headers: corsHeaders });
 
   } catch (err) {
-    console.error('Error processing webhook:', err);
+    console.error('Error processing authenticated Telegram webhook.');
     return new Response('Internal Server Error', { status: 200, headers: corsHeaders });
   }
 });

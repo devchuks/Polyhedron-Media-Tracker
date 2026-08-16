@@ -56,7 +56,9 @@ export const Gate = () => {
         setError(true);
         setIsLoading(false);
       } else if (data.user) {
-        setAuthMode('admin');
+        const ready = await setAuthMode('admin');
+        if (!ready) setError(true);
+        setIsLoading(false);
       }
     } catch (err) {
       setError(true);
@@ -64,8 +66,9 @@ export const Gate = () => {
     }
   };
 
-  const handleGuestLogin = () => {
-    setAuthMode('guest');
+  const handleGuestLogin = async () => {
+    await supabase.auth.signOut();
+    await setAuthMode('guest');
   };
 
   return (

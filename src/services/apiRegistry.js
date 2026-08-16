@@ -10,22 +10,20 @@ import {
 } from '../utils/normalizers';
 import { supabase } from './supabase';
 import { FunctionsHttpError } from '@supabase/supabase-js';
-
-const withRetry = async (fn, retries = 1, delay = 1000) => {
-  try {
-    return await fn();
-  } catch (error) {
-    if (retries > 0) {
-      await new Promise(resolve => setTimeout(resolve, delay));
-      return withRetry(fn, retries - 1, delay);
-    }
-    throw error;
-  }
-};
+import { parseRetryAfter, withRetry } from '../utils/retry.js';
+import { getCachedValue, mapWithConcurrency, setCachedValue } from '../utils/boundedAsync.js';
 
 const invokeFunction = async (name, body) => {
   return withRetry(async () => {
-    const { data, error } = await supabase.functions.invoke(name, { body });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+    let data;
+    let error;
+    try {
+      ({ data, error } = await supabase.functions.invoke(name, { body, signal: controller.signal }));
+    } finally {
+      clearTimeout(timeout);
+    }
     if (error) {
       if (error instanceof FunctionsHttpError) {
         const text = await error.context.text().catch(() => 'Unknown Edge Function Error');
@@ -35,14 +33,16 @@ const invokeFunction = async (name, body) => {
         } catch {
           errorMessage = { error: text };
         }
-        console.error(`🔴 [${name} Edge Function] HTTP Error:`, errorMessage);
-        throw new Error(typeof errorMessage === 'string' ? errorMessage : JSON.stringify(errorMessage));
+        const functionError = new Error(typeof errorMessage === 'string' ? errorMessage : JSON.stringify(errorMessage));
+        functionError.status = error.context.status;
+        functionError.retryAfterMs = parseRetryAfter(error.context.headers.get('retry-after'));
+        throw functionError;
       }
       throw error;
     }
     if (data?.error) throw new Error(data.error);
     return data;
-  });
+  }, { retries: 1, baseDelay: 500 });
 };
 
 const fetchMetron = async (endpoint) => {
@@ -50,7 +50,7 @@ const fetchMetron = async (endpoint) => {
 };
 
 const safeApiClient = async (...args) => {
-  return withRetry(() => apiClient(...args));
+  return withRetry(() => apiClient(...args), { retries: 1, baseDelay: 500 });
 };
 
 const getOpenLibraryUrl = (endpoint) => {
@@ -107,12 +107,8 @@ const sessionCache = {
   people: new Map(),
 };
 
-const enforceCacheLimit = (map, limit = 50) => {
-  if (map.size >= limit) {
-    const firstKey = map.keys().next().value;
-    map.delete(firstKey);
-  }
-};
+const getSessionCache = (map, key) => getCachedValue(map, key);
+const setSessionCache = (map, key, value, limit = 50) => setCachedValue(map, key, value, { ttlMs: 30 * 60_000, limit });
 
 export const apiRegistry = {
   searchMovies: async (query, page = 1) => {
@@ -129,9 +125,10 @@ export const apiRegistry = {
   },
   searchGames: async (query, page = 1) => {
     try {
-      const limit = 20; const offset = (page - 1) * limit;
-      const data = await invokeFunction('igdb', { endpoint: 'games', query: `search "${query}"; fields name, slug, cover.image_id, genres.id, genres.name, themes.id, themes.name, first_release_date, summary, total_rating, url, websites.type, websites.url; limit ${limit}; offset ${offset};` });
-      return { results: (data || []).map(normalizeIGDB), totalPages: 10 };
+      const limit = 20;
+      const data = await invokeFunction('igdb', { operation: 'searchGames', params: { query, page } });
+      const results = (data || []).map(normalizeIGDB);
+      return { results, totalPages: results.length === limit ? page + 1 : page };
     } catch (err) { reportApiError(err, 'IGDB'); return { results: [], totalPages: 1 }; }
   },
   searchAnime: async (query, page = 1) => {
@@ -225,7 +222,7 @@ export const apiRegistry = {
       const issueParams = new URLSearchParams();
       issueParams.append('series_name', searchQuery);
       issueParams.append('number', '1');
-      issueParams.append('page_size', '500');
+      issueParams.append('page_size', '100');
       if (coverYear) issueParams.append('cover_year', coverYear);
 
       const issueRes = await fetchMetron(`/api/issue/?${issueParams.toString()}`);
@@ -325,7 +322,7 @@ export const apiRegistry = {
         return { results, totalPages };
       } else if (filterType === 'creator') {
         const cacheKey = `creator_series_${filterId}`;
-        let seriesArray = sessionCache.seasons.get(cacheKey);
+        let seriesArray = getSessionCache(sessionCache.seasons, cacheKey);
 
         if (!seriesArray) {
           // Fetch first page to grab count and initial payload
@@ -335,11 +332,10 @@ export const apiRegistry = {
           // Automatically grab remaining pages in parallel to group them properly (cap at 1000 items)
           if (firstPage.count > 100) {
             const maxPages = Math.ceil(Math.min(firstPage.count, 1000) / 100);
-            const promises = [];
-            for (let i = 2; i <= maxPages; i++) {
-              promises.push(fetchMetron(`/api/issue/?creator_id=${filterId}&page=${i}&page_size=100`).catch(() => ({ results: [] })));
-            }
-            const restPages = await Promise.all(promises);
+            const pages = Array.from({ length: maxPages - 1 }, (_, index) => index + 2);
+            const restPages = await mapWithConcurrency(pages, 3, pageNumber =>
+              fetchMetron(`/api/issue/?creator_id=${filterId}&page=${pageNumber}&page_size=100`).catch(() => ({ results: [] })),
+            );
             restPages.forEach(p => allIssues.push(...(p.results || [])));
           }
 
@@ -373,8 +369,7 @@ export const apiRegistry = {
             norm.progress = norm.subtitle;
             return norm;
           });
-          enforceCacheLimit(sessionCache.seasons, 50);
-          sessionCache.seasons.set(cacheKey, seriesArray);
+          setSessionCache(sessionCache.seasons, cacheKey, seriesArray);
         }
 
         const ITEMS_PER_PAGE = 24;
@@ -403,13 +398,13 @@ export const apiRegistry = {
 
   getPersonDetails: async (personId) => {
     const cacheKey = `person_${personId}`;
-    if (sessionCache.people.has(cacheKey)) return sessionCache.people.get(cacheKey);
+    const cached = getSessionCache(sessionCache.people, cacheKey);
+    if (cached !== undefined) return cached;
 
     try {
       const result = await invokeFunction('tmdb', { path: `/person/${personId}`, query: { append_to_response: 'combined_credits,images' } });
       if (result) {
-        enforceCacheLimit(sessionCache.people, 50);
-        sessionCache.people.set(cacheKey, result);
+        setSessionCache(sessionCache.people, cacheKey, result);
       }
       return result;
     } catch (err) { reportApiError(err, 'TMDB (Person)'); return null; }
@@ -426,7 +421,7 @@ export const apiRegistry = {
 
   getIGDBCompanyDetails: async (companyId) => {
     try {
-      const data = await invokeFunction('igdb', { endpoint: 'companies', query: `fields name, description, logo.image_id, start_date; where id = ${companyId};` });
+      const data = await invokeFunction('igdb', { operation: 'companyDetails', params: { id: companyId } });
       return data?.[0] || null;
     } catch (err) { return null; }
   },
@@ -481,27 +476,8 @@ export const apiRegistry = {
 
   discoverIGDB: async (filterType, filterId, page = 1, sortOrder = 'popularity') => {
     try {
-      let sortBy = 'id desc';
-      if (sortOrder === 'rating') sortBy = 'total_rating desc';
-      else if (sortOrder === 'new') sortBy = 'first_release_date desc';
-      else if (sortOrder === 'old') sortBy = 'first_release_date asc';
-
       const limit = 24;
-      const offset = (page - 1) * limit;
-
-      let whereClause = '';
-      if (filterType === 'company') {
-        whereClause = `involved_companies.company = ${filterId}`;
-      } else if (filterType === 'genre') {
-        whereClause = `genres = ${filterId}`;
-      } else if (filterType === 'theme') {
-        whereClause = `themes = ${filterId}`;
-      }
-
-      if (sortOrder === 'new' || sortOrder === 'old') whereClause += (whereClause ? ' & ' : '') + `first_release_date != null`;
-      if (!whereClause) whereClause = 'id != null';
-
-      const data = await invokeFunction('igdb', { endpoint: 'games', query: `fields name, slug, cover.image_id, genres.id, genres.name, themes.id, themes.name, first_release_date, summary, total_rating, url; where ${whereClause}; sort ${sortBy}; limit ${limit}; offset ${offset};` });
+      const data = await invokeFunction('igdb', { operation: 'discoverGames', params: { filterType, filterId, page, sortOrder } });
       const results = (data || []).map(normalizeIGDB);
       return { results, totalPages: results.length === limit ? page + 1 : page };
     } catch (err) { reportApiError(err, 'IGDB Discover'); return { results: [], totalPages: 1 }; }
@@ -590,12 +566,12 @@ export const apiRegistry = {
 
   getTVSeason: async (tvId, seasonNumber) => {
     const cacheKey = `${tvId}_${seasonNumber}`;
-    if (sessionCache.seasons.has(cacheKey)) return sessionCache.seasons.get(cacheKey);
+    const cached = getSessionCache(sessionCache.seasons, cacheKey);
+    if (cached !== undefined) return cached;
 
     try { 
       const result = await invokeFunction('tmdb', { path: `/tv/${tvId}/season/${seasonNumber}` }); 
-      enforceCacheLimit(sessionCache.seasons, 50);
-      sessionCache.seasons.set(cacheKey, result);
+      setSessionCache(sessionCache.seasons, cacheKey, result);
       return result;
     } catch (err) { reportApiError(err, 'TMDB (Season Data)'); return { episodes: [] }; }
   },
@@ -603,7 +579,8 @@ export const apiRegistry = {
   getMediaDetails: async (id, type) => {
     const cleanId = String(id).split('_season_')[0];
     const cacheKey = `${type}_${cleanId}`;
-    if (sessionCache.details.has(cacheKey)) return sessionCache.details.get(cacheKey);
+    const cached = getSessionCache(sessionCache.details, cacheKey);
+    if (cached !== undefined) return cached;
 
     try {
       let result = null;
@@ -612,7 +589,7 @@ export const apiRegistry = {
       else if (type === 'tv') result = await invokeFunction('tmdb', { path: `/tv/${cleanId}`, query: queryParams });
       else if (type === 'games') {
         const realId = String(cleanId).replace('igdb_', '');
-        const data = await invokeFunction('igdb', { endpoint: 'games', query: `fields name, slug, cover.image_id, genres.id, genres.name, themes.id, themes.name, first_release_date, summary, storyline, total_rating, url, websites.type, websites.url, platforms.name, artworks.image_id, screenshots.image_id, videos.video_id, involved_companies.company.id, involved_companies.company.name, involved_companies.developer, involved_companies.publisher, collections.name, collections.games.name, collections.games.cover.image_id, collections.games.first_release_date, game_status; where id = ${realId};` });
+        const data = await invokeFunction('igdb', { operation: 'gameDetails', params: { id: realId } });
         result = data?.[0] || null;
         if (result && result.game_status !== undefined) result.status = getGameStatusLabel(result.game_status);
       }
@@ -681,10 +658,9 @@ export const apiRegistry = {
       }
 
       if (result) {
-        enforceCacheLimit(sessionCache.details, 100);
-        sessionCache.details.set(cacheKey, result);
+        setSessionCache(sessionCache.details, cacheKey, result, 100);
         if (type === 'comics' && typeof cleanId === 'string' && cleanId.startsWith('issue_') && result.id) {
-           sessionCache.details.set(`${type}_series_${result.id}`, result);
+           setSessionCache(sessionCache.details, `${type}_series_${result.id}`, result, 100);
         }
       }
       return result;
@@ -693,7 +669,8 @@ export const apiRegistry = {
 
   getRecommendations: async (id, type) => {
     const cacheKey = `${type}_${id}`;
-    if (sessionCache.recs.has(cacheKey)) return sessionCache.recs.get(cacheKey);
+    const cached = getSessionCache(sessionCache.recs, cacheKey);
+    if (cached !== undefined) return cached;
 
     try {
       let result = [];
@@ -701,7 +678,7 @@ export const apiRegistry = {
       else if (type === 'tv') result = (await invokeFunction('tmdb', { path: `/tv/${id}/recommendations`, query: { page: 1 } })).results.slice(0, 6).map(i => normalizeTMDB(i, 'tv'));
       else if (type === 'games') {
         const realId = String(id).replace('igdb_', '');
-        const data = await invokeFunction('igdb', { endpoint: 'games', query: `fields similar_games.name, similar_games.cover.image_id, similar_games.first_release_date, similar_games.genres.name, similar_games.slug, similar_games.summary, similar_games.total_rating, similar_games.url; where id = ${realId};` });
+        const data = await invokeFunction('igdb', { operation: 'gameRecommendations', params: { id: realId } });
         result = (data?.[0]?.similar_games || []).slice(0, 6).map(normalizeIGDB);
       }
       else if (type === 'anime' || type === 'manga') {
@@ -724,8 +701,7 @@ export const apiRegistry = {
       }
       
       if (result.length > 0) {
-        enforceCacheLimit(sessionCache.recs, 50);
-        sessionCache.recs.set(cacheKey, result);
+        setSessionCache(sessionCache.recs, cacheKey, result);
       }
       return result;
     } catch (err) { reportApiError(err, `${type.toUpperCase()} Recommendations`); return []; }
@@ -733,12 +709,12 @@ export const apiRegistry = {
 
   getComicIssueDetails: async (issueId) => {
     const cacheKey = `issue_${issueId}`;
-    if (sessionCache.comicIssueDetails.has(cacheKey)) return sessionCache.comicIssueDetails.get(cacheKey);
+    const cached = getSessionCache(sessionCache.comicIssueDetails, cacheKey);
+    if (cached !== undefined) return cached;
 
     try {
       const data = await fetchMetron(`/api/issue/${issueId}/`);
-      enforceCacheLimit(sessionCache.comicIssueDetails, 50);
-      sessionCache.comicIssueDetails.set(cacheKey, data);
+      setSessionCache(sessionCache.comicIssueDetails, cacheKey, data);
       return data;
     } catch (err) {
       reportApiError(err, 'Metron (Issue Detail)');
@@ -748,7 +724,8 @@ export const apiRegistry = {
 
   getComicSeriesIssues: async (seriesId, page = 1) => {
     const cacheKey = `series_${seriesId}_page_${page}`;
-    if (sessionCache.comicIssues.has(cacheKey)) return sessionCache.comicIssues.get(cacheKey);
+    const cached = getSessionCache(sessionCache.comicIssues, cacheKey);
+    if (cached !== undefined) return cached;
 
     try {
       const data = await fetchMetron(`/api/series/${seriesId}/issue_list/?page=${page}`);
@@ -757,8 +734,7 @@ export const apiRegistry = {
         totalCount: data.count,
         page,
       };
-      enforceCacheLimit(sessionCache.comicIssues, 50);
-      sessionCache.comicIssues.set(cacheKey, result);
+      setSessionCache(sessionCache.comicIssues, cacheKey, result);
       return result;
     } catch (err) {
       reportApiError(err, 'Metron (Series Issues)');

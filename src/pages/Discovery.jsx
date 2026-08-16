@@ -147,7 +147,7 @@ export const Discovery = () => {
           const [trending, upcoming, popular] = await Promise.all([
             fetchAniList('TRENDING_DESC'),
             fetchAniList('POPULARITY_DESC', 'NOT_YET_RELEASED', isAnime, true),
-            isAnime ? fetchAniList('POPULARITY_DESC', null, true, false) : fetchAniList('POPULARITY_DESC')
+            fetchAniList('POPULARITY_DESC')
           ]);
 
           const normalize = (items) => (items || []).map(item => ({
@@ -165,10 +165,10 @@ export const Discovery = () => {
 
           data = { trending: normalize(trending), upcoming: normalize(upcoming), popular: normalize(popular) };
         } else if (activeTab === 'games') {
-          const fetchIGDB = async (query) => {
+          const fetchIGDB = async (section) => {
             try {
               const { data, error } = await supabase.functions.invoke('igdb', { 
-                body: { endpoint: 'games', query } 
+                body: { operation: 'discoverySection', params: { section } },
               });
               if (error) throw error;
               if (data?.error || data?.message) throw new Error(data.error || data.message || JSON.stringify(data));
@@ -186,12 +186,10 @@ export const Discovery = () => {
             }
           };
 
-          const now = Math.floor(Date.now() / 1000);
-          const sixMonthsAgo = now - 15552000;
           const [trending, upcoming, popular] = await Promise.all([
-            fetchIGDB(`fields id, name, first_release_date, total_rating, rating, summary, cover.image_id, artworks.image_id; where first_release_date >= ${sixMonthsAgo} & first_release_date <= ${now} & parent_game = null & total_rating_count > 0; sort total_rating_count desc; limit 40;`),
-            fetchIGDB(`fields id, name, first_release_date, total_rating, rating, summary, cover.image_id, artworks.image_id; where first_release_date > ${now} & parent_game = null & hypes > 0; sort hypes desc; limit 40;`),
-            fetchIGDB(`fields id, name, first_release_date, total_rating, rating, summary, cover.image_id, artworks.image_id; where total_rating_count > 500 & parent_game = null; sort total_rating desc; limit 40;`)
+            fetchIGDB('trending'),
+            fetchIGDB('upcoming'),
+            fetchIGDB('popular'),
           ]);
 
           const normalize = (items) => (items || [])
@@ -265,7 +263,7 @@ export const Discovery = () => {
             valid.sort((a, b) => (b.series?.issue_count || 0) - (a.series?.issue_count || 0)); // Sort by popularity
             return valid.map(item => {
             const seriesObj = {
-              id: item.series.id,
+              id: `series_${item.series.id}`,
               name: item.series.name,
               volume: item.series.volume,
               year_began: item.series.year_began,
@@ -354,8 +352,7 @@ export const Discovery = () => {
     const isEmpty = !cached?.data?.trending || cached.data.trending.length === 0;
     const isImplemented = ['movies', 'tv', 'anime', 'manga', 'games', 'comics'].includes(tab);
     
-    const cacheTTL = 43200000; // 12 hours
-    const isStale = !cached || (Date.now() - cached.timestamp >= cacheTTL) || cached.data?._version !== 1;
+    const isStale = !cached || cached.data?._version !== 1;
     
     if (isStale || (isImplemented && isEmpty)) setIsLoading(true);
     setActiveTab(tab);
@@ -501,7 +498,7 @@ const CarouselCard = ({ item, type, rank }) => {
   if (!item) return null;
   const colors = getMediaTypeColors(type);
   const displayRating = item.apiRating || item.rating;
-  const isClickable = type !== 'comics';
+  const isClickable = Boolean(item.id);
   const Wrapper = isClickable ? Link : 'div';
   const wrapperProps = isClickable ? { to: `/media/${type}/${item.id}`, state: { previewData: item } } : {};
   

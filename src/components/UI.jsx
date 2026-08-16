@@ -1,10 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { Star, StarHalf, X, Loader2, ChevronLeft, ChevronRight, ChevronDown, Trash2, PlayCircle, CheckCircle, EyeOff, AlertCircle, Info, ExternalLink, Save, Edit3, Calendar, Plus } from 'lucide-react';
 import { useMediaStore, useUIStore } from '../store/useMediaStore';
 import { apiRegistry } from '../services/apiRegistry';
 import { extractMetronStaff } from '../utils/normalizers';
+import { formatSafeMarkup } from '../utils/safeMarkup';
+import { safeExternalUrl } from '../utils/urlSafety';
+import { dateInputFromTimestamp, timestampForCalendarDateWithCurrentTime, timestampFromDateInput, todayDateInput } from '../utils/calendarDate';
 
 // --- Restored Helpers ---
 export const formatFancyDate = (dateInput) => {
@@ -91,81 +94,7 @@ export const stripHtml = (html) => {
   }
 };
 
-export const formatMarkdownLinks = (text) => {
-  if (!text) return '';
-
-  let formatted = text;
-
-  // Markdown links: [label](https://...)
-  formatted = formatted.replace(
-    /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
-  );
-
-  // BBCode: [url=link]text[/url]
-  formatted = formatted.replace(
-    /\[url=(.*?)\](.*?)\[\/url\]/gi,
-    (match, url, label) => {
-      const cleanUrl = url.replace(/^["']|["']$/g, '');
-      const href = cleanUrl.startsWith('/')
-        ? `https://vndb.org${cleanUrl}`
-        : cleanUrl;
-
-      return `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`;
-    }
-  );
-
-  // BBCode: [url]link[/url]
-  formatted = formatted.replace(
-    /\[url\](.*?)\[\/url\]/gi,
-    (match, url) => {
-      const cleanUrl = url.replace(/^["']|["']$/g, '');
-      const href = cleanUrl.startsWith('/')
-        ? `https://vndb.org${cleanUrl}`
-        : cleanUrl;
-
-      return `<a href="${href}" target="_blank" rel="noopener noreferrer">${cleanUrl}</a>`;
-    }
-  );
-
-  // Bold: [b]text[/b]
-  formatted = formatted.replace(
-    /\[b\](.*?)\[\/b\]/gi,
-    '<strong>$1</strong>'
-  );
-
-  // Italic: [i]text[/i]
-  formatted = formatted.replace(
-    /\[i\](.*?)\[\/i\]/gi,
-    '<em>$1</em>'
-  );
-
-  // Underline: [u]text[/u]
-  formatted = formatted.replace(
-    /\[u\](.*?)\[\/u\]/gi,
-    '<u>$1</u>'
-  );
-
-  // Strikethrough: [s]text[/s]
-  formatted = formatted.replace(
-    /\[s\](.*?)\[\/s\]/gi,
-    '<s>$1</s>'
-  );
-
-  // Spoiler: [spoiler]text[/spoiler]
-  formatted = formatted.replace(
-    /\[spoiler\](.*?)\[\/spoiler\]/gi,
-    `<span class="bg-base-content/20 text-transparent hover:text-base-content transition-colors px-1 rounded cursor-help" title="Spoiler">$1</span>`
-  );
-
-  // Quote: [quote]text[/quote]
-  formatted = formatted.replace(
-    /\[quote\](.*?)\[\/quote\]/gi,
-    '<blockquote class="border-l-2 border-primary/50 pl-2 italic my-1">$1</blockquote>'
-  );
-
-  return formatted;
-};
+export const formatMarkdownLinks = formatSafeMarkup;
 
 export const getOptimizedImage = (url, w = 342) => {
   if (!url) return null;
@@ -230,7 +159,7 @@ export const GlobalDiaryModal = () => {
 
   useEffect(() => {
     if (activeDiaryModal) {
-      const { targetItem, newProgressOverride, explicitAction } = activeDiaryModal;
+      const { targetItem, newProgressOverride, explicitAction, isPreview } = activeDiaryModal;
       
       let initialStatus = targetItem?.status || ''; 
       if (explicitAction === 'SEASON FINISHED') initialStatus = 'in progress';
@@ -253,8 +182,8 @@ export const GlobalDiaryModal = () => {
         }
       }
 
-      setDateStarted(targetItem?.dateStarted ? new Date(targetItem.dateStarted).toISOString().split('T')[0] : '');
-      setDateCompleted(targetItem?.dateCompleted ? new Date(targetItem.dateCompleted).toISOString().split('T')[0] : '');
+      setDateStarted(targetItem?.dateStarted ? dateInputFromTimestamp(targetItem.dateStarted) : '');
+      setDateCompleted(targetItem?.dateCompleted ? dateInputFromTimestamp(targetItem.dateCompleted) : '');
       setReviewText('');
       setIsRewatch(false);
       setIsRatingDropdownOpen(false);
@@ -312,11 +241,11 @@ export const GlobalDiaryModal = () => {
     if (e) { e.preventDefault(); e.stopPropagation(); }
     if (!window.confirm(`Mark Season ${inputSeason} as completed and log it to your diary?`)) return;
 
-    const s = dateStarted ? new Date(dateStarted).getTime() : null;
-    const c = dateCompleted ? new Date(dateCompleted).getTime() : Date.now();
+    const s = dateStarted ? timestampFromDateInput(dateStarted) : null;
+    const c = dateCompleted ? timestampFromDateInput(dateCompleted) : Date.now();
 
     const finalProgress = `S${inputSeason.toString().padStart(2, '0')} E${maxEpisodesInSeason.toString().padStart(2, '0')}`;
-    const newStatus = (!status || status === 'planned') ? 'in progress' : status;
+    const newStatus = 'in progress';
 
     const libraryPayload = {
       ...targetItem,
@@ -329,7 +258,7 @@ export const GlobalDiaryModal = () => {
       rating: rating,
       addedAt: isPreview ? (c || Date.now()) : (targetItem?.addedAt || Date.now()),
       dateStarted: s,
-      dateCompleted: c,
+      dateCompleted: null,
       rewatchCount: targetItem?.rewatchCount || 0,
       apiData: apiData || targetItem?.apiData
     };
@@ -362,7 +291,9 @@ export const GlobalDiaryModal = () => {
   const handleStatusClick = (s) => {
     setStatus(s);
     if (s === 'completed' && !dateCompleted) {
-      setDateCompleted(new Date().toISOString().split('T')[0]);
+      setDateCompleted(todayDateInput());
+    } else if (s !== 'completed') {
+      setDateCompleted('');
     }
   };
 
@@ -372,8 +303,10 @@ export const GlobalDiaryModal = () => {
       e.stopPropagation();
     }
     if (!status) return; // Prevent saving purely blank states
-    const s = (type !== 'movies' && dateStarted) ? new Date(dateStarted).getTime() : null;
-    const c = dateCompleted ? new Date(dateCompleted).getTime() : null;
+    const s = (type !== 'movies' && dateStarted) ? timestampFromDateInput(dateStarted) : null;
+    const c = status === 'completed'
+      ? (dateCompleted ? timestampFromDateInput(dateCompleted) : Date.now())
+      : null;
     
     let r = targetItem?.rewatchCount || 0;
     if (isRewatch) r += 1;
@@ -435,9 +368,10 @@ export const GlobalDiaryModal = () => {
       const getLogDate = () => {
         const now = new Date();
         if (!dateCompleted) return now.toISOString();
-        const todayStr = now.toISOString().split('T')[0];
+        const todayStr = todayDateInput(now);
         if (dateCompleted === todayStr) return now.toISOString();
-        return `${dateCompleted}T${now.toISOString().split('T')[1]}`;
+        const timestamp = timestampForCalendarDateWithCurrentTime(dateCompleted, now);
+        return new Date(timestamp).toISOString();
       };
 
       addDiaryLog({
@@ -714,6 +648,10 @@ export const ToastContainer = () => {
 export const ImageWithFallback = ({ src, alt, className, fallbackText = "NO IMG" }) => {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
+  useEffect(() => {
+    setLoaded(false);
+    setError(false);
+  }, [src]);
   if (!src || error) {
     return (
       <div className={`flex flex-col items-center justify-center bg-base-200 text-base-content/20 w-full h-full ${className} border border-base-300`}>
@@ -1189,7 +1127,11 @@ export const GalleryAndLinks = ({ type, title, raw, apiData, isDeepFetching, thu
     if (type === 'vn') raw.extlinks?.forEach(l => { if (l.url && l.label) links.push({ name: l.label, url: l.url }); });
     if (type === 'books') { if (raw.amazon) links.push({ name: 'Amazon', url: `https://www.amazon.com/dp/${raw.amazon}` }); if (raw.goodreads) links.push({ name: 'Goodreads', url: `https://www.goodreads.com/book/show/${raw.goodreads}` }); if (raw.librarything) links.push({ name: 'LibraryThing', url: `https://www.librarything.com/work/${raw.librarything}` }); if (raw.links && Array.isArray(raw.links)) raw.links.forEach(link => links.push({ name: link.title || link.name || 'View/Buy', url: link.url })); }
     if (links.length === 0 && type !== 'books') { const action = ['movies','tv','anime'].includes(type) ? 'Watch' : ['manga','comics','books'].includes(type) ? 'Read' : 'Play / Buy'; links.push({ name: `Search Where to ${action}`, url: `https://www.google.com/search?q=where+to+${action.split(' ')[0].toLowerCase()}+${encodeURIComponent(title)}` }); }
-    return Array.from(new Map(links.map(l => [l.url, l])).values()).slice(0, 10).map((l, i) => (<a key={i} href={l.url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 bg-base-200 border border-base-300 px-3 py-1.5 text-[9px] font-mono font-bold uppercase tracking-widest text-base-content/80 hover:border-primary hover:text-primary transition-colors">{l.name} <ExternalLink className="w-3 h-3" /></a>));
+    return Array.from(new Map(links.map(l => [l.url, l])).values())
+      .map(link => ({ ...link, url: safeExternalUrl(link.url) }))
+      .filter(link => link.url)
+      .slice(0, 10)
+      .map((l, i) => (<a key={i} href={l.url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 bg-base-200 border border-base-300 px-3 py-1.5 text-[9px] font-mono font-bold uppercase tracking-widest text-base-content/80 hover:border-primary hover:text-primary transition-colors">{l.name} <ExternalLink className="w-3 h-3" /></a>));
   };
 
   return (
@@ -1422,10 +1364,17 @@ export const ComicIssuesSection = ({ seriesId, storeItem, isPreview, rawIssues, 
   const [issueDetailData, setIssueDetailData] = useState(null);
   const [loadingIssueDetail, setLoadingIssueDetail] = useState(false);
   const [showAllLocal, setShowAllLocal] = useState(false);
+  const issueRequestId = useRef(0);
 
   useEffect(() => {
-    if (rawIssues?.length) { setAllIssues(rawIssues); setCurrentPage(1); setTotalCount(totalIssuesCount || rawIssues.length); }
-  }, [rawIssues, totalIssuesCount]);
+    issueRequestId.current += 1;
+    setAllIssues(rawIssues || []);
+    setCurrentPage(1);
+    setTotalCount(totalIssuesCount || rawIssues?.length || 0);
+    setSelectedIssue(null);
+    setIssueDetailData(null);
+    setShowAllLocal(false);
+  }, [seriesId, rawIssues, totalIssuesCount]);
 
   const loadMore = async () => {
     if (loadingMore) return; setLoadingMore(true);
@@ -1441,13 +1390,19 @@ export const ComicIssuesSection = ({ seriesId, storeItem, isPreview, rawIssues, 
     const drawer = document.getElementById('main-drawer');
     if (drawer && drawer.checked) drawer.checked = false;
     
+    const requestId = ++issueRequestId.current;
     setSelectedIssue(issue); setLoadingIssueDetail(true); setIssueDetailData(null);
-    try { setIssueDetailData(await apiRegistry.getComicIssueDetails(issue.id)); } catch (e) { console.error(e); }
-    setLoadingIssueDetail(false);
+    try {
+      const details = await apiRegistry.getComicIssueDetails(issue.id);
+      if (requestId === issueRequestId.current) setIssueDetailData(details);
+    } catch (error) {
+      console.error(error);
+    }
+    if (requestId === issueRequestId.current) setLoadingIssueDetail(false);
   };
 
   if (!allIssues.length) return null;
-  const readIds = readIssueIds || [];
+  const readIds = (readIssueIds || []).map(String);
   const sortedIssues = [...allIssues].sort((a, b) => {
     const aNum = parseFloat(a.number); const bNum = parseFloat(b.number);
     const aVal = isNaN(aNum) ? 9999 : aNum; const bVal = isNaN(bNum) ? 9999 : bNum;
@@ -1458,7 +1413,7 @@ export const ComicIssuesSection = ({ seriesId, storeItem, isPreview, rawIssues, 
   const DISPLAY_LIMIT = 12;
   const displayedIssues = showAllLocal ? sortedIssues : sortedIssues.slice(0, DISPLAY_LIMIT);
 
-  const currentModalIndex = sortedIssues.findIndex(i => i.id === selectedIssue?.id);
+  const currentModalIndex = sortedIssues.findIndex(i => String(i.id) === String(selectedIssue?.id));
   const hasPrev = currentModalIndex > 0;
   const hasNext = currentModalIndex !== -1 && currentModalIndex < sortedIssues.length - 1;
 
@@ -1469,7 +1424,7 @@ export const ComicIssuesSection = ({ seriesId, storeItem, isPreview, rawIssues, 
           <div className="flex items-center justify-between"><span className="text-[10px] font-mono font-bold text-base-content/40 uppercase tracking-widest border-b border-base-300 pb-0.5 mb-1 w-full">Issues ({readIds.length}/{totalCount > 0 ? totalCount : allIssues.length} read)</span></div>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 content-start" style={{ gridAutoRows: 'min-content' }}>
             {displayedIssues.map(issue => {
-              const isRead = readIds.includes(issue.id);
+              const isRead = readIds.includes(String(issue.id));
               return (
                 <div key={issue.id} onClick={() => handleIssueClick(issue)} className="bg-base-100 border border-base-300 hover:border-primary transition-colors cursor-pointer group overflow-hidden flex flex-col">
                   <div className={`aspect-[2/3] w-full bg-base-200 overflow-hidden relative ${isRead ? 'grayscale opacity-70' : ''}`}>
@@ -1497,7 +1452,7 @@ export const ComicIssuesSection = ({ seriesId, storeItem, isPreview, rawIssues, 
       </SectionWrapper>
       <ComicIssueModal 
         isOpen={!!selectedIssue} issue={selectedIssue} details={issueDetailData} isLoading={loadingIssueDetail}
-        isRead={readIds.includes(selectedIssue?.id)} isPreview={isPreview} onToggleRead={onToggleRead} allIssues={sortedIssues}
+        isRead={readIds.includes(String(selectedIssue?.id))} isPreview={isPreview} onToggleRead={onToggleRead} allIssues={sortedIssues}
         onClose={() => { setSelectedIssue(null); setIssueDetailData(null); }}
         onNavigatePrev={() => hasPrev && handleIssueClick(sortedIssues[currentModalIndex - 1])}
         onNavigateNext={() => hasNext && handleIssueClick(sortedIssues[currentModalIndex + 1])}
