@@ -130,14 +130,14 @@ const sharedLogId = `${prefix}-owner-scoped-log`;
 const { count: aInitialCount, error: aInitialError } = await clientA
   .from('media_library').select('*', { count: 'exact', head: true });
 assert.ifError(aInitialError);
-assert.equal(aInitialCount, 705);
+assert.ok(aInitialCount >= 705, 'User A acceptance library is unexpectedly below the migrated baseline');
 const { count: bInitialCount, error: bInitialError } = await clientB
   .from('media_library').select('*', { count: 'exact', head: true });
 assert.ifError(bInitialError);
 assert.equal(bInitialCount, 0);
 const { error: anonReadError } = await anon.from('media_library').select('media_key').limit(1);
 expectError(anonReadError, 'Anonymous library read');
-pass('RLS baseline', 'User A sees 705 imported rows, User B sees none, anonymous SELECT is denied.');
+pass('RLS baseline', `User A sees ${aInitialCount} acceptance rows, User B sees none, anonymous SELECT is denied.`);
 
 for (const [client, row] of [[clientA, aFixture], [clientB, bFixture]]) {
   const { error } = await client.from('media_library').insert(row);
@@ -528,11 +528,11 @@ assert.ifError(response.error);
 
 const finalA = await clientA.from('media_library').select('*', { count: 'exact', head: true });
 assert.ifError(finalA.error);
-assert.equal(finalA.count, 705);
+assert.equal(finalA.count, aInitialCount);
 const finalB = await clientB.from('media_library').select('*', { count: 'exact', head: true });
 assert.ifError(finalB.error);
 assert.equal(finalB.count, 0);
-pass('Fixture cleanup/accounting', 'User A returned to 705 imported rows and User B returned to zero media rows.');
+pass('Fixture cleanup/accounting', `User A returned to its ${aInitialCount}-row baseline and User B returned to zero media rows.`);
 
 await Promise.all([clientA.auth.signOut(), clientB.auth.signOut()]);
 clientA.realtime.disconnect();

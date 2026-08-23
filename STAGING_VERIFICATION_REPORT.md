@@ -199,10 +199,10 @@ Provider credentials were configured as staging Edge secrets, not browser variab
 - `npm run dev:staging` and `npm run build:staging` select Vite's staging mode explicitly.
 - Development mode displays a visible **STAGING** badge.
 - The staging bundle contains the staging project reference and contains no production project reference.
-- Staging User A/User B authentication succeeded through the actual hosted client, and owner hydration returned 705/0 rows respectively.
+- Staging User A/User B authentication succeeded through the actual hosted client. The later full-fidelity acceptance refresh and browser replay returned User A 706 media/658 logs and User B 0/0.
 - Vite served `/`, Movies, TV, Diary, Discovery, Explore, and Settings routes with HTTP 200.
 
-The in-app browser controller blocked local-network navigation before page load, so no browser UI automation or credential entry was attempted. Interactive UI acceptance remains documented in `STAGING_MANUAL_TEST_CHECKLIST.md`; the server and ignored staging configuration are ready for manual use.
+The first pass's in-app browser controller could not reach localhost. After the external port conflict was resolved, the second discovery pass opened the staging app on port 5173 and performed real Guest/User A/User B browser flows. Interactive results are documented in `MANUAL_ACCEPTANCE_ISSUES.md` and `STAGING_MANUAL_TEST_CHECKLIST.md`.
 
 ## Automated validation results
 
@@ -242,3 +242,17 @@ Live Telegram delivery requires a separate test bot and was intentionally not at
 No reconciliation or canonical migration has been executed in production. No production Edge Function or frontend deployment occurred.
 
 HOSTED PRODUCTION MIGRATION HAS NOT BEEN EXECUTED.
+
+## Manual-acceptance discovery addendum — 2026-08-23
+
+The consolidated diagnosis-only acceptance audit is recorded in `MANUAL_ACCEPTANCE_ISSUES.md`. It preserves known issues K1–K5 and adds D1 (legitimate same-day diary entries can overwrite each other). The current acceptance baseline is User A 706 media / 658 logs and User B 0 / 0, with zero canonical collisions or orphan logs. This addendum records findings only; no application remediation was applied.
+
+The browser-only items remain intentionally unchecked in `STAGING_MANUAL_TEST_CHECKLIST.md`. Production remained read-only and no production deployment, migration, webhook, Auth, Realtime, secret, or data change occurred.
+
+## Second browser discovery addendum — 2026-08-23
+
+The local staging app loaded successfully on Vite port 5173 and displayed the STAGING badge after Guest/authenticated entry. The badge is absent from the pre-auth gate (D2). Browser User A → User B → User A switching restored the expected 706 → 0 → 706 owner snapshots, and recognizable User A titles rendered after hydration.
+
+Browser replay reproduced K4, K5, and D1. K4 persisted/presented `S01 E00` for a planned TV item. K5 produced duplicate full snapshot waves and a hard-refresh loading period over 20 seconds, though `57014` did not recur in this pass. D1 overwrote the first same-day movie activity when the UI created a distinct rewatch. K1/K2 did not reproduce on the fully populated Fight Club/Steal image paths. K3 did not reproduce in either required Foundation case; exactly the intended Season 3 mutation occurred and existing Season 1/2 rows stayed intact. All known issue IDs remain registered.
+
+One low-severity new issue (D3) briefly surfaced an intentional TMDB season-request `AbortError` during disposable TV deletion/navigation. A separate medium issue (D4) captured one browser snapshot rejected by PostgREST as `JWT issued at future`; raw Auth with the same staging configuration passed immediately, so the frontend session/clock path remains to be isolated. No data was lost. User B's disposable media/logs were removed; User A remained unchanged at 706 media/658 logs. No broad fix was made, no migration was run, and no production operation occurred.

@@ -112,3 +112,19 @@ Use `npm run dev:staging`. Confirm the header shows **STAGING** before entering 
 - [ ] Remove disposable staging fixtures or use the staging-only reset workflow.
 - [ ] Record any failed checkbox in `STAGING_VERIFICATION_REPORT.md` before production planning.
 - [ ] Confirm no production migration, deployment, webhook change, or data write occurred.
+
+## Discovery audit annotation — 2026-08-23
+
+The original checkboxes above are intentionally preserved. The first discovery pass produced the complete per-item matrix in `MANUAL_ACCEPTANCE_ISSUES.md`.
+
+### Second browser discovery pass
+
+The localhost conflict was resolved and 28 checklist items received actual browser coverage on Vite port 5173 against Polyhedron Staging. The current matrix is **54 PASS, 8 FAIL, 1 BLOCKED, 12 MANUAL-ONLY, and 0 NOT TESTED**.
+
+- **Reproduced:** K4 (planned TV `S01 E00`), K5 (duplicate/slow hydration), and D1 (same-day rewatch overwrites the original activity).
+- **Not reproduced on the tested paths:** K1, K2, and K3. These remain registered because the user's earlier reproductions are valid and their triggering data/path has not been isolated.
+- **New:** D2 (no STAGING badge on the pre-login gate), D3 (intentional provider abort briefly surfaced as an error), and D4 (one browser snapshot JWT rejected as issued in the future while raw Auth remained valid).
+- **Passed in browser:** all main routes rendered; User A and User B authenticated and isolated; browser A → B → A restored the correct owner state; both required Foundation Season-3 cases produced only intended diary mutations; disposable User B media/logs were removed.
+- **Still manual:** exact-title K1/K2/K3 replay, remaining type-specific add/edit/reload workflows, all-category search/explore pagination, non-empty guest transitions, UI backup/restore files, true multi-browser Realtime presentation, and one personal diary-review-clear check.
+
+No remediation was applied during either discovery pass.
