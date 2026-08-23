@@ -60,3 +60,47 @@ test('failed cloud snapshot stops loading without silently destroying auth mode'
   assert.match(source, /else set\(\{ isCloudSyncing: false, isLoading: false \}\)/);
   assert.doesNotMatch(source, /set\(\{ authMode: null, isCloudSyncing: false/);
 });
+
+test('planned TV does not persist or render an unset episode-zero sentinel', async () => {
+  const source = await readFile(new URL('../src/components/UI.jsx', import.meta.url), 'utf8');
+  // Rendering exclusion
+  assert.match(source, /prog === 'S01 E00' \|\| prog === 'S01 E0'/);
+  // Persisting exclusion
+  assert.match(source, /if \(status === 'planned' && inputSeason === 1 && inputEpisode === 0\)/);
+  assert.match(source, /finalProgress = ''/);
+});
+
+test('image representation consistently prioritizes row-level image cache over apiData', async () => {
+  const sourceUI = await readFile(new URL('../src/components/UI.jsx', import.meta.url), 'utf8');
+  assert.match(sourceUI, /const image = item\?\.image \|\| item\?\.apiData\?\.image/);
+  assert.doesNotMatch(sourceUI, /image: apiData\?\.image \|\| targetItem\?\.image/);
+
+  const sourcePages = await readFile(new URL('../src/pages/Pages.jsx', import.meta.url), 'utf8');
+  assert.match(sourcePages, /resolveMediaImage\(storeItem \|\| previewItem/);
+});
+
+test('ImageWithFallback synchronously resets state on src change to prevent stale flashes', async () => {
+  const sourceUI = await readFile(new URL('../src/components/UI.jsx', import.meta.url), 'utf8');
+  assert.match(sourceUI, /if\s*\(\s*src\s*!==\s*currentSrc\s*\)/);
+  assert.doesNotMatch(sourceUI, /useEffect\(\(\) => \{\s*setLoaded\(false\);\s*setError\(false\);\s*\}, \[src\]\);/);
+});
+
+test('staging environment indicator renders as a clear pill on the login screen', async () => {
+  const sourceGate = await readFile(new URL('../src/pages/Gate.jsx', import.meta.url), 'utf8');
+  assert.match(sourceGate, /showEnvironmentBadge &&/);
+  assert.match(sourceGate, /appEnvironment/);
+});
+
+test('edge function invocations provide a clock drift allowance for DEV environments', async () => {
+  const source = await readFile(new URL('../src/services/apiRegistry.js', import.meta.url), 'utf8');
+  assert.match(source, /import\.meta\.env\.DEV && error instanceof FunctionsHttpError && error\.context\?\.status === 401/);
+  assert.match(source, /setTimeout\(resolve, 2000\)/);
+});
+
+test('intentional aborts are silently caught and do not clutter the console', async () => {
+  const sourceApi = await readFile(new URL('../src/services/apiRegistry.js', import.meta.url), 'utf8');
+  assert.match(sourceApi, /if \(err\?\.name === 'AbortError'\) return;/);
+
+  const sourceDiscovery = await readFile(new URL('../src/pages/Discovery.jsx', import.meta.url), 'utf8');
+  assert.match(sourceDiscovery, /if \(err\?\.name !== 'AbortError'\) console\.error/);
+});

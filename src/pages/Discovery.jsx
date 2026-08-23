@@ -86,7 +86,7 @@ export const Discovery = () => {
                 let errorData;
                 try { errorData = JSON.parse(text); } catch { errorData = { error: text }; }
                 console.error("TMDB Function HTTP Error:", errorData);
-              } else {
+              } else if (err?.name !== 'AbortError') {
                 console.error("TMDB Fetch Error:", err);
               }
               return { results: [] };
@@ -148,7 +148,7 @@ export const Discovery = () => {
               if (json.errors) throw new Error(json.errors[0].message);
               return json.data?.Page?.media || [];
             } catch (err) {
-              console.error("AniList Fetch Error:", err);
+              if (err?.name !== 'AbortError') console.error("AniList Fetch Error:", err);
               return [];
             }
           };
@@ -189,7 +189,7 @@ export const Discovery = () => {
                 let errorData;
                 try { errorData = JSON.parse(text); } catch { errorData = { error: text }; }
                 console.error("[IGDB Function HTTP Error]:", errorData);
-              } else {
+              } else if (err?.name !== 'AbortError') {
                 console.error(`[IGDB Debug] CRITICAL FAILURE:`, err);
               }
               return [];
@@ -229,7 +229,7 @@ export const Discovery = () => {
                 let errorData;
                 try { errorData = JSON.parse(text); } catch { errorData = { error: text }; }
                 console.error("[Metron Function HTTP Error]:", errorData);
-              } else {
+              } else if (err?.name !== 'AbortError') {
                 console.error("[Metron Debug] CRITICAL FAILURE:", err);
               }
               return [];
@@ -306,7 +306,7 @@ export const Discovery = () => {
         
         if (isMounted) setDiscoveryCache(activeTab, { ...data, _version: 1 });
       } catch (err) {
-        console.error('Discovery fetch error:', err);
+        if (err?.name !== 'AbortError') console.error('Discovery fetch error:', err);
       } finally {
         if (isMounted) setIsLoading(false);
       }
@@ -352,7 +352,7 @@ export const Discovery = () => {
 
         setDiscoveryCache(activeTab, { ...currentCache.data, [categoryKey]: [...currentCache.data[categoryKey], ...uniqueNewItems], _version: 1 });
       }
-    } catch (err) { console.error("TMDB Load More Error:", err); }
+    } catch (err) { if (err?.name !== 'AbortError') console.error("TMDB Load More Error:", err); }
   };
 
   const currentData = discoveryCache?.[activeTab]?.data || { trending: [], upcoming: [], popular: [] };

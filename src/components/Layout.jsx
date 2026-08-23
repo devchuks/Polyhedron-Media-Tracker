@@ -7,8 +7,8 @@ import { useMediaStore } from '../store/useMediaStore';
 import { Gate } from '../pages/Gate';
 import { supabase } from '../services/supabase';
 
-const appEnvironment = String(import.meta.env.VITE_APP_ENVIRONMENT || '').toUpperCase();
-const showEnvironmentBadge = import.meta.env.DEV && appEnvironment && appEnvironment !== 'PRODUCTION';
+export const appEnvironment = String(import.meta.env.VITE_APP_ENVIRONMENT || '').toUpperCase();
+export const showEnvironmentBadge = import.meta.env.DEV && appEnvironment && appEnvironment !== 'PRODUCTION';
 
 export const THEMES = [
   'light', 'dark', 'cupcake', 'bumblebee', 'emerald', 'corporate', 'synthwave', 'retro',

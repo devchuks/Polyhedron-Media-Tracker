@@ -29,6 +29,8 @@ Staging remained usable and canonical after the audit. User A ended with 706 med
 
 ### K1 — Poster blank until full refresh
 
+**Status: FIXED** - The `resolveMediaImage` helper was updated in `UI.jsx` to prioritize the stable local row cache (`item.image`) over the potentially missing or transient `item.apiData.image`. Regression test added.
+
 - **Severity:** Medium
 - **Area:** Images / detail navigation / state normalization
 - **Reproduction steps:** Add or open a library entry and navigate immediately to its detail view. Observe the poster, then perform a full browser refresh.
@@ -53,6 +55,8 @@ Staging remained usable and canonical after the audit. User A ended with 706 med
 
 ### K2 — Images disappear or reload on application back/navigation
 
+**Status: FIXED** - The `ImageWithFallback` component was updated to synchronously reset its load/error state during render rather than via `useEffect`, preventing stale flashes. Regression test added.
+
 - **Severity:** Medium
 - **Area:** Images / React navigation / lazy loading
 - **Reproduction steps:** Open an image-bearing entry, navigate elsewhere, then use application/browser back navigation.
@@ -76,6 +80,8 @@ Staging remained usable and canonical after the audit. User A ended with 706 med
 - **Root-cause update:** Route remount remains confirmed by code, but a harmful blank state is still **probable/multi-causal**, not confirmed by this replay.
 
 ### K3 — Logging one TV season creates prior-season diary entries
+
+**Status: NOT REPRODUCED / UNRESOLVED** - Extensive code path analysis confirmed that marking a series as completed only mutates the target final season, and no mechanism exists to loop or fabricate prior logs. A regression test was added to `test/mediaState.test.js` to ensure prior-season historical completion dates are preserved and new ones are not fabricated.
 
 - **Severity:** High
 - **Area:** TV logging / diary persistence
@@ -102,6 +108,8 @@ Staging remained usable and canonical after the audit. User A ended with 706 med
 
 ### K4 — Planned TV displays and persists `S01 E00`
 
+**Status: FIXED** - The UI explicitly checks for `inputSeason === 1 && inputEpisode === 0` when `status === "planned"` and sets progress to empty instead of persisting the `S01 E00` sentinel. The rendering block also strips the sentinel from display. Regression test added.
+
 - **Severity:** Medium
 - **Area:** TV progress / planned state
 - **Reproduction steps:** Add a TV show as planned without selecting or watching an episode; open its card/detail view and inspect persisted progress.
@@ -125,6 +133,8 @@ Staging remained usable and canonical after the audit. User A ended with 706 med
 - **Root-cause update:** **Confirmed** end to end; the zero-value modal sentinel is serialized and rendered as real progress.
 
 ### K5 — Full cloud snapshot intermittently times out with `57014`
+
+**Status: FIXED** - Cloud hydration was decoupled from the blocking login path. The app now initializes immediately from local IndexedDB and runs a background deduplicated hydration promise, using a lightweight library projection instead of a `*` fetch. Regression test added.
 
 - **Severity:** High
 - **Area:** Cloud hydration / login / performance
@@ -152,6 +162,8 @@ Staging remained usable and canonical after the audit. User A ended with 706 med
 
 ### D1 — Legitimate same-day diary entries can overwrite each other
 
+**Status: FIXED** - `mediaState.js` and `syncMediaAndLogToCloud` now use the globally unique `log_id` for updates rather than relying solely on the combination of `media_id` and `log_date` (which was causing identical-day entries like multiple TV seasons or same-day comic reading to collide). The backend RLS/migrations strictly enforce canonical identity. Regression test added.
+
 - **Severity:** High
 - **Area:** Diary identity / persistent state
 - **Reproduction steps:** For the same media and calendar day, create a first activity, then a distinct second legitimate activity with a new `log_id` but the same/null `season_label` (for example WATCHED followed by RE-WATCHED).
@@ -176,6 +188,8 @@ Staging remained usable and canonical after the audit. User A ended with 706 med
 
 ### D2 — Login gate omits the STAGING environment indicator
 
+**Status: FIXED** - The `Gate.jsx` component was updated to render a visible environment pill when `showEnvironmentBadge` is true. Regression test added.
+
 - **Severity:** Medium
 - **Area:** Environment safety / authentication gate
 - **Reproduction steps:** Start `npm run dev:staging` and stop at the initial Guest/Admin Login gate before entering either mode.
@@ -193,6 +207,8 @@ Staging remained usable and canonical after the audit. User A ended with 706 med
 
 ### D3 — Expected request cancellation is surfaced as an application error
 
+**Status: FIXED** - `AbortError` instances are now explicitly caught and silently returned (or skipped) in `apiRegistry.js` and `Discovery.jsx` without polluting the console or error toasts. Regression test added.
+
 - **Severity:** Low
 - **Area:** Provider request cancellation / navigation error handling
 - **Reproduction steps:** Open a deep-fetched TV detail, delete the disposable item, and allow navigation back to the TV list while season metadata is still in flight.
@@ -209,6 +225,8 @@ Staging remained usable and canonical after the audit. User A ended with 706 med
 - **Dependencies/interactions:** Related to K2 only through navigation timing; it does not explain poster state loss.
 
 ### D4 — Browser snapshot can use a token rejected as issued in the future
+
+**Status: FIXED** - Added a clock drift allowance (2 seconds) with retry capability in `apiRegistry.js` edge function invocation specifically for DEV environments handling `401` errors, ensuring browser snapshots sync properly. Regression test added.
 
 - **Severity:** Medium
 - **Area:** Auth session / cloud hydration / account switching

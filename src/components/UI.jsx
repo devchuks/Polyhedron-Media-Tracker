@@ -59,7 +59,7 @@ export const getMediaTypeColors = (type) => {
 };
 
 export const formatProgressLabel = (prog, type) => {
-  if (!prog || prog === 'Not Started' || prog === 'COMPLETED') return null;
+  if (!prog || prog === 'Not Started' || prog === 'COMPLETED' || prog === 'S01 E00' || prog === 'S01 E0') return null;
   const strProg = String(prog); // Defensively cast to string in case a raw number was saved
   if (strProg.includes('S') && strProg.includes('E')) return strProg; 
   const num = parseInt(strProg);
@@ -111,7 +111,7 @@ export const getOptimizedImage = (url, w = 342) => {
 
 export const resolveMediaImage = (item, type, size = 'md') => {
   const raw = item?.apiData?.raw || item?.raw || item || {};
-  const image = item?.apiData?.image || item?.image || null;
+  const image = item?.image || item?.apiData?.image || null;
 
   if (type === 'movies' || type === 'tv') {
     if (size === 'banner' && raw.backdrop_path) return `https://image.tmdb.org/t/p/w1280${raw.backdrop_path}`;
@@ -271,7 +271,7 @@ export const GlobalDiaryModal = () => {
       action_type: 'WATCHED',
       log_date: new Date(c).toISOString(),
       review_text: '',
-      image: apiData?.image || targetItem?.image,
+      image: targetItem?.image || apiData?.image,
       season_label: `Season ${inputSeason}`,
       season_year: isolatedSeasonYear
     };
@@ -325,7 +325,11 @@ export const GlobalDiaryModal = () => {
         targetLogSeason = lastS;
         finalProgress = `S${lastS.toString().padStart(2, '0')} E${(logSeasonObj?.episode_count || 1).toString().padStart(2, '0')}`;
       } else {
-        finalProgress = `S${inputSeason.toString().padStart(2, '0')} E${inputEpisode.toString().padStart(2, '0')}`;
+        if (status === 'planned' && inputSeason === 1 && inputEpisode === 0) {
+          finalProgress = '';
+        } else {
+          finalProgress = `S${inputSeason.toString().padStart(2, '0')} E${inputEpisode.toString().padStart(2, '0')}`;
+        }
         isManualSeasonFinale = inputEpisode > 0 && inputEpisode === maxEpisodesInSeason;
       }
       if (!logSeasonObj && (status === 'completed' || explicitAction === 'SEASON FINISHED' || (isManualSeasonFinale && finalProgress !== targetItem?.progress) || reviewText.trim() !== '')) {
@@ -381,7 +385,7 @@ export const GlobalDiaryModal = () => {
         action_type: finalActionType,
         log_date: getLogDate(),
         review_text: reviewText.trim(), // Empty string is fine, UI ignores it
-        image: apiData?.image || targetItem?.image,
+        image: targetItem?.image || apiData?.image,
         season_label: finalSeasonLabel,
         season_year: isolatedSeasonYear
       };
@@ -416,7 +420,7 @@ export const GlobalDiaryModal = () => {
   };
 
   const title = titleToSave || targetItem?.title || 'Unknown Title';
-  const displayImage = apiData?.image || targetItem?.image;
+  const displayImage = targetItem?.image || apiData?.image;
   const showReviewSection = status !== 'planned' && status !== '';
 
   return createPortal(
@@ -655,12 +659,15 @@ export const ToastContainer = () => {
 };
 
 export const ImageWithFallback = ({ src, alt, className, fallbackText = "NO IMG" }) => {
+  const [currentSrc, setCurrentSrc] = useState(src);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
-  useEffect(() => {
+
+  if (src !== currentSrc) {
+    setCurrentSrc(src);
     setLoaded(false);
     setError(false);
-  }, [src]);
+  }
   if (!src || error) {
     return (
       <div className={`flex flex-col items-center justify-center bg-base-200 text-base-content/20 w-full h-full ${className} border border-base-300`}>

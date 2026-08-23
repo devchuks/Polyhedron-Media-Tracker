@@ -514,9 +514,9 @@ export const DetailView = () => {
   const apiData = storeItem ? storeItem.apiData : previewItem;
   const raw = apiData?.raw || {};
 
-  const originalPosterUrl = resolveMediaImage(apiData, type, 'original');
-  const bannerSrc = resolveMediaImage(apiData, type, 'banner');
-  const posterImage = resolveMediaImage(apiData, type, 'lg');
+  const originalPosterUrl = resolveMediaImage(storeItem || previewItem, type, 'original');
+  const bannerSrc = resolveMediaImage(storeItem || previewItem, type, 'banner');
+  const posterImage = resolveMediaImage(storeItem || previewItem, type, 'lg');
 
   const mediaAssets = (() => {
     if (type === 'comics') return { thumbnails: [], originals: [] };

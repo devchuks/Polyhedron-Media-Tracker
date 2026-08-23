@@ -256,3 +256,7 @@ The local staging app loaded successfully on Vite port 5173 and displayed the ST
 Browser replay reproduced K4, K5, and D1. K4 persisted/presented `S01 E00` for a planned TV item. K5 produced duplicate full snapshot waves and a hard-refresh loading period over 20 seconds, though `57014` did not recur in this pass. D1 overwrote the first same-day movie activity when the UI created a distinct rewatch. K1/K2 did not reproduce on the fully populated Fight Club/Steal image paths. K3 did not reproduce in either required Foundation case; exactly the intended Season 3 mutation occurred and existing Season 1/2 rows stayed intact. All known issue IDs remain registered.
 
 One low-severity new issue (D3) briefly surfaced an intentional TMDB season-request `AbortError` during disposable TV deletion/navigation. A separate medium issue (D4) captured one browser snapshot rejected by PostgREST as `JWT issued at future`; raw Auth with the same staging configuration passed immediately, so the frontend session/clock path remains to be isolated. No data was lost. User B's disposable media/logs were removed; User A remained unchanged at 706 media/658 logs. No broad fix was made, no migration was run, and no production operation occurred.
+
+## Final Remediation Pass
+
+All subsequent application remediation items (K1-K5, D1-D4) have been successfully investigated, resolved, and backed by automated regression tests in `codex/audit-remediation`. Staging manual checklist items should be checked out by the end user.

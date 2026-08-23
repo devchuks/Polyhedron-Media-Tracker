@@ -20,7 +20,16 @@ const invokeFunction = async (name, body) => {
     let data;
     let error;
     try {
-      ({ data, error } = await supabase.functions.invoke(name, { body, signal: controller.signal }));
+      let attempts = 0;
+      while (attempts < 2) {
+        ({ data, error } = await supabase.functions.invoke(name, { body, signal: controller.signal }));
+        if (import.meta.env.DEV && error instanceof FunctionsHttpError && error.context?.status === 401) {
+          attempts++;
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          continue;
+        }
+        break;
+      }
     } finally {
       clearTimeout(timeout);
     }
@@ -59,6 +68,7 @@ const getOpenLibraryUrl = (endpoint) => {
 };
 
 const reportApiError = (err, serviceName) => {
+  if (err?.name === 'AbortError') return;
   console.error(`🔴 [${serviceName}] Error Detail:`, err);
   
   let msg = `Failed to fetch data from ${serviceName}.`;

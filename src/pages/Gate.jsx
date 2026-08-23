@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { User, LogIn, ArrowLeft, ShieldAlert, Loader2, Eye, EyeOff, Palette } from 'lucide-react';
 import { useMediaStore } from '../store/useMediaStore';
 import { supabase } from '../services/supabase';
-import { THEMES } from '../components/Layout';
+import { THEMES, appEnvironment, showEnvironmentBadge } from '../components/Layout';
 
 const PolyhedronLogo = () => (
   <div className="w-16 h-16 mb-4 relative z-10 flex items-center justify-center text-primary-content">
@@ -89,7 +89,14 @@ export const Gate = () => {
         {!showLoginForm && (
           <div className="p-8 sm:p-10 bg-primary text-primary-content flex flex-col items-center text-center relative overflow-hidden">
             <PolyhedronLogo />
-            <h1 className="text-3xl font-black uppercase tracking-widest mb-2 relative z-10 flex items-center gap-2">Polyhedron<span className="w-3 h-5 bg-primary-content animate-pulse"></span></h1>
+            <h1 className="text-3xl font-black uppercase tracking-widest mb-2 relative z-10 flex flex-col items-center gap-2">
+              <div className="flex items-center gap-2">Polyhedron<span className="w-3 h-5 bg-primary-content animate-pulse"></span></div>
+              {showEnvironmentBadge && (
+                <span className="mt-1 border border-warning bg-warning/10 px-2 py-1 font-mono text-[9px] font-bold tracking-widest text-warning shadow-sm">
+                  {appEnvironment}
+                </span>
+              )}
+            </h1>
             <p className="text-xs font-mono uppercase tracking-widest opacity-90 relative z-10 leading-relaxed">
 Unified media tracker. Log and keep track of movies, TV shows, games, anime, manga, visual novels, books and comics *catches breath* all_in_one_place.
             </p>
