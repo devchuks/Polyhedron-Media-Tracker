@@ -4,6 +4,7 @@ export const fetchPaginatedRows = async (fetchPage, {
   maxAttempts = 3,
   getRowKey = row => JSON.stringify(row),
   getRowRevision = row => row?.updated_at ?? row?.deleted_at ?? '',
+  validateRows = null,
 } = {}) => {
   let previousFingerprint = null;
   let lastValidationError = null;
@@ -12,20 +13,8 @@ export const fetchPaginatedRows = async (fetchPage, {
     const rows = [];
     let expectedCount = null;
     for (let offset = 0; offset < maxRows; offset += pageSize) {
-      let result = null;
-      let pageError = null;
-      for (let pageAttempt = 0; pageAttempt < maxAttempts; pageAttempt++) {
-        const res = await fetchPage(offset, offset + pageSize - 1, offset === 0);
-        if (res?.error) {
-          pageError = res.error;
-          await new Promise(r => setTimeout(r, 1000 * (pageAttempt + 1))); // backoff
-        } else {
-          result = res;
-          pageError = null;
-          break;
-        }
-      }
-      if (pageError) throw pageError;
+      const result = await fetchPage(offset, offset + pageSize - 1, offset === 0);
+      if (result?.error) throw result.error;
       const page = Array.isArray(result?.data) ? result.data : [];
       if (offset === 0 && Number.isInteger(result?.count)) expectedCount = result.count;
       rows.push(...page);
@@ -46,6 +35,12 @@ export const fetchPaginatedRows = async (fetchPage, {
       continue;
     }
     if (rows.length <= pageSize) return rows;
+
+    if (validateRows) {
+      if (await validateRows(rows)) return rows;
+      lastValidationError = new Error('Cloud snapshot changed during pagination; retry synchronization');
+      continue;
+    }
 
     const fingerprint = keys.map((key, index) => `${key}:${String(getRowRevision(rows[index]))}`).join('\u0000');
     if (fingerprint === previousFingerprint) return rows;

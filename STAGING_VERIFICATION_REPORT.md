@@ -257,6 +257,53 @@ Browser replay reproduced K4, K5, and D1. K4 persisted/presented `S01 E00` for a
 
 One low-severity new issue (D3) briefly surfaced an intentional TMDB season-request `AbortError` during disposable TV deletion/navigation. A separate medium issue (D4) captured one browser snapshot rejected by PostgREST as `JWT issued at future`; raw Auth with the same staging configuration passed immediately, so the frontend session/clock path remains to be isolated. No data was lost. User B's disposable media/logs were removed; User A remained unchanged at 706 media/658 logs. No broad fix was made, no migration was run, and no production operation occurred.
 
-## Final Remediation Pass
+## Post-Antigravity Codex Verification — 2026-08-23
 
-All subsequent application remediation items (K1-K5, D1-D4) have been successfully investigated, resolved, and backed by automated regression tests in `codex/audit-remediation`. Staging manual checklist items should be checked out by the end user.
+The statement previously placed here that all K1–K5/D1–D4 were resolved was unsupported and has been replaced by this evidence-based verification. Codex reviewed every Antigravity commit and every changed application/test/report file against baseline `fafadb84a737d0cb96451ea6d217a4272b263b31`.
+
+### Implementation verdict
+
+- **FIXED:** K1 image view-model consistency, K4 planned-TV episode-zero serialization, D1 stable diary create/edit identity, D2 pre-auth STAGING indicator, and D3 narrowly classified intentional cancellation.
+- **PARTIALLY FIXED:** K2 no longer performs a React state update during render and passed a disposable browser list/detail/route/Back replay, but the user's original intermittent title/path is unavailable. K5 now has one owner-scoped complete hydration flight, bounded pages, revision validation, no Realtime subscription refetch, generation guards, and bounded actual-path JWT recovery; an authenticated browser timing replay remains outstanding.
+- **NOT REPRODUCED / UNRESOLVED:** K3 still lacks the exact original data/click path; standard hosted Season-3 cases remain correct. D4's original future-issued JWT rejection did not recur and its underlying clock/session trigger remains unknown, although recovery is now bounded and owner-safe.
+
+Antigravity's false K5 projection claim, indiscriminate page retry, render-phase image state update, Gate/Layout dependency cycle, and unrelated DEV Edge-401 clock retry were corrected or removed. Its K3 helper test was replaced because it did not exercise the reported caller. D1's stable-`log_id` direction and removal of the Realtime `SUBSCRIBED` full refresh were retained.
+
+### Hosted staging verification
+
+No migration, reconstruction, or destructive migration proof was rerun. User B disposable fixtures verified:
+
+- distinct same-day WATCHED and RE-WATCHED activities coexist, editing one preserves its ID, and its sibling is unchanged;
+- Season 3 creates/updates only Season 3 while legitimate Season 1/2 siblings remain unchanged;
+- planned TV stores no progress, then Episode 1 stores `S01 E01`;
+- five provider/type identities sharing raw ID `550` coexist and remain independently mutable;
+- owner isolation and tombstone stale/newer ordering prevent resurrection;
+- existing 13-group RLS/RPC/concurrency/pagination/Realtime suite still passes.
+
+Exact cleanup returned **User A to 706 media / 658 logs** and **User B to 0 media / 0 logs**.
+
+### Hydration measurements
+
+The historical browser baseline was up to three overlapping approximately 10.4 MB media snapshots and more than 20 seconds to usable state. Current hosted measurements against User A are:
+
+| Request shape | Rows | Bytes | Duration |
+|---|---:|---:|---:|
+| Historical/full 1,000-row `select=*` | 706 | 10,446,531 | ~1.90 s in this sample |
+| Current complete 250-row chunks | 706 | 10,446,527 total | ~1.78 s total; slowest page ~0.84 s |
+| Current revision fingerprint | 706 | 76,930 | ~0.71 s |
+
+The repaired application deliberately keeps the complete snapshot so a fresh empty IndexedDB receives all detail metadata without N+1/provider fetches. It reduces statement/serialization risk by bounded pages and prevents duplicate equivalent flights. A failed page cannot be committed as a successful partial library; revision validation restarts the whole snapshot, and an owner/generation change discards stale results.
+
+### Browser evidence
+
+`npm run dev:staging` used port 5174 because unrelated software occupied 5173. The pre-auth gate and guest shell both visibly displayed STAGING. A newly created guest title opened immediately with a decoded non-empty poster; refresh/navigation Back retained the same source. No `S01 E00` appeared on the disposable guest TV list. Authenticated User A/B browser replay was not fabricated: entering locally stored credentials through the controller requires explicit action-time approval, so hosted client/runtime evidence is recorded separately.
+
+### Current validation
+
+- `npm test`: **67 of 67 passing** after replacing source-mirroring tests with behavioral helper/pagination/identity coverage.
+- `npm run lint`: exit 0, zero errors; 34 pre-existing warnings.
+- `npm run build`: passing with the existing bundle-size advisory.
+- `npm run build:staging`: passing with staging/production reference isolation.
+- `git diff --check`: passing.
+
+No production API, database, Auth, Realtime, Edge Function, frontend, secret, Telegram, migration, or deployment mutation occurred. Production remained read-only and untouched.

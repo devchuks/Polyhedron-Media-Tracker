@@ -31,76 +31,70 @@ test('Telegram provider failures remain retryable while genuine empty results ca
   assert.match(source, /One or more items remain retryable'[\s\S]*status: 500/);
 });
 
-test('duplicate cloud hydration requests are deduplicated by promise', async () => {
-  const source = await readFile(new URL('../src/store/useMediaStore.js', import.meta.url), 'utf8');
-  assert.match(source, /_hydrationPromise/);
-  assert.match(source, /if\s*\(\s*get\(\)\._hydrationPromise\s*&&\s*get\(\)\._hydrationGen\s*===\s*expectedGeneration/);
-  assert.match(source, /set\(\{ _hydrationPromise: promise/);
-});
-
 test('realtime initial subscription avoids redundant hydration fetches', async () => {
   const source = await readFile(new URL('../src/store/useMediaStore.js', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /status === 'SUBSCRIBED'\) void get\(\)\.fetchCloudData/);
 });
 
-test('cloud hydration uses a lightweight initial projection for library data', async () => {
+test('cloud hydration retains complete rows, chunks large responses, and validates revisions', async () => {
   const source = await readFile(new URL('../src/store/useMediaStore.js', import.meta.url), 'utf8');
-  assert.match(source, /libraryColumns = 'library_row_id, id, user_id, provider/);
-  assert.doesNotMatch(source, /libraryColumns = '\*'/);
+  assert.match(source, /fetchCloudTable\('media_library'[\s\S]*pageSize: 250/);
+  assert.match(source, /select\(selectColumns/);
+  assert.match(source, /validateRows: async rows/);
+  assert.match(source, /columns = '\*'/);
 });
 
-test('auth state transitions immediately without waiting for a slow cloud snapshot', async () => {
+test('auth transitions use cached owner data without blocking and avoid callback re-entry', async () => {
   const source = await readFile(new URL('../src/store/useMediaStore.js', import.meta.url), 'utf8');
+  assert.match(source, /canUseCachedSnapshot/);
+  assert.match(source, /isLoading: !canUseCachedSnapshot/);
   assert.match(source, /get\(\)\.fetchCloudData\(data\.user, generation\)\.then\(/);
-  assert.doesNotMatch(source, /const synced = await get\(\)\.fetchCloudData/);
+  assert.match(source, /setTimeout\(\(\) => \{[\s\S]*setAuthMode\('admin', session\.user\)/);
+  assert.match(source, /listenerGeneration !== authGeneration\) return/);
 });
 
-test('failed cloud snapshot stops loading without silently destroying auth mode', async () => {
+test('failed cloud snapshot is bounded and does not silently destroy owner state', async () => {
   const source = await readFile(new URL('../src/store/useMediaStore.js', import.meta.url), 'utf8');
-  assert.match(source, /else set\(\{ isCloudSyncing: false, isLoading: false \}\)/);
+  assert.match(source, /retryAfterJwtRefresh\([\s\S]*refreshSession/);
+  assert.match(source, /finally \{[\s\S]*isCloudSyncing: false, isLoading: false/);
   assert.doesNotMatch(source, /set\(\{ authMode: null, isCloudSyncing: false/);
 });
 
-test('planned TV does not persist or render an unset episode-zero sentinel', async () => {
+test('TV modal uses the tested progress serializer instead of persisting episode zero', async () => {
   const source = await readFile(new URL('../src/components/UI.jsx', import.meta.url), 'utf8');
-  // Rendering exclusion
-  assert.match(source, /prog === 'S01 E00' \|\| prog === 'S01 E0'/);
-  // Persisting exclusion
-  assert.match(source, /if \(status === 'planned' && inputSeason === 1 && inputEpisode === 0\)/);
-  assert.match(source, /finalProgress = ''/);
+  assert.match(source, /finalProgress = serializeTvProgress\(status, inputSeason, inputEpisode\)/);
+  assert.match(source, /\^S\\d\+\\s\*E0\+\$/);
 });
 
-test('image representation consistently prioritizes row-level image cache over apiData', async () => {
+test('detail view resolves images from the complete stored row', async () => {
   const sourceUI = await readFile(new URL('../src/components/UI.jsx', import.meta.url), 'utf8');
-  assert.match(sourceUI, /const image = item\?\.image \|\| item\?\.apiData\?\.image/);
+  assert.match(sourceUI, /const image = preferredMediaImage\(item\)/);
   assert.doesNotMatch(sourceUI, /image: apiData\?\.image \|\| targetItem\?\.image/);
 
   const sourcePages = await readFile(new URL('../src/pages/Pages.jsx', import.meta.url), 'utf8');
   assert.match(sourcePages, /resolveMediaImage\(storeItem \|\| previewItem/);
 });
 
-test('ImageWithFallback synchronously resets state on src change to prevent stale flashes', async () => {
+test('ImageWithFallback tracks load and failure by source without render-phase state updates', async () => {
   const sourceUI = await readFile(new URL('../src/components/UI.jsx', import.meta.url), 'utf8');
-  assert.match(sourceUI, /if\s*\(\s*src\s*!==\s*currentSrc\s*\)/);
-  assert.doesNotMatch(sourceUI, /useEffect\(\(\) => \{\s*setLoaded\(false\);\s*setError\(false\);\s*\}, \[src\]\);/);
+  assert.match(sourceUI, /loadedSrc === src/);
+  assert.match(sourceUI, /failedSrc === src/);
+  assert.doesNotMatch(sourceUI, /if\s*\(\s*src\s*!==[\s\S]*setCurrentSrc/);
 });
 
-test('staging environment indicator renders as a clear pill on the login screen', async () => {
+test('login screen uses the shared environment policy without a Layout import cycle', async () => {
   const sourceGate = await readFile(new URL('../src/pages/Gate.jsx', import.meta.url), 'utf8');
   assert.match(sourceGate, /showEnvironmentBadge &&/);
-  assert.match(sourceGate, /appEnvironment/);
+  assert.match(sourceGate, /from '\.\.\/config\/environment'/);
+  assert.doesNotMatch(sourceGate, /appEnvironment.*from '\.\.\/components\/Layout'/);
 });
 
-test('edge function invocations provide a clock drift allowance for DEV environments', async () => {
-  const source = await readFile(new URL('../src/services/apiRegistry.js', import.meta.url), 'utf8');
-  assert.match(source, /import\.meta\.env\.DEV && error instanceof FunctionsHttpError && error\.context\?\.status === 401/);
-  assert.match(source, /setTimeout\(resolve, 2000\)/);
-});
-
-test('intentional aborts are silently caught and do not clutter the console', async () => {
+test('intentional abort handling is wired narrowly and ordinary errors still reach reporting', async () => {
   const sourceApi = await readFile(new URL('../src/services/apiRegistry.js', import.meta.url), 'utf8');
-  assert.match(sourceApi, /if \(err\?\.name === 'AbortError'\) return;/);
+  assert.match(sourceApi, /if \(isIntentionalAbort\(err\)\) return;/);
+  assert.match(sourceApi, /console\.error\(`🔴 \[\$\{serviceName\}\] Error Detail:/);
+  assert.doesNotMatch(sourceApi, /error\.context\?\.status === 401[\s\S]*setTimeout\(resolve, 2000\)/);
 
   const sourceDiscovery = await readFile(new URL('../src/pages/Discovery.jsx', import.meta.url), 'utf8');
-  assert.match(sourceDiscovery, /if \(err\?\.name !== 'AbortError'\) console\.error/);
+  assert.match(sourceDiscovery, /if \(!isIntentionalAbort\(err\)\) console\.error/);
 });

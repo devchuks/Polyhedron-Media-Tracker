@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { User, LogIn, ArrowLeft, ShieldAlert, Loader2, Eye, EyeOff, Palette } from 'lucide-react';
 import { useMediaStore } from '../store/useMediaStore';
 import { supabase } from '../services/supabase';
-import { THEMES, appEnvironment, showEnvironmentBadge } from '../components/Layout';
+import { THEMES } from '../components/Layout';
+import { appEnvironment, showEnvironmentBadge } from '../config/environment';
 
 const PolyhedronLogo = () => (
   <div className="w-16 h-16 mb-4 relative z-10 flex items-center justify-center text-primary-content">
@@ -56,7 +57,7 @@ export const Gate = () => {
         setError(true);
         setIsLoading(false);
       } else if (data.user) {
-        const ready = await setAuthMode('admin');
+        const ready = await setAuthMode('admin', data.user);
         if (!ready) setError(true);
         setIsLoading(false);
       }

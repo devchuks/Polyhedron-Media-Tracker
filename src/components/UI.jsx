@@ -8,6 +8,7 @@ import { extractMetronStaff } from '../utils/normalizers';
 import { formatSafeMarkup } from '../utils/safeMarkup';
 import { safeExternalUrl } from '../utils/urlSafety';
 import { dateInputFromTimestamp, timestampForCalendarDateWithCurrentTime, timestampFromDateInput, todayDateInput } from '../utils/calendarDate';
+import { preferredMediaImage, serializeTvProgress } from '../domain/mediaState';
 
 // --- Restored Helpers ---
 export const formatFancyDate = (dateInput) => {
@@ -59,7 +60,7 @@ export const getMediaTypeColors = (type) => {
 };
 
 export const formatProgressLabel = (prog, type) => {
-  if (!prog || prog === 'Not Started' || prog === 'COMPLETED' || prog === 'S01 E00' || prog === 'S01 E0') return null;
+  if (!prog || prog === 'Not Started' || prog === 'COMPLETED' || /^S\d+\s*E0+$/iu.test(String(prog).trim())) return null;
   const strProg = String(prog); // Defensively cast to string in case a raw number was saved
   if (strProg.includes('S') && strProg.includes('E')) return strProg; 
   const num = parseInt(strProg);
@@ -111,7 +112,7 @@ export const getOptimizedImage = (url, w = 342) => {
 
 export const resolveMediaImage = (item, type, size = 'md') => {
   const raw = item?.apiData?.raw || item?.raw || item || {};
-  const image = item?.image || item?.apiData?.image || null;
+  const image = preferredMediaImage(item);
 
   if (type === 'movies' || type === 'tv') {
     if (size === 'banner' && raw.backdrop_path) return `https://image.tmdb.org/t/p/w1280${raw.backdrop_path}`;
@@ -325,11 +326,7 @@ export const GlobalDiaryModal = () => {
         targetLogSeason = lastS;
         finalProgress = `S${lastS.toString().padStart(2, '0')} E${(logSeasonObj?.episode_count || 1).toString().padStart(2, '0')}`;
       } else {
-        if (status === 'planned' && inputSeason === 1 && inputEpisode === 0) {
-          finalProgress = '';
-        } else {
-          finalProgress = `S${inputSeason.toString().padStart(2, '0')} E${inputEpisode.toString().padStart(2, '0')}`;
-        }
+        finalProgress = serializeTvProgress(status, inputSeason, inputEpisode);
         isManualSeasonFinale = inputEpisode > 0 && inputEpisode === maxEpisodesInSeason;
       }
       if (!logSeasonObj && (status === 'completed' || explicitAction === 'SEASON FINISHED' || (isManualSeasonFinale && finalProgress !== targetItem?.progress) || reviewText.trim() !== '')) {
@@ -659,15 +656,10 @@ export const ToastContainer = () => {
 };
 
 export const ImageWithFallback = ({ src, alt, className, fallbackText = "NO IMG" }) => {
-  const [currentSrc, setCurrentSrc] = useState(src);
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState(false);
-
-  if (src !== currentSrc) {
-    setCurrentSrc(src);
-    setLoaded(false);
-    setError(false);
-  }
+  const [loadedSrc, setLoadedSrc] = useState(null);
+  const [failedSrc, setFailedSrc] = useState(null);
+  const loaded = Boolean(src) && loadedSrc === src;
+  const error = Boolean(src) && failedSrc === src;
   if (!src || error) {
     return (
       <div className={`flex flex-col items-center justify-center bg-base-200 text-base-content/20 w-full h-full ${className} border border-base-300`}>
@@ -679,7 +671,15 @@ export const ImageWithFallback = ({ src, alt, className, fallbackText = "NO IMG"
   return (
     <div className={`relative bg-base-300 w-full h-full ${className} overflow-hidden`}>
       {!loaded && <div className="absolute inset-0 bg-base-300 animate-pulse z-0"></div>}
-      <img src={src} alt={alt} onLoad={() => setLoaded(true)} onError={() => setError(true)} className={`w-full h-full object-cover transition-opacity duration-500 ease-in-out ${loaded ? 'opacity-100' : 'opacity-0'} relative z-10 ${className}`} loading="lazy" />
+      <img
+        key={src}
+        src={src}
+        alt={alt}
+        onLoad={() => setLoadedSrc(src)}
+        onError={() => setFailedSrc(src)}
+        className={`w-full h-full object-cover transition-opacity duration-500 ease-in-out ${loaded ? 'opacity-100' : 'opacity-0'} relative z-10 ${className}`}
+        loading="lazy"
+      />
     </div>
   );
 };

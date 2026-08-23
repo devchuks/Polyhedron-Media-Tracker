@@ -5,14 +5,16 @@ import { canonicalizeLog, canonicalizeMediaItem, mediaKeyFor } from '../domain/m
 import { applyStatusTransition, canonicalizeMediaCollection, mergeProviderMetadata, toggleIssueState, upsertDiaryLog } from '../domain/mediaState';
 import { normalizeBackup } from '../domain/backup';
 import { mergeLibraryState, mergePersistedSnapshots, nextRecordRevision } from '../domain/persistenceMerge';
-import { dateInputFromTimestamp } from '../utils/calendarDate';
 import { createKeyedQueue } from '../utils/keyedQueue';
 import { fetchPaginatedRows } from '../services/cloudPagination';
+import { retryAfterJwtRefresh } from '../utils/requestErrors';
+import { createSingleFlight } from '../utils/singleFlight';
 
 const initialMediaState = { tv: [], movies: [], games: [], vn: [], anime: [], manga: [], books: [], comics: [] };
 const freshMediaState = () => Object.fromEntries(Object.keys(initialMediaState).map(key => [key, []]));
 let authGeneration = 0;
 const cloudMutationQueue = createKeyedQueue();
+const hydrationFlights = createSingleFlight();
 const queueMediaMutation = (mediaKey, operation) => cloudMutationQueue.enqueue(`media:${mediaKey}`, operation);
 const queueLogMutation = (log, operation) => cloudMutationQueue.enqueue(
   log?.media_key ? `media:${log.media_key}` : `log:${String(log?.log_id ?? log)}`,
@@ -20,16 +22,45 @@ const queueLogMutation = (log, operation) => cloudMutationQueue.enqueue(
 );
 const nextStorageEpoch = current => Math.max(Date.now(), (Number(current) || 0) + 1);
 
-const fetchCloudTable = (table, userId, orderColumn, maxRows) => fetchPaginatedRows(
-  (from, to, includeCount) => {
-    const query = supabase.from(table).select('*', includeCount ? { count: 'exact' } : {})
+const fetchCloudTable = (table, userId, orderColumn, maxRows, {
+  columns = '*',
+  pageSize = 500,
+  revisionColumn = 'updated_at',
+} = {}) => {
+  const fetchPage = (selectColumns, from, to, includeCount) => {
+    const query = supabase.from(table).select(selectColumns, includeCount ? { count: 'exact' } : {})
       .eq('user_id', userId)
       .order(orderColumn, { ascending: true })
       .range(from, to);
     return query;
-  },
-  { maxRows, getRowKey: row => row[orderColumn] },
-);
+  };
+  const rowFingerprint = row => `${String(row[orderColumn])}:${String(row[revisionColumn] || '')}`;
+  return fetchPaginatedRows(
+    (from, to, includeCount) => fetchPage(columns, from, to, includeCount),
+    {
+      pageSize,
+      maxRows,
+      getRowKey: row => row[orderColumn],
+      getRowRevision: row => row[revisionColumn],
+      validateRows: async rows => {
+        const validationRows = await fetchPaginatedRows(
+          (from, to, includeCount) => fetchPage(`${orderColumn},${revisionColumn}`, from, to, includeCount),
+          {
+            pageSize: 1_000,
+            maxRows,
+            maxAttempts: 2,
+            getRowKey: row => row[orderColumn],
+            getRowRevision: row => row[revisionColumn],
+          },
+        );
+        return rows.length === validationRows.length
+          && rows.every((row, index) => rowFingerprint(row) === rowFingerprint(validationRows[index]));
+      },
+    },
+  );
+};
+const hasLocalSnapshot = state => Object.values(state.media || {}).some(items => items?.length)
+  || Boolean(state.mediaLogs?.length);
 const reportLocalPersistenceError = error => {
   console.error('Local persistence failed:', error);
   queueMicrotask(() => useUIStore.getState().addToast('Local storage failed. This change may not survive a reload.', 'error'));
@@ -191,16 +222,18 @@ export const useMediaStore = create(
       storageEpoch: 0,
       authSubscription: null,
       isLoading: true,
-      setAuthMode: async (mode) => {
+      setAuthMode: async (mode, knownUser = null) => {
         const generation = ++authGeneration;
         if (mode === 'admin') {
-          const { data, error } = await supabase.auth.getUser();
+          const authResult = knownUser ? { data: { user: knownUser }, error: null } : await supabase.auth.getUser();
+          const { data, error } = authResult;
           if (error || !data?.user || generation !== authGeneration) {
             if (get().clearRealtimeSubscription) get().clearRealtimeSubscription();
             set({ authMode: null, ownerId: null, storageEpoch: nextStorageEpoch(get().storageEpoch), isCloudSyncing: false, isLoading: false, media: freshMediaState(), mediaLogs: [], deletedMediaKeys: {}, deletedLogIds: {} });
             return false;
           }
           const ownerChanged = get().ownerId !== data.user.id;
+          const canUseCachedSnapshot = !ownerChanged && hasLocalSnapshot(get());
           if (ownerChanged && get().clearRealtimeSubscription) get().clearRealtimeSubscription();
           set({
             authMode: mode,
@@ -208,7 +241,7 @@ export const useMediaStore = create(
             storageEpoch: ownerChanged ? nextStorageEpoch(get().storageEpoch) : get().storageEpoch,
             ...(ownerChanged ? { media: freshMediaState(), mediaLogs: [], deletedMediaKeys: {}, deletedLogIds: {} } : {}),
             isCloudSyncing: true,
-            isLoading: true,
+            isLoading: !canUseCachedSnapshot,
           });
           get().fetchCloudData(data.user, generation).then(synced => {
             if (generation === authGeneration) {
@@ -237,7 +270,10 @@ export const useMediaStore = create(
       },
       restoreSession: async () => {
         const { data, error } = await supabase.auth.getUser();
-        if (!error && data?.user) return get().setAuthMode('admin');
+        if (!error && data?.user) {
+          if (get().authMode === 'admin' && get().ownerId === data.user.id) return true;
+          return get().setAuthMode('admin', data.user);
+        }
         if (get().ownerId === 'guest') {
           set({ authMode: 'guest', isCloudSyncing: false, isLoading: false });
           return true;
@@ -251,8 +287,12 @@ export const useMediaStore = create(
           if ((event === 'SIGNED_OUT' || !session?.user) && get().authMode === 'admin') {
             void get().setAuthMode(null);
           }
-          if (session?.user && ['INITIAL_SESSION', 'SIGNED_IN', 'TOKEN_REFRESHED'].includes(event) && session.user.id !== get().ownerId) {
-            void get().setAuthMode('admin');
+          if (session?.user && ['INITIAL_SESSION', 'SIGNED_IN', 'TOKEN_REFRESHED'].includes(event)) {
+            const listenerGeneration = authGeneration;
+            setTimeout(() => {
+              if (listenerGeneration !== authGeneration) return;
+              if (session.user.id !== get().ownerId) void get().setAuthMode('admin', session.user);
+            }, 0);
           }
         });
         set({ authSubscription: data.subscription });
@@ -260,26 +300,30 @@ export const useMediaStore = create(
 
       // --- CLOUD SYNC HELPERS ---
       isCloudSyncing: false,
-      _hydrationPromise: null,
-      _hydrationGen: 0,
       fetchCloudData: async (knownUser, expectedGeneration = authGeneration, replaceLocal = false) => {
-        if (get()._hydrationPromise && get()._hydrationGen === expectedGeneration && !replaceLocal) {
-          return get()._hydrationPromise;
-        }
-
-        const promise = (async () => {
-          set({ isCloudSyncing: true, isLoading: true });
+        const user = knownUser || (await supabase.auth.getUser()).data?.user;
+        if (!user) return false;
+        const flightKey = `${expectedGeneration}:${user.id}:${replaceLocal ? 'replace' : 'merge'}`;
+        return hydrationFlights.run(flightKey, async () => {
+          set({
+            isCloudSyncing: true,
+            isLoading: replaceLocal || !hasLocalSnapshot(get()),
+          });
           try {
-            const user = knownUser || (await supabase.auth.getUser()).data?.user;
             if (!user || expectedGeneration !== authGeneration || get().authMode !== 'admin' || get().ownerId !== user.id) return false;
 
-            const libraryColumns = 'library_row_id, id, user_id, provider, provider_id, media_type, media_key, title, type, subtype, progress, status, rating, addedAt, dateStarted, dateCompleted, rewatchCount, readIssueIds, image, updated_at';
-            const [libraryData, logsData, mediaTombstones, logTombstones] = await Promise.all([
-              fetchCloudTable('media_library', user.id, 'library_row_id', 160_000, libraryColumns),
-              fetchCloudTable('media_logs', user.id, 'log_id', 500_000, '*'),
-              fetchCloudTable('media_tombstones', user.id, 'media_key', 160_000, '*'),
-              fetchCloudTable('log_tombstones', user.id, 'log_id', 500_000, '*'),
+            const loadSnapshot = () => Promise.all([
+              // Keep the complete application row so a fresh browser does not need N+1 detail requests.
+              // Chunking bounds each response while the lightweight revision pass validates consistency.
+              fetchCloudTable('media_library', user.id, 'library_row_id', 160_000, { pageSize: 250 }),
+              fetchCloudTable('media_logs', user.id, 'log_id', 500_000, { pageSize: 500 }),
+              fetchCloudTable('media_tombstones', user.id, 'media_key', 160_000, { pageSize: 1_000, revisionColumn: 'deleted_at' }),
+              fetchCloudTable('log_tombstones', user.id, 'log_id', 500_000, { pageSize: 1_000, revisionColumn: 'deleted_at' }),
             ]);
+            const [libraryData, logsData, mediaTombstones, logTombstones] = await retryAfterJwtRefresh(
+              loadSnapshot,
+              () => supabase.auth.refreshSession(),
+            );
             if (expectedGeneration !== authGeneration || get().authMode !== 'admin' || get().ownerId !== user.id) return false;
 
             const cloudMedia = freshMediaState();
@@ -307,12 +351,8 @@ export const useMediaStore = create(
             return false;
           } finally {
             if (expectedGeneration === authGeneration) set({ isCloudSyncing: false, isLoading: false });
-            if (get()._hydrationPromise === promise) set({ _hydrationPromise: null });
           }
-        })();
-
-        set({ _hydrationPromise: promise, _hydrationGen: expectedGeneration });
-        return promise;
+        });
       },
 
       realtimeSubscription: null,

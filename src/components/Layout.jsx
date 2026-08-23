@@ -6,9 +6,7 @@ import { apiRegistry } from '../services/apiRegistry';
 import { useMediaStore } from '../store/useMediaStore';
 import { Gate } from '../pages/Gate';
 import { supabase } from '../services/supabase';
-
-export const appEnvironment = String(import.meta.env.VITE_APP_ENVIRONMENT || '').toUpperCase();
-export const showEnvironmentBadge = import.meta.env.DEV && appEnvironment && appEnvironment !== 'PRODUCTION';
+import { appEnvironment, showEnvironmentBadge } from '../config/environment';
 
 export const THEMES = [
   'light', 'dark', 'cupcake', 'bumblebee', 'emerald', 'corporate', 'synthwave', 'retro',

@@ -1,5 +1,4 @@
 import { canonicalizeLog, canonicalizeMediaItem, mediaKeyFor } from './mediaIdentity.js';
-import { dateInputFromTimestamp } from '../utils/calendarDate.js';
 
 const USER_FIELDS = new Set([
   'status', 'progress', 'rating', 'addedAt', 'dateStarted', 'dateCompleted', 'rewatchCount',
@@ -11,11 +10,6 @@ const validTime = (value, fallback = 0) => {
   return Number.isFinite(time) ? time : fallback;
 };
 
-const dayKey = (value) => {
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? dateInputFromTimestamp(date) : String(value || '');
-};
-
 export const filterDashboardItems = (items, status = 'all', query = '') => {
   const normalizedQuery = String(query || '').trim().toLowerCase();
   return (Array.isArray(items) ? items : [])
@@ -25,7 +19,9 @@ export const filterDashboardItems = (items, status = 'all', query = '') => {
 
 export const upsertDiaryLog = (logs, incomingLog) => {
   const incoming = canonicalizeLog(incomingLog);
-  const index = logs.findIndex(existing => String(existing.log_id) === String(incoming.log_id));
+  const incomingLogId = String(incoming.log_id || '').trim();
+  if (!incomingLogId) throw new TypeError('Diary log requires a stable log_id');
+  const index = logs.findIndex(existing => String(existing.log_id) === incomingLogId);
   const next = [...logs];
   if (index >= 0) {
     const existing = canonicalizeLog(next[index]);
@@ -40,6 +36,18 @@ export const upsertDiaryLog = (logs, incomingLog) => {
   }
   return next.sort((a, b) => validTime(b.log_date) - validTime(a.log_date));
 };
+
+export const serializeTvProgress = (status, season, episode) => {
+  const normalizedStatus = String(status || '').trim().toLowerCase();
+  const seasonNumber = Number(season);
+  const episodeNumber = Number(episode);
+  if (!Number.isInteger(seasonNumber) || seasonNumber < 1) return '';
+  if (!Number.isInteger(episodeNumber) || episodeNumber < 1) return '';
+  if (normalizedStatus === 'planned') return '';
+  return `S${String(seasonNumber).padStart(2, '0')} E${String(episodeNumber).padStart(2, '0')}`;
+};
+
+export const preferredMediaImage = item => item?.image || item?.apiData?.image || null;
 
 export const findMediaForLog = (media, log) => {
   let targetKey;

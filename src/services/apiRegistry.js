@@ -12,6 +12,7 @@ import { supabase } from './supabase';
 import { FunctionsHttpError } from '@supabase/supabase-js';
 import { parseRetryAfter, withRetry } from '../utils/retry.js';
 import { getCachedValue, mapWithConcurrency, setCachedValue } from '../utils/boundedAsync.js';
+import { isIntentionalAbort } from '../utils/requestErrors.js';
 
 const invokeFunction = async (name, body) => {
   return withRetry(async () => {
@@ -20,16 +21,7 @@ const invokeFunction = async (name, body) => {
     let data;
     let error;
     try {
-      let attempts = 0;
-      while (attempts < 2) {
-        ({ data, error } = await supabase.functions.invoke(name, { body, signal: controller.signal }));
-        if (import.meta.env.DEV && error instanceof FunctionsHttpError && error.context?.status === 401) {
-          attempts++;
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          continue;
-        }
-        break;
-      }
+      ({ data, error } = await supabase.functions.invoke(name, { body, signal: controller.signal }));
     } finally {
       clearTimeout(timeout);
     }
@@ -68,7 +60,7 @@ const getOpenLibraryUrl = (endpoint) => {
 };
 
 const reportApiError = (err, serviceName) => {
-  if (err?.name === 'AbortError') return;
+  if (isIntentionalAbort(err)) return;
   console.error(`🔴 [${serviceName}] Error Detail:`, err);
   
   let msg = `Failed to fetch data from ${serviceName}.`;

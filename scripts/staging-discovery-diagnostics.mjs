@@ -143,6 +143,14 @@ const pageResults = [];
 for (let offset = 0; offset < aCounts.media; offset += 100) {
   pageResults.push(await timedRest({ select: '*', limit: 100, offset }));
 }
+const chunked250Results = [];
+for (let offset = 0; offset < aCounts.media; offset += 250) {
+  chunked250Results.push(await timedRest({ select: '*', limit: 250, offset }));
+}
+const revisionFingerprint = await timedRest({
+  select: 'library_row_id,updated_at',
+  limit: 1000,
+});
 
 const badPasswordClient = makeClient();
 const badStarted = performance.now();
@@ -179,11 +187,16 @@ const bCounts = {
   logs: await countRows(clientB, 'media_logs'),
 };
 
-const successfulPages = pageResults.filter((row) => row.status === 200);
+const successfulPages = pageResults.filter((row) => row.status >= 200 && row.status < 300);
 const pagedRows = successfulPages.reduce((sum, row) => sum + (row.rowCount || 0), 0);
 const pagedBytes = successfulPages.reduce((sum, row) => sum + row.bytes, 0);
 const pagedDurationMs = pageResults.reduce((sum, row) => sum + row.durationMs, 0);
 const pagedMaxDurationMs = Math.max(...pageResults.map((row) => row.durationMs));
+const successfulChunks250 = chunked250Results.filter(row => row.status >= 200 && row.status < 300);
+const chunked250Rows = successfulChunks250.reduce((sum, row) => sum + (row.rowCount || 0), 0);
+const chunked250Bytes = successfulChunks250.reduce((sum, row) => sum + row.bytes, 0);
+const chunked250DurationMs = chunked250Results.reduce((sum, row) => sum + row.durationMs, 0);
+const chunked250MaxDurationMs = Math.max(...chunked250Results.map(row => row.durationMs));
 
 console.log(`AUTH_A=PASS duration_ms=${Math.round(authA.durationMs)} media=${aCounts.media} logs=${aCounts.logs}`);
 console.log(`AUTH_B=PASS duration_ms=${Math.round(authB.durationMs)} media=${bCounts.media} logs=${bCounts.logs}`);
@@ -194,6 +207,8 @@ console.log(`SNAPSHOT_NO_APIDATA status=${withoutApiData.status} code=${withoutA
 console.log(`SNAPSHOT_IDENTITY status=${identityOnly.status} code=${identityOnly.errorCode || 'none'} duration_ms=${identityOnly.durationMs} bytes=${identityOnly.bytes} rows=${identityOnly.rowCount ?? 'none'}`);
 console.log(`SNAPSHOT_PAGED_100 pages=${pageResults.length} successful=${successfulPages.length} rows=${pagedRows} duration_ms=${pagedDurationMs} max_page_ms=${pagedMaxDurationMs} bytes=${pagedBytes}`);
 console.log(`SNAPSHOT_PAGED_100_DETAILS ${pageResults.map((row, index) => `${index}:${row.status}/${row.errorCode || 'none'}/${row.rowCount ?? 'none'}${row.errorMessage ? `/${row.errorMessage}` : ''}`).join(' | ')}`);
+console.log(`SNAPSHOT_CHUNKED_250 pages=${chunked250Results.length} successful=${successfulChunks250.length} rows=${chunked250Rows} duration_ms=${chunked250DurationMs} max_page_ms=${chunked250MaxDurationMs} bytes=${chunked250Bytes}`);
+console.log(`SNAPSHOT_REVISION_FINGERPRINT status=${revisionFingerprint.status} duration_ms=${revisionFingerprint.durationMs} bytes=${revisionFingerprint.bytes} rows=${revisionFingerprint.rowCount ?? 'none'}`);
 console.log(`TOMBSTONES_A media=${aCounts.mediaTombstones} logs=${aCounts.logTombstones}`);
 console.log(`IMAGE_SHAPES total=${imageShapes.total} top_level=${imageShapes.topLevel} nested=${imageShapes.nested} provider_derived=${imageShapes.providerDerived} only_top_level=${imageShapes.onlyTopLevel}`);
 console.log(`TV_FORENSICS planned_episode_zero=${plannedEpisodeZero} exact_timestamp_multi_season_groups=${multiSeasonExactTimestampGroups} same_day_multi_season_groups=${multiSeasonSameDayGroups}`);

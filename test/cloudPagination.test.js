@@ -65,14 +65,32 @@ test('cloud hydration rejects a truncated snapshot instead of silently replacing
   );
 });
 
-test('cloud hydration retries a failed page instead of aborting the entire sequence', async () => {
+test('cloud hydration validates a paginated snapshot with a lightweight revision pass', async () => {
+  const source = Array.from({ length: 4 }, (_, id) => ({ id, updated_at: `r${id}` }));
+  let validationCalls = 0;
+  const rows = await fetchPaginatedRows(async (from, to, includeCount) => ({
+    data: source.slice(from, to + 1),
+    count: includeCount ? source.length : null,
+    error: null,
+  }), {
+    pageSize: 2,
+    validateRows: async snapshot => {
+      validationCalls += 1;
+      return snapshot.every((row, index) => row.updated_at === source[index].updated_at);
+    },
+  });
+  assert.deepEqual(rows, source);
+  assert.equal(validationCalls, 1);
+});
+
+test('cloud hydration fails immediately on a page error so auth recovery stays bounded', async () => {
   let calls = 0;
-  const source = [{ id: 1 }, { id: 2 }, { id: 3 }];
-  const rows = await fetchPaginatedRows(async (from, to, includeCount) => {
-    calls++;
-    if (calls === 1) return { error: new Error('57014 query_canceled') }; // First attempt fails
-    return { data: source.slice(from, to + 1), count: includeCount ? 3 : null, error: null };
-  }, { pageSize: 3, maxAttempts: 3 });
-  assert.equal(rows.length, 3);
-  assert.equal(calls, 3); // 1 fail, 1 success, 1 empty
+  await assert.rejects(
+    fetchPaginatedRows(async () => {
+      calls += 1;
+      return { error: new Error('PGRST3003 JWT issued at future') };
+    }),
+    /JWT issued at future/,
+  );
+  assert.equal(calls, 1);
 });

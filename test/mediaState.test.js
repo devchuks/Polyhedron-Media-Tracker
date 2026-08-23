@@ -6,6 +6,8 @@ import {
   filterDashboardItems,
   findMediaForLog,
   mergeProviderMetadata,
+  preferredMediaImage,
+  serializeTvProgress,
   toggleIssueState,
   upsertDiaryLog,
 } from '../src/domain/mediaState.js';
@@ -54,6 +56,27 @@ test('distinct TV season-labelled records continue to coexist on the same day', 
   assert.equal(upsertDiaryLog([s1], s2).length, 2);
 });
 
+test('diary creation rejects a missing stable log identity', () => {
+  assert.throws(
+    () => upsertDiaryLog([], { media_key: 'tmdb:movies:1', log_date: '2026-08-16T09:00:00Z' }),
+    /stable log_id/,
+  );
+});
+
+test('TV progress serializes only genuine watched episodes', () => {
+  assert.equal(serializeTvProgress('planned', 1, 0), '');
+  assert.equal(serializeTvProgress('planned', 1, 4), '');
+  assert.equal(serializeTvProgress('in progress', 1, 0), '');
+  assert.equal(serializeTvProgress('in progress', 1, 1), 'S01 E01');
+  assert.equal(serializeTvProgress('in progress', 12, 9), 'S12 E09');
+});
+
+test('row-level image remains authoritative when nested provider metadata is sparse', () => {
+  assert.equal(preferredMediaImage({ image: 'row.jpg', apiData: {} }), 'row.jpg');
+  assert.equal(preferredMediaImage({ apiData: { image: 'nested.jpg' } }), 'nested.jpg');
+  assert.equal(preferredMediaImage({ image: 'row.jpg', apiData: { image: 'stale.jpg' } }), 'row.jpg');
+});
+
 test('same raw ID in another media type produces a distinct diary entry', () => {
   const movie = { log_id: 'm', media_id: 550, media_type: 'movies', log_date: '2026-08-16T09:00:00Z' };
   const tv = { log_id: 't', media_id: 550, media_type: 'tv', log_date: '2026-08-16T10:00:00Z' };
@@ -97,18 +120,4 @@ test('comic issue IDs normalize across string/number and partial lists never imp
   const partial = toggleIssueState({ ...item, readIssueIds: [] }, '42', ['42']);
   assert.equal(partial.status, 'in progress');
   assert.equal(partial.dateCompleted ?? null, null);
-});
-
-test('bulk-marking a TV series completed preserves historical completion dates of prior seasons and does not fabricate new ones', () => {
-  const initialState = [
-    { log_id: '1', media_key: 'tmdb:tv:999', log_date: '2020-01-01T00:00:00Z', season_label: 'Season 1' },
-    { log_id: '2', media_key: 'tmdb:tv:999', log_date: '2021-01-01T00:00:00Z', season_label: 'Season 2' }
-  ];
-  const newLog = { log_id: '3', media_key: 'tmdb:tv:999', log_date: '2022-01-01T00:00:00Z', season_label: 'Season 3' };
-  
-  const result = upsertDiaryLog(initialState, newLog);
-  
-  assert.equal(result.length, 3);
-  assert.equal(result.find(l => l.log_id === '1').log_date, '2020-01-01T00:00:00Z');
-  assert.equal(result.find(l => l.log_id === '2').log_date, '2021-01-01T00:00:00Z');
 });
