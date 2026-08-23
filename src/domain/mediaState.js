@@ -25,16 +25,7 @@ export const filterDashboardItems = (items, status = 'all', query = '') => {
 
 export const upsertDiaryLog = (logs, incomingLog) => {
   const incoming = canonicalizeLog(incomingLog);
-  const incomingDay = dayKey(incoming.log_date);
-  const index = logs.findIndex(existing => {
-    try {
-      return mediaKeyFor(existing) === incoming.media_key
-        && dayKey(existing.log_date) === incomingDay
-        && (existing.season_label || null) === (incoming.season_label || null);
-    } catch {
-      return false;
-    }
-  });
+  const index = logs.findIndex(existing => String(existing.log_id) === String(incoming.log_id));
   const next = [...logs];
   if (index >= 0) {
     const existing = canonicalizeLog(next[index]);

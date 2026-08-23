@@ -30,3 +30,33 @@ test('Telegram provider failures remain retryable while genuine empty results ca
   assert.match(source, /failedItems \+= 1/);
   assert.match(source, /One or more items remain retryable'[\s\S]*status: 500/);
 });
+
+test('duplicate cloud hydration requests are deduplicated by promise', async () => {
+  const source = await readFile(new URL('../src/store/useMediaStore.js', import.meta.url), 'utf8');
+  assert.match(source, /_hydrationPromise/);
+  assert.match(source, /if\s*\(\s*get\(\)\._hydrationPromise\s*&&\s*get\(\)\._hydrationGen\s*===\s*expectedGeneration/);
+  assert.match(source, /set\(\{ _hydrationPromise: promise/);
+});
+
+test('realtime initial subscription avoids redundant hydration fetches', async () => {
+  const source = await readFile(new URL('../src/store/useMediaStore.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /status === 'SUBSCRIBED'\) void get\(\)\.fetchCloudData/);
+});
+
+test('cloud hydration uses a lightweight initial projection for library data', async () => {
+  const source = await readFile(new URL('../src/store/useMediaStore.js', import.meta.url), 'utf8');
+  assert.match(source, /libraryColumns = 'library_row_id, id, user_id, provider/);
+  assert.doesNotMatch(source, /libraryColumns = '\*'/);
+});
+
+test('auth state transitions immediately without waiting for a slow cloud snapshot', async () => {
+  const source = await readFile(new URL('../src/store/useMediaStore.js', import.meta.url), 'utf8');
+  assert.match(source, /get\(\)\.fetchCloudData\(data\.user, generation\)\.then\(/);
+  assert.doesNotMatch(source, /const synced = await get\(\)\.fetchCloudData/);
+});
+
+test('failed cloud snapshot stops loading without silently destroying auth mode', async () => {
+  const source = await readFile(new URL('../src/store/useMediaStore.js', import.meta.url), 'utf8');
+  assert.match(source, /else set\(\{ isCloudSyncing: false, isLoading: false \}\)/);
+  assert.doesNotMatch(source, /set\(\{ authMode: null, isCloudSyncing: false/);
+});

@@ -19,18 +19,39 @@ test('dashboard search composes with the active status filter', () => {
   assert.deepEqual(filterDashboardItems(items, 'completed', 'dune').map(item => item.title), ['Dune']);
 });
 
-test('same-day diary updates preserve log ID, media identity, and allow clearing review text', () => {
+test('same-day diary creates with distinct log IDs remain distinct', () => {
+  const original = {
+    log_id: 'stable-log-1', media_id: '550', media_type: 'movies', media_key: 'tmdb:movies:550',
+    log_date: '2026-08-16T09:00:00.000Z', season_label: null, review_text: 'first',
+  };
+  const update = {
+    log_id: 'stable-log-2', media_id: '550', media_type: 'movies', media_key: 'tmdb:movies:550',
+    log_date: '2026-08-16T18:00:00.000Z', season_label: null, review_text: 'second',
+  };
+  const merged = upsertDiaryLog([original], update);
+  assert.equal(merged.length, 2);
+  assert.equal(merged[0].log_id, 'stable-log-2');
+  assert.equal(merged[1].log_id, 'stable-log-1');
+});
+
+test('editing an existing diary entry by log_id modifies only that entry', () => {
   const original = {
     log_id: 'stable-log', media_id: '550', media_type: 'movies', media_key: 'tmdb:movies:550',
     log_date: '2026-08-16T09:00:00.000Z', season_label: null, review_text: 'old note',
   };
   const update = {
-    log_id: 'new-random-log', media_id: '550', media_type: 'movies', media_key: 'tmdb:movies:550',
+    log_id: 'stable-log', media_id: '550', media_type: 'movies', media_key: 'tmdb:movies:550',
     log_date: '2026-08-16T18:00:00.000Z', season_label: null, review_text: '',
   };
   const [merged] = upsertDiaryLog([original], update);
   assert.equal(merged.log_id, 'stable-log');
   assert.equal(merged.review_text, '');
+});
+
+test('distinct TV season-labelled records continue to coexist on the same day', () => {
+  const s1 = { log_id: '1', media_key: 'tmdb:tv:1', log_date: '2026-08-16T09:00:00Z', season_label: 'Season 1' };
+  const s2 = { log_id: '2', media_key: 'tmdb:tv:1', log_date: '2026-08-16T10:00:00Z', season_label: 'Season 2' };
+  assert.equal(upsertDiaryLog([s1], s2).length, 2);
 });
 
 test('same raw ID in another media type produces a distinct diary entry', () => {

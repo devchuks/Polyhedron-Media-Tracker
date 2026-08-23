@@ -8,7 +8,7 @@ test('cloud hydration retrieves every row beyond the PostgREST page limit', asyn
   const rows = await fetchPaginatedRows(async (from, to, includeCount) => {
     calls.push([from, to]);
     return { data: source.slice(from, to + 1), count: includeCount ? source.length : null, error: null };
-  });
+  }, { pageSize: 1_000 });
   assert.equal(rows.length, source.length);
   assert.deepEqual(calls, [
     [0, 999], [1000, 1999], [2000, 2999],
@@ -63,4 +63,16 @@ test('cloud hydration rejects a truncated snapshot instead of silently replacing
     fetchPaginatedRows(async () => ({ data: [{ id: 1 }], count: 2, error: null })),
     /incomplete/i,
   );
+});
+
+test('cloud hydration retries a failed page instead of aborting the entire sequence', async () => {
+  let calls = 0;
+  const source = [{ id: 1 }, { id: 2 }, { id: 3 }];
+  const rows = await fetchPaginatedRows(async (from, to, includeCount) => {
+    calls++;
+    if (calls === 1) return { error: new Error('57014 query_canceled') }; // First attempt fails
+    return { data: source.slice(from, to + 1), count: includeCount ? 3 : null, error: null };
+  }, { pageSize: 3, maxAttempts: 3 });
+  assert.equal(rows.length, 3);
+  assert.equal(calls, 3); // 1 fail, 1 success, 1 empty
 });

@@ -1,5 +1,5 @@
 export const fetchPaginatedRows = async (fetchPage, {
-  pageSize = 1_000,
+  pageSize = 500,
   maxRows = 500_000,
   maxAttempts = 3,
   getRowKey = row => JSON.stringify(row),
@@ -12,8 +12,20 @@ export const fetchPaginatedRows = async (fetchPage, {
     const rows = [];
     let expectedCount = null;
     for (let offset = 0; offset < maxRows; offset += pageSize) {
-      const result = await fetchPage(offset, offset + pageSize - 1, offset === 0);
-      if (result?.error) throw result.error;
+      let result = null;
+      let pageError = null;
+      for (let pageAttempt = 0; pageAttempt < maxAttempts; pageAttempt++) {
+        const res = await fetchPage(offset, offset + pageSize - 1, offset === 0);
+        if (res?.error) {
+          pageError = res.error;
+          await new Promise(r => setTimeout(r, 1000 * (pageAttempt + 1))); // backoff
+        } else {
+          result = res;
+          pageError = null;
+          break;
+        }
+      }
+      if (pageError) throw pageError;
       const page = Array.isArray(result?.data) ? result.data : [];
       if (offset === 0 && Number.isInteger(result?.count)) expectedCount = result.count;
       rows.push(...page);

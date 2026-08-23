@@ -210,15 +210,18 @@ export const useMediaStore = create(
             isCloudSyncing: true,
             isLoading: true,
           });
-          const synced = await get().fetchCloudData(data.user, generation);
-          if (synced && generation === authGeneration) await get().initRealtimeSubscription(data.user);
-          if (!synced && generation === authGeneration) set({ authMode: null, isCloudSyncing: false, isLoading: false });
-          return synced;
+          get().fetchCloudData(data.user, generation).then(synced => {
+            if (generation === authGeneration) {
+              if (synced) get().initRealtimeSubscription(data.user);
+              else set({ isCloudSyncing: false, isLoading: false });
+            }
+          });
+          return true;
         } else {
           if (get().clearRealtimeSubscription) get().clearRealtimeSubscription();
           const nextOwner = mode === 'guest' ? 'guest' : null;
           const ownerChanged = get().ownerId !== nextOwner || mode === null;
-          set({ 
+          set({
             authMode: mode,
             ownerId: nextOwner,
             storageEpoch: ownerChanged ? nextStorageEpoch(get().storageEpoch) : get().storageEpoch,
@@ -257,45 +260,59 @@ export const useMediaStore = create(
 
       // --- CLOUD SYNC HELPERS ---
       isCloudSyncing: false,
+      _hydrationPromise: null,
+      _hydrationGen: 0,
       fetchCloudData: async (knownUser, expectedGeneration = authGeneration, replaceLocal = false) => {
-        set({ isCloudSyncing: true, isLoading: true });
-        try {
-          const user = knownUser || (await supabase.auth.getUser()).data?.user;
-          if (!user || expectedGeneration !== authGeneration || get().authMode !== 'admin' || get().ownerId !== user.id) return false;
-          const [libraryData, logsData, mediaTombstones, logTombstones] = await Promise.all([
-            fetchCloudTable('media_library', user.id, 'library_row_id', 160_000),
-            fetchCloudTable('media_logs', user.id, 'log_id', 500_000),
-            fetchCloudTable('media_tombstones', user.id, 'media_key', 160_000),
-            fetchCloudTable('log_tombstones', user.id, 'log_id', 500_000),
-          ]);
-          if (expectedGeneration !== authGeneration || get().authMode !== 'admin' || get().ownerId !== user.id) return false;
-
-          const cloudMedia = freshMediaState();
-          (libraryData || []).forEach(item => {
-            const normalizedItem = normalizeCloudItem(item);
-            if (cloudMedia[normalizedItem.type]) cloudMedia[normalizedItem.type].push(normalizedItem);
-          });
-          const cloudState = {
-            media: cloudMedia,
-            mediaLogs: (logsData || []).map(log => canonicalizeLog({
-              ...log,
-              updatedAt: Number.isFinite(Date.parse(log.updated_at)) ? Date.parse(log.updated_at) : 0,
-            })),
-            deletedMediaKeys: Object.fromEntries((mediaTombstones || []).map(row => [row.media_key, Date.parse(row.deleted_at) || 0])),
-            deletedLogIds: Object.fromEntries((logTombstones || []).map(row => [String(row.log_id), Date.parse(row.deleted_at) || 0])),
-          };
-          const mergeBase = replaceLocal
-            ? { media: freshMediaState(), mediaLogs: [], deletedMediaKeys: {}, deletedLogIds: {} }
-            : get();
-          set(mergeLibraryState(mergeBase, cloudState));
-          return true;
-        } catch (error) {
-          console.error('Cloud snapshot failed:', error);
-          useUIStore.getState().addToast('Cloud synchronization failed. Local data was not replaced.', 'error');
-          return false;
-        } finally {
-          if (expectedGeneration === authGeneration) set({ isCloudSyncing: false, isLoading: false });
+        if (get()._hydrationPromise && get()._hydrationGen === expectedGeneration && !replaceLocal) {
+          return get()._hydrationPromise;
         }
+
+        const promise = (async () => {
+          set({ isCloudSyncing: true, isLoading: true });
+          try {
+            const user = knownUser || (await supabase.auth.getUser()).data?.user;
+            if (!user || expectedGeneration !== authGeneration || get().authMode !== 'admin' || get().ownerId !== user.id) return false;
+
+            const libraryColumns = 'library_row_id, id, user_id, provider, provider_id, media_type, media_key, title, type, subtype, progress, status, rating, addedAt, dateStarted, dateCompleted, rewatchCount, readIssueIds, image, updated_at';
+            const [libraryData, logsData, mediaTombstones, logTombstones] = await Promise.all([
+              fetchCloudTable('media_library', user.id, 'library_row_id', 160_000, libraryColumns),
+              fetchCloudTable('media_logs', user.id, 'log_id', 500_000, '*'),
+              fetchCloudTable('media_tombstones', user.id, 'media_key', 160_000, '*'),
+              fetchCloudTable('log_tombstones', user.id, 'log_id', 500_000, '*'),
+            ]);
+            if (expectedGeneration !== authGeneration || get().authMode !== 'admin' || get().ownerId !== user.id) return false;
+
+            const cloudMedia = freshMediaState();
+            (libraryData || []).forEach(item => {
+              const normalizedItem = normalizeCloudItem(item);
+              if (cloudMedia[normalizedItem.type]) cloudMedia[normalizedItem.type].push(normalizedItem);
+            });
+            const cloudState = {
+              media: cloudMedia,
+              mediaLogs: (logsData || []).map(log => canonicalizeLog({
+                ...log,
+                updatedAt: Number.isFinite(Date.parse(log.updated_at)) ? Date.parse(log.updated_at) : 0,
+              })),
+              deletedMediaKeys: Object.fromEntries((mediaTombstones || []).map(row => [row.media_key, Date.parse(row.deleted_at) || 0])),
+              deletedLogIds: Object.fromEntries((logTombstones || []).map(row => [String(row.log_id), Date.parse(row.deleted_at) || 0])),
+            };
+            const mergeBase = replaceLocal
+              ? { media: freshMediaState(), mediaLogs: [], deletedMediaKeys: {}, deletedLogIds: {} }
+              : get();
+            set(mergeLibraryState(mergeBase, cloudState));
+            return true;
+          } catch (error) {
+            console.error('Cloud snapshot failed:', error);
+            useUIStore.getState().addToast('Cloud synchronization failed. Local data was not replaced.', 'error');
+            return false;
+          } finally {
+            if (expectedGeneration === authGeneration) set({ isCloudSyncing: false, isLoading: false });
+            if (get()._hydrationPromise === promise) set({ _hydrationPromise: null });
+          }
+        })();
+
+        set({ _hydrationPromise: promise, _hydrationGen: expectedGeneration });
+        return promise;
       },
 
       realtimeSubscription: null,
@@ -412,7 +429,6 @@ export const useMediaStore = create(
             });
           })
           .subscribe(status => {
-            if (status === 'SUBSCRIBED') void get().fetchCloudData(user);
             if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
               useUIStore.getState().addToast('Realtime synchronization was interrupted; refreshing cloud data.', 'error');
               void get().fetchCloudData(user);
@@ -504,9 +520,9 @@ export const useMediaStore = create(
 
       globalLightbox: null,
       globalLightboxIndex: 0,
-      setGlobalLightbox: (images, index = 0) => set({ 
-        globalLightbox: Array.isArray(images) ? images : (images ? [images] : null), 
-        globalLightboxIndex: index 
+      setGlobalLightbox: (images, index = 0) => set({
+        globalLightbox: Array.isArray(images) ? images : (images ? [images] : null),
+        globalLightboxIndex: index
       }),
 
       // TERMINAL PROCESSING LOCKS
@@ -539,9 +555,9 @@ export const useMediaStore = create(
       media: initialMediaState,
       deletedMediaKeys: {},
       deletedLogIds: {},
-      importQueue: [], 
+      importQueue: [],
       mediaLogs: [],
-      
+
       clearImportQueue: () => set({ importQueue: [] }),
       clearPendingImportQueue: () => set((state) => ({ importQueue: state.importQueue.filter(item => item.ready_to_commit) })),
 
@@ -577,10 +593,8 @@ export const useMediaStore = create(
           provider_id: canonicalItem.provider_id,
           media_key: canonicalItem.media_key,
         });
-        const existingLog = get().mediaLogs.find(entry => entry.media_key === baseEntry.media_key
-          && dateInputFromTimestamp(entry.log_date) === dateInputFromTimestamp(baseEntry.log_date)
-          && (entry.season_label || null) === (baseEntry.season_label || null));
-        const effectiveLogId = String(existingLog?.log_id || baseEntry.log_id);
+        const existingLog = get().mediaLogs.find(entry => String(entry.log_id) === String(baseEntry.log_id));
+        const effectiveLogId = String(baseEntry.log_id);
         const logRevision = nextRecordRevision(baseEntry.updatedAt, existingLog?.updatedAt, get().deletedLogIds[effectiveLogId]);
         const canonicalEntry = canonicalizeLog({
           ...baseEntry,
@@ -596,12 +610,7 @@ export const useMediaStore = create(
               : [canonicalItem, ...categoryItems],
           };
           const mediaLogs = upsertDiaryLog(state.mediaLogs, canonicalEntry);
-          syncedLog = mediaLogs.find(entry => {
-            const sameDay = dateInputFromTimestamp(entry.log_date) === dateInputFromTimestamp(canonicalEntry.log_date);
-            return entry.media_key === canonicalEntry.media_key
-              && sameDay
-              && (entry.season_label || null) === (canonicalEntry.season_label || null);
-          });
+          syncedLog = mediaLogs.find(entry => String(entry.log_id) === String(canonicalEntry.log_id));
           const deletedMediaKeys = { ...state.deletedMediaKeys };
           const deletedLogIds = { ...state.deletedLogIds };
           delete deletedMediaKeys[canonicalItem.media_key];
@@ -852,7 +861,7 @@ export const useMediaStore = create(
       },
 
       updateImportItem: (id, updates) => set((state) => ({
-        importQueue: state.importQueue.map(item => 
+        importQueue: state.importQueue.map(item =>
           item.id === id ? { ...item, ...updates } : item
         )
       })),
@@ -864,10 +873,8 @@ export const useMediaStore = create(
       // STRICT UPSERT LOGIC (Prevents same-day stacking)
       addDiaryLog: (logEntry) => {
         const baseEntry = canonicalizeLog(logEntry);
-        const existingLog = get().mediaLogs.find(log => log.media_key === baseEntry.media_key
-          && dateInputFromTimestamp(log.log_date) === dateInputFromTimestamp(baseEntry.log_date)
-          && (log.season_label || null) === (baseEntry.season_label || null));
-        const effectiveLogId = String(existingLog?.log_id || baseEntry.log_id);
+        const existingLog = get().mediaLogs.find(log => String(log.log_id) === String(baseEntry.log_id));
+        const effectiveLogId = String(baseEntry.log_id);
         const canonicalEntry = canonicalizeLog({
           ...baseEntry,
           updatedAt: nextRecordRevision(baseEntry.updatedAt, existingLog?.updatedAt, get().deletedLogIds[effectiveLogId]),
@@ -877,12 +884,7 @@ export const useMediaStore = create(
           delete deletedLogIds[String(canonicalEntry.log_id)];
           return { mediaLogs: upsertDiaryLog(state.mediaLogs, canonicalEntry), deletedLogIds };
         });
-        const syncedLog = get().mediaLogs.find(log => {
-          const sameDay = dateInputFromTimestamp(log.log_date) === dateInputFromTimestamp(canonicalEntry.log_date);
-          return mediaKeyFor(log) === canonicalEntry.media_key
-            && sameDay
-            && (log.season_label || null) === (canonicalEntry.season_label || null);
-        });
+        const syncedLog = get().mediaLogs.find(log => String(log.log_id) === String(canonicalEntry.log_id));
         if (syncedLog) void queueLogMutation(syncedLog, () => get().syncLogToCloud(syncedLog)).catch(error => {
           console.error('Supabase diary sync error:', error);
           useUIStore.getState().addToast('Diary entry saved locally but cloud sync failed.', 'error');
@@ -961,9 +963,9 @@ export const useMediaStore = create(
         }
         return { ...currentState, ...persistedState, authMode: currentState.authMode };
       },
-      onRehydrateStorage: () => (state) => { 
+      onRehydrateStorage: () => (state) => {
         if (!state?._hasHydrated) {
-          state?.setHasHydrated(true); 
+          state?.setHasHydrated(true);
           void state?.restoreSession();
         }
       },
@@ -978,13 +980,13 @@ export const useMediaStore = create(
           slimMedia[key] = stateToSave.media[key].map(item => {
             if (!item.apiData?.raw) return item;
             const slimRaw = { ...item.apiData.raw };
-            delete slimRaw.issue_details; 
+            delete slimRaw.issue_details;
             delete slimRaw.seasons;
             delete slimRaw.credits;
             delete slimRaw.staff;
             delete slimRaw.recommendations;
             delete slimRaw.similar_games;
-            delete slimRaw.deepFetched; 
+            delete slimRaw.deepFetched;
             return { ...item, apiData: { ...item.apiData, raw: slimRaw } };
           });
         }
