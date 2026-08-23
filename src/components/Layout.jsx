@@ -7,6 +7,9 @@ import { useMediaStore } from '../store/useMediaStore';
 import { Gate } from '../pages/Gate';
 import { supabase } from '../services/supabase';
 
+const appEnvironment = String(import.meta.env.VITE_APP_ENVIRONMENT || '').toUpperCase();
+const showEnvironmentBadge = import.meta.env.DEV && appEnvironment && appEnvironment !== 'PRODUCTION';
+
 export const THEMES = [
   'light', 'dark', 'cupcake', 'bumblebee', 'emerald', 'corporate', 'synthwave', 'retro',
   'cyberpunk', 'valentine', 'halloween', 'garden', 'forest', 'aqua', 'lofi', 'pastel',
@@ -122,6 +125,14 @@ export const Header = ({ onSearch, theme, setTheme }) => {
         </form>
         {isCloudSyncing && (
           <div className="ml-4 flex items-center gap-2 text-primary opacity-70 shrink-0" title="Synchronizing Databank"><Loader2 className="w-4 h-4 animate-spin" /></div>
+        )}
+        {showEnvironmentBadge && (
+          <span
+            className="ml-2 sm:ml-4 border border-warning bg-warning/10 px-2 py-1 font-mono text-[9px] font-bold tracking-widest text-warning shrink-0"
+            title={`Connected to the ${appEnvironment} backend`}
+          >
+            {appEnvironment}
+          </span>
         )}
       </div>
 

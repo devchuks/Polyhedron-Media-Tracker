@@ -12,6 +12,9 @@ Polyhedron Supabase project.
   not return titles, reviews, provider IDs, user IDs, or row contents.
 - `blocker_characteristics.sql` characterizes the discovered blockers and
   legacy provider-ID shapes using aggregate counts only.
+- `current_blocker_details.sql` returns only the minimum approved identifying
+  fields for current completion-date blockers and orphan logs; it omits owner,
+  Auth, review, and unrelated provider payload data.
 - `hosted_snapshot_summary.json` is the credential-free result summary retained
   with the repository.
 
