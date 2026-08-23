@@ -48,7 +48,9 @@ Do not casually reconstruct staging, repeat the legacy migration proof, or reset
 - RLS must enforce owner-only SELECT, INSERT, UPDATE, and DELETE for both `media_library` and `media_logs`; realtime visibility must follow the same ownership boundary.
 - Edge Functions must authenticate callers where appropriate, use fixed upstream hosts, validate structured operations and identifiers, bound request sizes/pagination, and never accept unrestricted upstream paths or query languages.
 - Service-role credentials and third-party secrets never belong in browser bundles, logs, tests, or committed files.
-- Existing real user data must be preserved. Do not reset or mutate a hosted Supabase project during local development.
+- Existing production user data must be preserved. Never reset or mutate the production Supabase project during remediation or testing.
+- Polyhedron Staging may be mutated only by an explicitly staging-targeted verification or remediation workflow.
+- Preserve User A's recognizable staging acceptance dataset. Prefer User B and disposable fixtures for destructive staging tests.
 - Migrations require backfill consideration. Every identity/schema change must document collision handling, legacy compatibility, existing-user-data impact, rollback constraints, and whether it has been executed.
 - Multi-record destructive workflows should be atomic where practical, with ownership checked inside the database transaction or RPC.
 
@@ -56,6 +58,20 @@ Do not casually reconstruct staging, repeat the legacy migration proof, or reset
 
 - Every confirmed defect fix should have a regression test where practical. Tests should reproduce the failure mode, not merely exercise the happy path.
 - Keep domain transitions and identity/security helpers in small pure modules so Node-based unit tests can validate them without browser automation.
-- Mock network/Supabase boundaries in unit tests. Never point automated tests at a real hosted database.
-- Database/RLS tests may run only against an explicitly local disposable Supabase instance.
+
+### Normal local automated tests
+
+- `npm test` and ordinary unit/component tests must mock Supabase and network boundaries.
+- Normal local automated tests must never contact any hosted Supabase project.
+
+### Explicit hosted staging verification
+
+Polyhedron does not use Docker or a local Supabase stack. Separately invoked staging runtime/integration scripts may contact and mutate only the explicitly verified **Polyhedron Staging** project.
+
+- Confirm the staging project identity before any destructive operation and never target production.
+- Prefer User B and disposable fixtures, and clean disposable fixtures afterward.
+- Preserve User A's recognizable acceptance baseline unless a task explicitly authorizes a narrowly scoped User A test.
+- Do not reconstruct or reset staging without an explicit recovery requirement.
+- Production remains strictly read-only.
+
 - Relevant tests, linting, and the production build must be run before work is considered complete. Run typechecking too if a typecheck command is added later.
