@@ -4,14 +4,29 @@
 
 Polyhedron is a Vite/React 19 single-page application. React Router owns navigation, Zustand owns client state, IndexedDB persists guest state, and Supabase Auth/Postgres/Realtime persist authenticated state. Provider adapters and normalizers live under `src/services` and `src/utils`. Supabase Edge Functions under `supabase/functions` proxy selected third-party APIs. Database migrations belong under `supabase/migrations` and must be reviewable without contacting a hosted project.
 
+## Current remediation phase
+
+Foundational remediation and the hosted staging migration proof are complete. Production has not been migrated and remains read-only. Current work is application-level remediation of the unresolved issues in `MANUAL_ACCEPTANCE_ISSUES.md`, with the already-migrated Polyhedron Staging project as the only hosted runtime verification target.
+
+Before making a substantial modification, every future coding agent must read, in order:
+
+1. `ANTIGRAVITY_HANDOFF.md`
+2. `MANUAL_ACCEPTANCE_ISSUES.md`
+3. `STAGING_VERIFICATION_REPORT.md`
+4. `STAGING_MANUAL_TEST_CHECKLIST.md`
+
+Do not casually reconstruct staging, repeat the legacy migration proof, or reset User A's recognizable acceptance library. Prefer User B and disposable fixtures for destructive staging tests, then clean those fixtures up. Preserve the canonical identity, owner-scoped RLS, tombstone/no-resurrection, and revision-ordering guarantees already proven in staging. Explicit hosted runtime checks must be staging-only and separately invoked; the normal local test suite must remain mocked and must never contact production.
+
 ## Tooling and commands
 
 - Package manager: npm (the authoritative lockfile is `package-lock.json`).
 - Install dependencies: `npm ci`.
 - Development server: `npm run dev`.
+- Staging development server: `npm run dev:staging`.
 - Tests: `npm test`.
 - Lint: `npm run lint`.
 - Production build: `npm run build`.
+- Staging build: `npm run build:staging`.
 - Typecheck: none is configured; this is a JavaScript codebase and must not be converted to TypeScript as incidental work.
 
 ## Domain invariants
