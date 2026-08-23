@@ -98,3 +98,17 @@ test('comic issue IDs normalize across string/number and partial lists never imp
   assert.equal(partial.status, 'in progress');
   assert.equal(partial.dateCompleted ?? null, null);
 });
+
+test('bulk-marking a TV series completed preserves historical completion dates of prior seasons and does not fabricate new ones', () => {
+  const initialState = [
+    { log_id: '1', media_key: 'tmdb:tv:999', log_date: '2020-01-01T00:00:00Z', season_label: 'Season 1' },
+    { log_id: '2', media_key: 'tmdb:tv:999', log_date: '2021-01-01T00:00:00Z', season_label: 'Season 2' }
+  ];
+  const newLog = { log_id: '3', media_key: 'tmdb:tv:999', log_date: '2022-01-01T00:00:00Z', season_label: 'Season 3' };
+  
+  const result = upsertDiaryLog(initialState, newLog);
+  
+  assert.equal(result.length, 3);
+  assert.equal(result.find(l => l.log_id === '1').log_date, '2020-01-01T00:00:00Z');
+  assert.equal(result.find(l => l.log_id === '2').log_date, '2021-01-01T00:00:00Z');
+});
