@@ -7,6 +7,7 @@ import { apiRegistry } from '../services/apiRegistry';
 import { extractMetronStaff } from '../utils/normalizers';
 import { formatSafeMarkup } from '../utils/safeMarkup';
 import { safeExternalUrl } from '../utils/urlSafety';
+import { shouldShowMetadataSkeleton } from '../domain/detailEnrichment';
 import { dateInputFromTimestamp, timestampForCalendarDateWithCurrentTime, timestampFromDateInput, todayDateInput } from '../utils/calendarDate';
 import { preferredMediaImage } from '../domain/mediaState';
 import { completeTvSeries, executeTvSeasonCompletion, saveTvLibraryState, startTvRewatch } from '../domain/tvWorkflow';
@@ -1050,21 +1051,21 @@ export const CreativeTeamSection = ({ type, raw, isDeepFetching, genres, platfor
         {(type === 'movies' || type === 'tv') && (
           <>
             <div className="flex flex-row flex-wrap gap-x-8 gap-y-2">
-              <Section isLoading={isDeepFetching && !directors.length} title="Director">{directors.map((c, i) => <Pill key={`${c.id}-${i}`} main={c.name} to={`/explore/tmdb/person/${c.id}`} />)}</Section>
-              <Section isLoading={isDeepFetching && !creators.length} title="Creator">{creators.map((c, i) => <Pill key={`${c.id}-${i}`} main={c.name} to={`/explore/tmdb/person/${c.id}`} />)}</Section>
-              <Section isLoading={isDeepFetching && !writers.length} title="Writer">{writers.map((c, i) => <Pill key={`${c.id}-${i}`} main={c.name} to={`/explore/tmdb/person/${c.id}`} />)}</Section>
+              <Section isLoading={shouldShowMetadataSkeleton(isDeepFetching, directors)} title="Director">{directors.map((c, i) => <Pill key={`${c.id}-${i}`} main={c.name} to={`/explore/tmdb/person/${c.id}`} />)}</Section>
+              <Section isLoading={shouldShowMetadataSkeleton(isDeepFetching, creators)} title="Creator">{creators.map((c, i) => <Pill key={`${c.id}-${i}`} main={c.name} to={`/explore/tmdb/person/${c.id}`} />)}</Section>
+              <Section isLoading={shouldShowMetadataSkeleton(isDeepFetching, writers)} title="Writer">{writers.map((c, i) => <Pill key={`${c.id}-${i}`} main={c.name} to={`/explore/tmdb/person/${c.id}`} />)}</Section>
             </div>
-            <Section isLoading={isDeepFetching && !cast.length} title="Primary Cast">{cast.slice(0, 12).map((c, i) => <Pill key={`${c.id}-${i}`} main={c.name} sub={c.character} to={`/explore/tmdb/person/${c.id}`} />)}</Section>
+            <Section isLoading={shouldShowMetadataSkeleton(isDeepFetching, cast)} title="Primary Cast">{cast.slice(0, 12).map((c, i) => <Pill key={`${c.id}-${i}`} main={c.name} sub={c.character} to={`/explore/tmdb/person/${c.id}`} />)}</Section>
           </>
         )}
         {type === 'anime' && (
           <div className="flex flex-row flex-wrap gap-x-8 gap-y-2">
-            <Section isLoading={isDeepFetching && !animeDirectors.length} title="Director">{animeDirectors.map((n) => <Pill key={n.id} main={n.name} to={`/explore/anilist/person/${n.id}`} />)}</Section>
-            <Section isLoading={isDeepFetching && !animeOriginalCreators.length} title="Original Creator">{animeOriginalCreators.map((n) => <Pill key={n.id} main={n.name} to={`/explore/anilist/person/${n.id}`} />)}</Section>
+            <Section isLoading={shouldShowMetadataSkeleton(isDeepFetching, animeDirectors)} title="Director">{animeDirectors.map((n) => <Pill key={n.id} main={n.name} to={`/explore/anilist/person/${n.id}`} />)}</Section>
+            <Section isLoading={shouldShowMetadataSkeleton(isDeepFetching, animeOriginalCreators)} title="Original Creator">{animeOriginalCreators.map((n) => <Pill key={n.id} main={n.name} to={`/explore/anilist/person/${n.id}`} />)}</Section>
           </div>
         )}
         {type === 'manga' && raw.staff?.edges?.length > 0 && (
-          <Section isLoading={isDeepFetching && !combinedRoles.length && !mangakaStory.length && !mangakaArt.length} title="Mangaka">
+          <Section isLoading={shouldShowMetadataSkeleton(isDeepFetching, [...combinedRoles, ...mangakaStory, ...mangakaArt])} title="Mangaka">
             {combinedRoles.map((n) => <Pill key={`c-${n.id}`} main={n.name} sub="Story & Art" to={`/explore/anilist/person/${n.id}`} />)}
             {mangakaStory.map((n) => <Pill key={`s-${n.id}`} main={n.name} sub="Story" to={`/explore/anilist/person/${n.id}`} />)}
             {mangakaArt.map((n) => <Pill key={`a-${n.id}`} main={n.name} sub="Art" to={`/explore/anilist/person/${n.id}`} />)}
@@ -1073,17 +1074,16 @@ export const CreativeTeamSection = ({ type, raw, isDeepFetching, genres, platfor
         {type === 'comics' && (
           <div className="flex flex-row flex-wrap gap-x-8 gap-y-2">
               {(() => {
-                const hasAnyStaff = comicStaff && Object.keys(comicStaff).length > 0;
                 return (
                   <>
-                    <Section isLoading={isDeepFetching && !hasAnyStaff && !(comicStaff?.Writer?.length)} title="Writer">{renderMetronPills(comicStaff?.Writer, 'w')}</Section>
-                    <Section isLoading={isDeepFetching && !hasAnyStaff && !(comicStaff?.Penciller?.length)} title="Penciller">{renderMetronPills(comicStaff?.Penciller, 'p')}</Section>
-                    <Section isLoading={isDeepFetching && !hasAnyStaff && !(comicStaff?.Artist?.length)} title="Artist">{renderMetronPills(comicStaff?.Artist, 'a')}</Section>
-                    <Section isLoading={isDeepFetching && !hasAnyStaff && !(comicStaff?.Inker?.length)} title="Inker">{renderMetronPills(comicStaff?.Inker, 'ink')}</Section>
-                    <Section isLoading={isDeepFetching && !hasAnyStaff && !(comicStaff?.Colorist?.length)} title="Colorist">{renderMetronPills(comicStaff?.Colorist, 'col')}</Section>
-                    <Section isLoading={isDeepFetching && !hasAnyStaff && !(comicStaff?.Letterer?.length)} title="Letterer">{renderMetronPills(comicStaff?.Letterer, 'let')}</Section>
-                    <Section isLoading={isDeepFetching && !hasAnyStaff && !(comicStaff?.Editor?.length)} title="Editor">{renderMetronPills(comicStaff?.Editor, 'ed')}</Section>
-                    <Section isLoading={isDeepFetching && !hasAnyStaff && !(comicStaff?.["Cover Artist"]?.length)} title="Cover Artist">{renderMetronPills(comicStaff?.["Cover Artist"], 'cov')}</Section>
+                    <Section isLoading={shouldShowMetadataSkeleton(isDeepFetching, comicStaff?.Writer)} title="Writer">{renderMetronPills(comicStaff?.Writer, 'w')}</Section>
+                    <Section isLoading={shouldShowMetadataSkeleton(isDeepFetching, comicStaff?.Penciller)} title="Penciller">{renderMetronPills(comicStaff?.Penciller, 'p')}</Section>
+                    <Section isLoading={shouldShowMetadataSkeleton(isDeepFetching, comicStaff?.Artist)} title="Artist">{renderMetronPills(comicStaff?.Artist, 'a')}</Section>
+                    <Section isLoading={shouldShowMetadataSkeleton(isDeepFetching, comicStaff?.Inker)} title="Inker">{renderMetronPills(comicStaff?.Inker, 'ink')}</Section>
+                    <Section isLoading={shouldShowMetadataSkeleton(isDeepFetching, comicStaff?.Colorist)} title="Colorist">{renderMetronPills(comicStaff?.Colorist, 'col')}</Section>
+                    <Section isLoading={shouldShowMetadataSkeleton(isDeepFetching, comicStaff?.Letterer)} title="Letterer">{renderMetronPills(comicStaff?.Letterer, 'let')}</Section>
+                    <Section isLoading={shouldShowMetadataSkeleton(isDeepFetching, comicStaff?.Editor)} title="Editor">{renderMetronPills(comicStaff?.Editor, 'ed')}</Section>
+                    <Section isLoading={shouldShowMetadataSkeleton(isDeepFetching, comicStaff?.["Cover Artist"])} title="Cover Artist">{renderMetronPills(comicStaff?.["Cover Artist"], 'cov')}</Section>
                   </>
                 );
               })()}
@@ -1091,14 +1091,14 @@ export const CreativeTeamSection = ({ type, raw, isDeepFetching, genres, platfor
         )}
         {type === 'vn' && (
           <div className="flex flex-row flex-wrap gap-x-8 gap-y-2">
-            <Section isLoading={isDeepFetching && !vnDirectors.length} title="Director">{vnDirectors.map((c, i) => <Pill key={`vndir-${i}`} main={c.name} to={`/explore/vndb/staff/${c.id}?name=${encodeURIComponent(c.name)}`} />)}</Section>
-            <Section isLoading={isDeepFetching && !vnScenario.length} title="Scenario">{vnScenario.map((c, i) => <Pill key={`vnscen-${i}`} main={c.name} to={`/explore/vndb/staff/${c.id}?name=${encodeURIComponent(c.name)}`} />)}</Section>
-            <Section isLoading={isDeepFetching && !vnCharDesign.length} title="Character Design">{vnCharDesign.map((c, i) => <Pill key={`vncd-${i}`} main={c.name} to={`/explore/vndb/staff/${c.id}?name=${encodeURIComponent(c.name)}`} />)}</Section>
-            <Section isLoading={isDeepFetching && !vnArt.length} title="Art">{vnArt.map((c, i) => <Pill key={`vnart-${i}`} main={c.name} to={`/explore/vndb/staff/${c.id}?name=${encodeURIComponent(c.name)}`} />)}</Section>
+            <Section isLoading={shouldShowMetadataSkeleton(isDeepFetching, vnDirectors)} title="Director">{vnDirectors.map((c, i) => <Pill key={`vndir-${i}`} main={c.name} to={`/explore/vndb/staff/${c.id}?name=${encodeURIComponent(c.name)}`} />)}</Section>
+            <Section isLoading={shouldShowMetadataSkeleton(isDeepFetching, vnScenario)} title="Scenario">{vnScenario.map((c, i) => <Pill key={`vnscen-${i}`} main={c.name} to={`/explore/vndb/staff/${c.id}?name=${encodeURIComponent(c.name)}`} />)}</Section>
+            <Section isLoading={shouldShowMetadataSkeleton(isDeepFetching, vnCharDesign)} title="Character Design">{vnCharDesign.map((c, i) => <Pill key={`vncd-${i}`} main={c.name} to={`/explore/vndb/staff/${c.id}?name=${encodeURIComponent(c.name)}`} />)}</Section>
+            <Section isLoading={shouldShowMetadataSkeleton(isDeepFetching, vnArt)} title="Art">{vnArt.map((c, i) => <Pill key={`vnart-${i}`} main={c.name} to={`/explore/vndb/staff/${c.id}?name=${encodeURIComponent(c.name)}`} />)}</Section>
           </div>
         )}
-        {type === 'books' && <Section isLoading={isDeepFetching && !(raw.subjects?.length)} title="Subjects">{(raw.subjects || []).map((g, i) => <Tag key={`subj-${g}-${i}`} text={g} />)}</Section>}
-        {type !== 'books' && type !== 'comics' && <Section isLoading={isDeepFetching && !genres.length} title="Genres & Categories">
+        {type === 'books' && <Section isLoading={shouldShowMetadataSkeleton(isDeepFetching, raw.subjects)} title="Subjects">{(raw.subjects || []).map((g, i) => <Tag key={`subj-${g}-${i}`} text={g} />)}</Section>}
+        {type !== 'books' && type !== 'comics' && <Section isLoading={shouldShowMetadataSkeleton(isDeepFetching, genres)} title="Genres & Categories">
           {genres.map((g, i) => {
             const isString = typeof g === 'string';
             const gName = isString ? g : (g.name || g);
@@ -1110,7 +1110,7 @@ export const CreativeTeamSection = ({ type, raw, isDeepFetching, genres, platfor
             return <Tag key={`${gName}-${i}`} text={gName} to={toLink} />
           })}
         </Section>}
-        <Section isLoading={isDeepFetching && !platforms.length} title="Available Platforms">{platforms.map((p, i) => <Tag key={`${p}-${i}`} text={p} isBg />)}</Section>
+        <Section isLoading={shouldShowMetadataSkeleton(isDeepFetching, platforms)} title="Available Platforms">{platforms.map((p, i) => <Tag key={`${p}-${i}`} text={p} isBg />)}</Section>
       </div>
     </SectionWrapper>
   );

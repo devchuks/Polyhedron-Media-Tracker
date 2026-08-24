@@ -107,9 +107,13 @@ test('detail banners do not remain hidden when a cached image loads before route
 
 test('login screen uses the shared environment policy without a Layout import cycle', async () => {
   const sourceGate = await readFile(new URL('../src/pages/Gate.jsx', import.meta.url), 'utf8');
+  const sourceEnvironment = await readFile(new URL('../src/config/environment.js', import.meta.url), 'utf8');
   assert.match(sourceGate, /showEnvironmentBadge &&/);
   assert.match(sourceGate, /from '\.\.\/config\/environment'/);
   assert.doesNotMatch(sourceGate, /appEnvironment.*from '\.\.\/components\/Layout'/);
+  assert.match(sourceEnvironment, /import\.meta\.env\.VITE_APP_ENVIRONMENT/);
+  assert.match(sourceEnvironment, /import\.meta\.env\.DEV/);
+  assert.doesNotMatch(sourceEnvironment, /=\s*import\.meta\.env\s*(?:\|\||;)/);
 });
 
 test('intentional abort handling is wired narrowly and ordinary errors still reach reporting', async () => {

@@ -3,7 +3,15 @@ export const shouldShowEnvironmentBadge = (environment, isDevelopment) => {
   return Boolean(isDevelopment && normalized && normalized !== 'PRODUCTION');
 };
 
-const viteEnvironment = import.meta.env || {};
+const readAppEnvironment = () => {
+  try { return import.meta.env.VITE_APP_ENVIRONMENT; }
+  catch { return ''; }
+};
 
-export const appEnvironment = String(viteEnvironment.VITE_APP_ENVIRONMENT || '').trim().toUpperCase();
-export const showEnvironmentBadge = shouldShowEnvironmentBadge(appEnvironment, viteEnvironment.DEV);
+const readDevelopmentFlag = () => {
+  try { return import.meta.env.DEV; }
+  catch { return false; }
+};
+
+export const appEnvironment = String(readAppEnvironment() || '').trim().toUpperCase();
+export const showEnvironmentBadge = shouldShowEnvironmentBadge(appEnvironment, readDevelopmentFlag());

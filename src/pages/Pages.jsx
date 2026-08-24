@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { useMediaStore, useUIStore } from '../store/useMediaStore';
@@ -12,6 +12,7 @@ import { filterDashboardItems, findMediaForLog, normalizeProviderScore, preferre
 import { canonicalizeMediaItem, mediaKeyFor } from '../domain/mediaIdentity';
 import { safeExternalUrl } from '../utils/urlSafety';
 import { shouldShowBlockingSkeleton, shouldShowUpdatingIndicator } from '../domain/loadingState';
+import { isDetailEnrichmentPending, runSettlingDetailRequest } from '../domain/detailEnrichment';
 
 const VALID_CATEGORIES = ['tv', 'movies', 'games', 'vn', 'anime', 'manga', 'books', 'comics'];
 
@@ -477,7 +478,7 @@ export const DetailView = () => {
   const isPreview = !storeItem;
 
   const [previewItem, setPreviewItem] = useState(location.state?.previewData || null);
-  const [isDeepFetching, setIsDeepFetching] = useState(false);
+  const [detailEnrichment, setDetailEnrichment] = useState({ routeKey: null, phase: 'idle' });
   const [recs, setRecs] = useState([]);
   const [loadingRecs, setLoadingRecs] = useState(true);
   const [season, setSeason] = useState(1);
@@ -489,10 +490,27 @@ export const DetailView = () => {
   const [showTrailer, setShowTrailer] = useState(false);
   const activeFetchIdRef = useRef(null);
   const routeKey = `${type}:${id}`;
+  const currentRouteRef = useRef(routeKey);
+  const mountedRef = useRef(true);
+  const isDeepFetching = isDetailEnrichmentPending(detailEnrichment, routeKey);
+
+  useLayoutEffect(() => {
+    currentRouteRef.current = routeKey;
+  }, [routeKey]);
+
+  useEffect(() => {
+    // React StrictMode intentionally mounts, cleans up, and mounts effects again
+    // in development. Re-arm the lifecycle guard on every effect setup.
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      activeFetchIdRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     setPreviewItem(location.state?.previewData || null);
-    setIsDeepFetching(false);
+    setDetailEnrichment({ routeKey, phase: 'idle' });
     setRecs([]);
     setLoadingRecs(true);
     setSeason(1);
@@ -547,17 +565,29 @@ export const DetailView = () => {
   }, [id]);
 
   useEffect(() => {
-    if (!isValidType) return;
+    if (!isValidType) {
+      setDetailEnrichment({ routeKey, phase: 'settled' });
+      return;
+    }
     const targetItem = storeItem ? storeItem.apiData : previewItem;
-    if (!targetItem || targetItem.raw?.deepFetched) return;
-    if (activeFetchIdRef.current === routeKey) return; // STRICT LOCK: Prevent concurrent duplicate fetches
-    
-    let isMounted = true; setIsDeepFetching(true);
-    activeFetchIdRef.current = routeKey;
-    
-    apiRegistry.getMediaDetails(id, type).then(rawDetails => {
-        if (!isMounted || !rawDetails || activeFetchIdRef.current !== routeKey) return;
-        
+    if (!targetItem || targetItem.raw?.deepFetched) {
+      setDetailEnrichment({ routeKey, phase: 'settled' });
+      return;
+    }
+    if (activeFetchIdRef.current?.routeKey === routeKey) return;
+
+    const requestId = Symbol(routeKey);
+    activeFetchIdRef.current = { routeKey, requestId };
+    setDetailEnrichment({ routeKey, phase: 'pending' });
+
+    const isCurrent = () => mountedRef.current
+      && currentRouteRef.current === routeKey
+      && activeFetchIdRef.current?.requestId === requestId;
+
+    void runSettlingDetailRequest({
+      load: () => apiRegistry.getMediaDetails(id, type),
+      isCurrent,
+      onResolved: async (rawDetails) => {
         const processed = processDetailRaw(rawDetails, type);
         const updatedRaw = { ...targetItem.raw, ...rawDetails, ...processed, deepFetched: true };
         const updatedYear = rawDetails.release_date?.substring(0, 4) || rawDetails.first_air_date?.substring(0, 4) || rawDetails.released?.substring(0, 4) || rawDetails.startDate?.year || rawDetails.year_began || (rawDetails.first_release_date ? new Date(rawDetails.first_release_date * 1000).getFullYear().toString() : targetItem?.year);
@@ -585,15 +615,17 @@ export const DetailView = () => {
 
         if (isPreview) setPreviewItem(prev => ({ ...prev, title: updatedTitle, image: updatedImage, raw: updatedRaw, year: updatedYear, url: updatedUrl || prev?.url }));
         else patchProviderMetadata(storeItem, type, { title: updatedTitle, image: updatedImage, apiData: { ...storeItem.apiData, image: updatedImage, raw: updatedRaw, year: updatedYear, url: updatedUrl || storeItem.apiData.url } });
-    }).catch(() => {
-      // Error caught by apiRegistry, let it fail silently
+      },
     }).finally(() => {
-      if (isMounted) {
-        setIsDeepFetching(false);
-        if (activeFetchIdRef.current === routeKey) activeFetchIdRef.current = null;
-      }
+      if (!isCurrent()) return;
+      activeFetchIdRef.current = null;
+      setDetailEnrichment({ routeKey, phase: 'settled' });
     });
-    return () => { isMounted = false; if (activeFetchIdRef.current === routeKey) activeFetchIdRef.current = null; };
+    return () => {
+      if (currentRouteRef.current !== routeKey && activeFetchIdRef.current?.requestId === requestId) {
+        activeFetchIdRef.current = null;
+      }
+    };
   }, [id, isPreview, isValidType, patchProviderMetadata, previewItem, routeKey, storeItem, type]);
 
   useEffect(() => {
