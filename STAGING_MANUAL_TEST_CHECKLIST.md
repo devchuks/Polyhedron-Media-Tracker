@@ -158,3 +158,11 @@ Underlying canonical identity, atomic backup validation, owner isolation, Realti
 - [x] Provider errors settle loading and display bounded messages without raw upstream JSON. — Browser sparse-provider fixture plus safe-error regression.
 
 The original checklist now has **52 of 75** checked lines. Seven supplemental checks above capture the newly accepted date, Telegram, loading, and image contracts. Remaining personal checks are still the unchecked original lines: exact K3/full-series counter presentation, movie/per-type transition presentation, authoritative all-issue comic completion, combined Diary field editing, Metron/VNDB Explore pages, User B file-chooser Backup/Restore, and true separate-profile Realtime presentation.
+
+## Curated Guest showcase — 2026-08-24
+
+- [x] Genuinely fresh Guest storage opens with exactly eight curated entries, one per supported category, with real provider identities and working posters/details.
+- [x] Dashboard activity and Diary render the nine deterministic showcase activities; Barry remains in progress at `S03 E04` with only explicit Season 1/2 history.
+- [x] A Guest edit survives reload and a deleted showcase item stays deleted after reload.
+- [x] Behavioral tests prove delete-all/Settings-clear suppression, fresh-storage reseeding, and separate Guest/authenticated owner snapshots without cloud identity.
+- [ ] Final Guest → staging User A → Guest visual replay (credential entry requires separate action-time approval; existing raw staging A/B isolation and local owner-transition tests pass).

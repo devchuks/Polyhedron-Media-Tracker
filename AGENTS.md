@@ -49,6 +49,8 @@ Do not casually reconstruct staging, repeat the legacy migration proof, or reset
 - Stale async provider responses must not update state for a newer route, query, modal selection, or user edit.
 - Sparse provider metadata must never erase a valid stored top-level image. Provider errors shown to users must be bounded and must not expose raw upstream diagnostics.
 - Cached/current content remains mounted during background refreshes. Blocking skeletons are reserved for an initial state with no usable content, and loading/error paths must always settle.
+- Curated Guest data seeds only a genuinely fresh local guest namespace. Reloads, edits, individual/all-item deletion, and an explicit Settings clear must never resurrect fixture rows; clearing the browser's entire local site storage may begin a new seed lifecycle.
+- Guest state and authenticated owner state remain separate persisted namespaces. Guest fixtures never upload, merge into an authenticated owner, or expose authenticated cached rows after logout.
 
 ## Security and database invariants
 
@@ -58,6 +60,7 @@ Do not casually reconstruct staging, repeat the legacy migration proof, or reset
 - Edge Functions must authenticate callers where appropriate, use fixed upstream hosts, validate structured operations and identifiers, bound request sizes/pagination, and never accept unrestricted upstream paths or query languages.
 - Service-role credentials and third-party secrets never belong in browser bundles, logs, tests, or committed files.
 - Existing production user data must be preserved. Never reset or mutate the production Supabase project during remediation or testing.
+- A production cutover requires a separately authorized change window, a verified readable backup, an immediately repeated read-only drift guard, and stage-by-stage STOP conditions. A successful preflight is not mutation authorization.
 - Polyhedron Staging may be mutated only by an explicitly staging-targeted verification or remediation workflow.
 - Preserve User A's recognizable staging acceptance dataset. Prefer User B and disposable fixtures for destructive staging tests.
 - Migrations require backfill consideration. Every identity/schema change must document collision handling, legacy compatibility, existing-user-data impact, rollback constraints, and whether it has been executed.
