@@ -117,7 +117,7 @@ Unified media tracker. Log and keep track of movies, TV shows, games, anime, man
                 Admin Login (no try am)
               </button>
               <p className="text-[10px] text-center text-base-content/50 mt-4 leading-relaxed font-mono uppercase tracking-widest">
-                Guest mode stores data locally in your browser and will not sync. Purely for testing/showcase purposes
+                Guest mode opens with a local sample library you can safely edit or clear. It never syncs with authenticated data.
               </p>
             </div>
           ) : (

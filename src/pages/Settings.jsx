@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { Trash2, Download, Loader2, AlertTriangle } from 'lucide-react';
 import { useMediaStore } from '../store/useMediaStore';
 import { apiRegistry } from '../services/apiRegistry';
+import { mediaKeyFor } from '../domain/mediaIdentity';
+import { markGuestShowcaseInitialized } from '../domain/guestShowcase';
 
 const DEMO_QUERIES = {
   movies: [
@@ -113,6 +115,10 @@ const RANDOM_STATUS = ['planned', 'in progress', 'completed', 'dropped'];
 const ADD_DELAY_MS = 1200;
 
 export const populateDemoData = async (store, setPopLog, setIsPopulating) => {
+  if (store.authMode !== 'guest' || store.ownerId !== 'guest') {
+    setPopLog('Additional demo data is available in Guest Mode only.');
+    return;
+  }
   setIsPopulating(true);
   setPopLog('Picking 5 random items per category...');
 
@@ -141,6 +147,13 @@ export const populateDemoData = async (store, setPopLog, setIsPopulating) => {
 
         if (result?.results?.length > 0) {
           const item = result.results[0];
+          const itemKey = mediaKeyFor(item, type);
+          const currentMedia = useMediaStore.getState().media;
+          const alreadyExists = Object.values(currentMedia || {}).flat().some(existing => mediaKeyFor(existing) === itemKey);
+          if (alreadyExists) {
+            setPopLog(prev => prev + ` -> Skipped existing: ${item.title}`);
+            continue;
+          }
           const status = RANDOM_STATUS[Math.floor(Math.random() * RANDOM_STATUS.length)];
           const rating = Math.random() > 0.3 ? Math.ceil(Math.random() * 10) : 0;
 
@@ -170,6 +183,7 @@ export const populateDemoData = async (store, setPopLog, setIsPopulating) => {
             addedAt,
             dateStarted,
             dateCompleted,
+            image: item.image,
             apiData: item
           }, type);
 
@@ -179,7 +193,9 @@ export const populateDemoData = async (store, setPopLog, setIsPopulating) => {
               log_id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).substring(2),
               media_id: String(item.id),
               media_type: type,
-              action_type: status === 'completed' ? 'COMPLETED' : 'STARTED',
+              action_type: status === 'completed'
+                ? (['games', 'vn'].includes(type) ? 'PLAYED' : ['manga', 'books', 'comics'].includes(type) ? 'READ' : 'WATCHED')
+                : 'LOGGED',
               log_date: new Date(logDate).toISOString(),
               review_text: rating >= 8 ? "Absolutely incredible. Highly recommended!" : rating > 0 && rating < 5 ? "Not my favorite, but glad I checked it out." : rating > 0 ? "It was pretty decent." : "",
               image: item.image || item.apiData?.image,
@@ -212,6 +228,7 @@ const Settings = () => {
       sessionStorage.clear();
       try {
         await useMediaStore.persist.clearStorage();
+        markGuestShowcaseInitialized(localStorage);
         window.location.reload();
       } catch (error) {
         console.error('Local clear failed:', error);

@@ -137,7 +137,7 @@ export const Dashboard = () => {
   const setViewMode = useUIStore((state) => state.setViewMode);
   const [filter, setFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const { recentlyAddedItems, allItemsLength, inProgress, recentActivity } = React.useMemo(() => {
+  const { recentlyAddedItems, inProgress, recentActivity } = React.useMemo(() => {
     const allItems = Object.values(media).flat();
     const getAddedTime = (item) => item.addedAt || item.dateAdded || 0;
     
@@ -155,7 +155,7 @@ export const Dashboard = () => {
       return { ...log, mediaItem };
     }).filter(log => log.mediaItem);
 
-    return { recentlyAddedItems: recent, allItemsLength: allItems.length, inProgress: active, recentActivity: recentLogs };
+    return { recentlyAddedItems: recent, inProgress: active, recentActivity: recentLogs };
   }, [media, mediaLogs, searchQuery, filter]);
   
   const [isPopulating, setIsPopulating] = useState(false);
@@ -193,11 +193,11 @@ export const Dashboard = () => {
 
   return (
     <div className="flex flex-col gap-6 animate-in fade-in duration-300 min-h-screen pb-10">
-      {authMode === 'guest' && (allItemsLength === 0 || isPopulating) && (
+      {authMode === 'guest' && (
         <div className="bg-info/5 border border-info/20 p-6 flex flex-col gap-4 items-start">
           <div>
             <h2 className="text-sm font-black uppercase tracking-widest text-info mb-1">Guest Mode Playground</h2>
-            <p className="text-xs font-mono text-base-content/70">Your local library is empty. You can populate it with 40 random demo entries to safely test the dashboard, library filters and diary logs (located in the search bar). Or you can search for stuff yourself, add to library, log and test functionality without the random demo entries. To clear this data, go to Settings in the top right menu. These entries will clear upon logging out but will remain here until you clear your cache.</p>
+            <p className="text-xs font-mono text-base-content/70">This local showcase demonstrates every Polyhedron media type. Edit or delete anything safely; authenticated libraries stay separate. Add more demo data below, or clear this guest data from Settings.</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <Link
@@ -212,7 +212,7 @@ export const Dashboard = () => {
               className="flex items-center justify-center h-8 px-3 bg-transparent border border-info text-info hover:bg-info hover:text-info-content rounded-none appearance-none font-mono text-xs uppercase tracking-widest gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isPopulating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-              Populate Demo Data
+              Add More Demo Data
             </button>
           </div>
           {popLog && (

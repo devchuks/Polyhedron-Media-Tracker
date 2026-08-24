@@ -10,6 +10,14 @@ import { createKeyedQueue } from '../utils/keyedQueue';
 import { fetchPaginatedRows } from '../services/cloudPagination';
 import { retryAfterJwtRefresh } from '../utils/requestErrors';
 import { createSingleFlight } from '../utils/singleFlight';
+import {
+  GUEST_SHOWCASE_VERSION,
+  createIsolatedAuthenticatedSnapshot,
+  markGuestShowcaseInitialized,
+  readGuestShowcaseVersion,
+  resolveGuestInitialization,
+  snapshotGuestState,
+} from '../domain/guestShowcase';
 
 const initialMediaState = { tv: [], movies: [], games: [], vn: [], anime: [], manga: [], books: [], comics: [] };
 const freshMediaState = () => Object.fromEntries(Object.keys(initialMediaState).map(key => [key, []]));
@@ -22,6 +30,7 @@ const queueLogMutation = (log, operation) => cloudMutationQueue.enqueue(
   operation,
 );
 const nextStorageEpoch = current => Math.max(Date.now(), (Number(current) || 0) + 1);
+const browserLocalStorage = () => typeof window !== 'undefined' ? window.localStorage : null;
 
 const fetchCloudTable = (table, userId, orderColumn, maxRows, {
   columns = '*',
@@ -221,26 +230,31 @@ export const useMediaStore = create(
       authMode: null,
       ownerId: null,
       storageEpoch: 0,
+      guestSnapshot: null,
+      guestSeedVersion: 0,
       authSubscription: null,
       isLoading: true,
       setAuthMode: async (mode, knownUser = null) => {
         const generation = ++authGeneration;
         if (mode === 'admin') {
+          const guestSnapshot = get().ownerId === 'guest' ? snapshotGuestState(get()) : get().guestSnapshot;
           const authResult = knownUser ? { data: { user: knownUser }, error: null } : await supabase.auth.getUser();
           const { data, error } = authResult;
           if (error || !data?.user || generation !== authGeneration) {
             if (get().clearRealtimeSubscription) get().clearRealtimeSubscription();
-            set({ authMode: null, ownerId: null, storageEpoch: nextStorageEpoch(get().storageEpoch), isCloudSyncing: false, isLoading: false, media: freshMediaState(), mediaLogs: [], deletedMediaKeys: {}, deletedLogIds: {} });
+            set({ authMode: null, ownerId: null, guestSnapshot, storageEpoch: nextStorageEpoch(get().storageEpoch), isCloudSyncing: false, isLoading: false, media: freshMediaState(), mediaLogs: [], deletedMediaKeys: {}, deletedLogIds: {} });
             return false;
           }
           const ownerChanged = get().ownerId !== data.user.id;
           const canUseCachedSnapshot = !ownerChanged && hasLocalSnapshot(get());
+          const isolatedOwnerSnapshot = createIsolatedAuthenticatedSnapshot();
           if (ownerChanged && get().clearRealtimeSubscription) get().clearRealtimeSubscription();
           set({
             authMode: mode,
             ownerId: data.user.id,
+            guestSnapshot,
             storageEpoch: ownerChanged ? nextStorageEpoch(get().storageEpoch) : get().storageEpoch,
-            ...(ownerChanged ? { media: freshMediaState(), mediaLogs: [], deletedMediaKeys: {}, deletedLogIds: {} } : {}),
+            ...(ownerChanged ? isolatedOwnerSnapshot : {}),
             isCloudSyncing: true,
             isLoading: !canUseCachedSnapshot,
           });
@@ -255,14 +269,25 @@ export const useMediaStore = create(
           if (get().clearRealtimeSubscription) get().clearRealtimeSubscription();
           const nextOwner = mode === 'guest' ? 'guest' : null;
           const ownerChanged = get().ownerId !== nextOwner || mode === null;
+          const previousGuestSnapshot = get().ownerId === 'guest' ? snapshotGuestState(get()) : get().guestSnapshot;
+          const seededVersion = Math.max(get().guestSeedVersion || 0, readGuestShowcaseVersion(browserLocalStorage()));
+          const guestResolution = mode === 'guest' ? resolveGuestInitialization({
+            currentOwnerId: get().ownerId,
+            currentState: get(),
+            savedGuestSnapshot: previousGuestSnapshot,
+            seededVersion,
+          }) : null;
+          if (mode === 'guest') markGuestShowcaseInitialized(browserLocalStorage());
           set({
             authMode: mode,
             ownerId: nextOwner,
+            guestSnapshot: mode === 'guest' ? guestResolution.snapshot : previousGuestSnapshot,
+            guestSeedVersion: mode === 'guest' ? GUEST_SHOWCASE_VERSION : get().guestSeedVersion,
             storageEpoch: ownerChanged ? nextStorageEpoch(get().storageEpoch) : get().storageEpoch,
-            media: freshMediaState(),
-            mediaLogs: [],
-            deletedMediaKeys: {},
-            deletedLogIds: {},
+            media: mode === 'guest' ? guestResolution.snapshot.media : freshMediaState(),
+            mediaLogs: mode === 'guest' ? guestResolution.snapshot.mediaLogs : [],
+            deletedMediaKeys: mode === 'guest' ? guestResolution.snapshot.deletedMediaKeys : {},
+            deletedLogIds: mode === 'guest' ? guestResolution.snapshot.deletedLogIds : {},
             isCloudSyncing: false,
             isLoading: false,
           });
@@ -997,17 +1022,26 @@ export const useMediaStore = create(
     {
       name: 'polyhedron-storage',
       storage: createJSONStorage(() => idbStorage),
-      version: 4,
-      migrate: persistedState => ({
-        ...persistedState,
-        ownerId: persistedState?.ownerId ?? (persistedState?.authMode === 'guest' ? 'guest' : null),
-        storageEpoch: Number(persistedState?.storageEpoch) || 0,
-        authMode: null,
-        media: canonicalizeMediaCollection(persistedState?.media || freshMediaState()),
-        mediaLogs: (persistedState?.mediaLogs || []).map(canonicalizeLog),
-        deletedMediaKeys: persistedState?.deletedMediaKeys || {},
-        deletedLogIds: persistedState?.deletedLogIds || {},
-      }),
+      version: 5,
+      migrate: persistedState => {
+        const ownerId = persistedState?.ownerId ?? (persistedState?.authMode === 'guest' ? 'guest' : null);
+        const migrated = {
+          ...persistedState,
+          ownerId,
+          storageEpoch: Number(persistedState?.storageEpoch) || 0,
+          authMode: null,
+          media: canonicalizeMediaCollection(persistedState?.media || freshMediaState()),
+          mediaLogs: (persistedState?.mediaLogs || []).map(canonicalizeLog),
+          deletedMediaKeys: persistedState?.deletedMediaKeys || {},
+          deletedLogIds: persistedState?.deletedLogIds || {},
+        };
+        const legacyGuest = ownerId === 'guest' ? snapshotGuestState(migrated) : null;
+        return {
+          ...migrated,
+          guestSnapshot: persistedState?.guestSnapshot || legacyGuest,
+          guestSeedVersion: Number(persistedState?.guestSeedVersion) || (legacyGuest ? GUEST_SHOWCASE_VERSION : 0),
+        };
+      },
       merge: (persistedState, currentState) => {
         const activeOwner = currentState.authMode ? currentState.ownerId : null;
         if (activeOwner && persistedState?.ownerId !== activeOwner) {
@@ -1026,17 +1060,23 @@ export const useMediaStore = create(
       },
       partialize: (state) => {
         const stateToSave = { ...state };
+        if (state.ownerId === 'guest') {
+          stateToSave.guestSnapshot = snapshotGuestState(state);
+          stateToSave.guestSeedVersion = GUEST_SHOWCASE_VERSION;
+        }
         for (const transientKey of [
           '_hasHydrated', 'isAutoProcessing', 'isBatchCommitting', 'isCloudSyncing', 'isLoading',
           'authMode', 'realtimeSubscription', 'authSubscription', 'activeDiaryModal', 'exploreCache',
         ]) delete stateToSave[transientKey];
-        const slimMedia = {};
-        for (const key in stateToSave.media) {
-          slimMedia[key] = stateToSave.media[key].map(item => {
+        const slimMedia = (sourceMedia) => {
+          const result = {};
+          for (const key in sourceMedia) result[key] = sourceMedia[key].map(item => {
             if (!item.apiData?.raw) return item;
             const slimRaw = { ...item.apiData.raw };
-            delete slimRaw.issue_details;
-            delete slimRaw.seasons;
+            if (!item.isGuestShowcase) {
+              delete slimRaw.issue_details;
+              delete slimRaw.seasons;
+            }
             delete slimRaw.credits;
             delete slimRaw.staff;
             delete slimRaw.recommendations;
@@ -1044,11 +1084,16 @@ export const useMediaStore = create(
             delete slimRaw.deepFetched;
             return { ...item, apiData: { ...item.apiData, raw: slimRaw } };
           });
-        }
+          return result;
+        };
         return {
           ...stateToSave,
           importQueue: stateToSave.importQueue,
-          media: slimMedia
+          media: slimMedia(stateToSave.media),
+          guestSnapshot: stateToSave.guestSnapshot ? {
+            ...stateToSave.guestSnapshot,
+            media: slimMedia(stateToSave.guestSnapshot.media),
+          } : null,
         };
       }
     }
