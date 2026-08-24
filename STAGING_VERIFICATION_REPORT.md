@@ -307,3 +307,56 @@ The repaired application deliberately keeps the complete snapshot so a fresh emp
 - `git diff --check`: passing.
 
 No production API, database, Auth, Realtime, Edge Function, frontend, secret, Telegram, migration, or deployment mutation occurred. Production remained read-only and untouched.
+
+## Final TV Workflow and Acceptance Verification — 2026-08-24
+
+### TV workflow implementation
+
+TV state/history semantics now cross `src/domain/tvWorkflow.js` instead of being inferred independently by UI callers. Planned and state-only progress saves create no diary history. An explicit season completion performs one atomic media-plus-log operation for the selected season only, does not backfill prior seasons, and does not auto-advance to a fictional next-season episode. Whole-series completion sets overall status/date without creating season history. Rewatch creates a new stable log identity; edit/delete continues to target the exact `log_id`.
+
+The UI distinguishes **Save Changes**, **Complete & Log Season N**, **Complete Series**, and exact log editing. The import path uses the same single-season command. No schema or migration change was required.
+
+### TV behavioral and hosted evidence
+
+The 16-test TV transition matrix covers planned, start, episode progress, intermediate/final season completion, whole-series completion, leave/re-complete, same-day season rewatch, full-series rewatch count, exact edit, exact delete, and sibling preservation. Browser and hosted User B flows additionally proved:
+
+- planned TV stored no progress and created no diary row;
+- `S01 E03` was actual progress only;
+- completing Season 1 created exactly one Season-1 row and retained `in progress`/no overall completion date;
+- starting Season 2 was explicit; season completion did not claim Season-2 Episode-1 automatically;
+- logging Seasons 1, 2, and 5 created exactly those three rows—no fabricated Season 3/4 history;
+- completing the series retained the actual `S05 E16` position and generated no generic/bulk diary rows;
+- beginning a rewatch cleared old current progress, while same-day watch/rewatch IDs coexisted;
+- exact review edit/clear and one approved diary deletion preserved siblings;
+- the focused staging suite repeated D1/K3/K4/RLS/collision/tombstone behavior and returned User B to 0/0.
+
+K3 remains **NOT REPRODUCED / UNRESOLVED** because the user's exact historical title/click trigger is still unknown. All known callers are nevertheless constrained by construction to at most one selected-season mutation.
+
+### Hydration, account, and image acceptance
+
+After an approved localhost cache/IndexedDB reset, User A reached the authenticated shell in approximately one second and completed a fresh 706-row hydration within six seconds. A separate hard refresh completed in **5.7 seconds**. Complete details, posters, banners, and 658 diary rows were present; no `57014`, endless loading, duplicate Realtime subscription fetch, or browser warning/error occurred. Raw A → B → A remained 706 → 0 → 706. K5 is now **FIXED**; the approximately 10.45 MB full-fidelity payload remains an optimization opportunity, not an unresolved reliability failure.
+
+The user-reported background-image problem was reproduced precisely: library → Fight Club detail had a valid cached TMDB banner URL but remained `opacity-0`; refresh made the same source visible. Removing the route-effect/onLoad visibility race made Fight Club and User A's Steal banner visible immediately. Poster, gallery, new-item, route-away, browser Back, and reopen sources remained non-empty. K2 is now **FIXED**.
+
+A non-empty 40-row guest dataset remained guest-scoped and did not merge into User A. Entering guest after authenticated logout exposed no User A private rows. D4 did not recur during fresh login, hard refresh, guest/auth transitions, or A/B switching; it remains **NOT REPRODUCED / UNRESOLVED WITH BOUNDED RECOVERY**, and JWT validation was not weakened.
+
+### Additional issue and historical sentinel review
+
+D5 (detail-page Add to Library opening with no status and therefore being unsaveable) was discovered, reproduced, and fixed by passing an explicit `planned` preview status. Browser adds then succeeded across every supported provider category.
+
+Three User A rows still contain the known historical planned-TV `S01 E00` sentinel: **Paradise**, **Steal**, and **Chapelwaite**. User A was not mutated. A future production reconciliation should target only TV + planned + exact sentinel after a final read-only drift check.
+
+### Final accounting and validation
+
+- User A: **706 media / 658 logs**; zero canonical collisions, zero canonical orphan logs, zero ownership mismatches, zero malformed canonical keys.
+- User B after exact cleanup: **0 media / 0 logs**. Pre-existing staging test tombstone history was preserved.
+- `npm test`: **85/85 passing**.
+- `npm run lint`: exit 0, zero errors and 34 existing warnings.
+- `npm run build`: passing; existing chunk-size advisory only.
+- `npm run build:staging`: passing; existing chunk-size advisory only.
+- Hosted focused TV/D1/K4/RLS/collision/tombstone verification: passing.
+- `git diff --check`: rerun in the final checkpoint step.
+
+The checklist now has 51 individually verified lines. Remaining personal work is limited to five visual groups: the exact original K3 trigger/full-series counter spot-check, movie delete/re-add and per-type leave-completed presentation, authoritative all-issue comic completion/un-completion, Backup/Restore file-chooser workflows plus Discovery/Explore presentation, and true separate-profile Realtime presentation.
+
+No production database, schema, Auth, RLS, Realtime, Edge Function, frontend, secret, Telegram configuration, migration, or deployment was modified. Production remained entirely read-only.

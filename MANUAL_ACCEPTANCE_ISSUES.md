@@ -8,7 +8,7 @@ Method: hosted staging Supabase clients/REST/SQL plans, existing runtime and uni
 
 The discovery baseline contained 75 checks and ended at **54 PASS, 8 FAIL, 1 BLOCKED, 12 MANUAL-ONLY, 0 NOT TESTED**. Those numbers describe the completed discovery pass, not the post-Antigravity remediation result. The checklist now distinguishes newly verified fixes from checks that still require visual/manual replay.
 
-Nine unique issues remain in the register with their original severities unchanged: **0 Critical, 3 High, 5 Medium, 1 Low**. Post-Antigravity Codex verification finds **5 FIXED, 2 PARTIALLY FIXED, and 2 NOT REPRODUCED / UNRESOLVED**. D1's persistent overwrite and K4's false new writes are fixed without rewriting User A history. K3 remains the unresolved persistent-data risk because the user's original alternate/data-specific path has not been isolated. K5 is materially improved and bounded, but remains partial pending an authenticated browser timing replay.
+Ten issues are now registered: **0 Critical, 3 High, 6 Medium, 1 Low**. Final Codex acceptance verification finds **8 FIXED and 2 NOT REPRODUCED / UNRESOLVED**. D1's persistent overwrite, K4's false progress writes, K5's hydration reliability, K1/K2 image paths, and the newly found D5 detail-add failure are fixed without rewriting User A history. K3 remains the unresolved persistent-data risk because the user's exact historical trigger has not been isolated. D4 retains bounded recovery but its single future-issued-JWT root cause remains unproven.
 
 Staging remained usable and canonical after the audit. User A ended with 706 media and 658 logs; User B ended with no media or logs. Temporary runtime media/log fixtures were removed. Runtime testing added staging-only tombstones, but did not alter User A's recognizable live library. Production was not written or migrated.
 
@@ -27,8 +27,8 @@ Staging remained usable and canonical after the audit. User A ended with 706 med
 
 | Current issue status | Count |
 |---|---:|
-| FIXED | 5 |
-| PARTIALLY FIXED | 2 |
+| FIXED | 8 |
+| PARTIALLY FIXED | 0 |
 | NOT REPRODUCED / UNRESOLVED | 2 |
 | DEFERRED | 0 |
 
@@ -66,11 +66,12 @@ Staging remained usable and canonical after the audit. User A ended with 706 med
 
 ### K2 — Images disappear or reload on application back/navigation
 
-**Current status: PARTIALLY FIXED**
+**Current status: FIXED**
 
 - **Historical reproduction:** The user observed posters disappearing/reloading on application navigation; the exact original title/path did not fail in browser pass 2.
 - **Antigravity attempted fix:** Reset image state by calling React state setters synchronously during render, an unsafe render-phase update that could itself produce warnings or loops.
-- **Post-Antigravity Codex verification:** The render-phase setter was removed. Load/error state is keyed to the source without updating state during render. Disposable guest list → detail → Discovery → browser Back retained the exact decoded Oldboy poster URL. The original intermittent title/path remains unavailable, so this is not promoted to fully fixed.
+- **Post-Antigravity Codex verification:** The render-phase setter was removed. Load/error state is keyed to the source without updating state during render. Disposable list → detail → route away → browser Back retained stable poster URLs with no React warning.
+- **Final acceptance verification:** The user's renewed report made the remaining failure deterministic. Library → Fight Club detail produced a valid cached TMDB banner `src` whose class remained `opacity-0`; refresh changed the same source to `opacity-75`. The route-reset/onLoad race was removed, and Fight Club plus User A's Steal now render the background at `opacity-75` immediately after navigation. Poster, gallery, newly added item, and Back/reopen paths retained non-empty sources.
 
 - **Severity:** Medium
 - **Area:** Images / React navigation / lazy loading
@@ -82,7 +83,7 @@ Staging remained usable and canonical after the audit. User A ended with 706 med
 - **Production risk:** Medium repeated UX/network cost.
 - **Evidence:** Media cards/detail views remount `ImageWithFallback`; every image is `loading="lazy"`, and non-native image hosts are routed through `wsrv.nl`. Navigation recreates image elements and their local `loaded/error` state. K1's top-level/nested mismatch can additionally produce a missing source on the detail route.
 - **Likely subsystem:** Route remount behavior, image view-model consistency, lazy-loading/cache policy.
-- **Root cause status:** **Probable and potentially multi-causal.** Remount/reload behavior is expected from the implementation, while the blank state may share K1's representation mismatch.
+- **Root cause status:** **Confirmed for the harmful blank background state.** A cached image could complete before the route effect reset `loadedBannerSrc`, leaving the already-loaded element permanently transparent. Ordinary browser image remount/revalidation is not treated as a defect when the source remains visible.
 - **Suggested regression test:** With a deterministic image URL, navigate list → detail → another route → back in a component/router test; assert the image source never becomes empty and the fallback is not rendered between stable states.
 - **Suggested remediation direction:** First canonicalize image selection (K1), then preserve/preload stable URLs or use an image cache/state layer that survives route remounts. Avoid hiding genuine load failures.
 - **Dependencies/interactions:** K1; K5 can force additional state replacement and network work during navigation/reconnect.
@@ -101,6 +102,7 @@ Staging remained usable and canonical after the audit. User A ended with 706 med
 - **Historical reproduction:** The user observed prior-season diary rows being fabricated when explicitly logging a later season. Two controlled Foundation browser cases did not reproduce it.
 - **Antigravity attempted fix:** Added a pure-helper test that never exercised the reported UI caller and incorrectly treated the absence of a discovered loop as resolution evidence. No application change addressed K3.
 - **Post-Antigravity Codex verification:** Hosted User B verification again proved the known-correct behavior: adding Season 3 changed only Season 3, both with and without legitimate Season 1/2 siblings. That protects the standard path but does not invalidate the user's report. No speculative broad fix was made.
+- **Final acceptance verification:** Every current TV mutation caller now crosses a small TV workflow boundary. Episode saves are library-only; one explicit season command creates at most one selected-season log; whole-series completion creates no inferred season history. Browser and hosted User B lifecycles logged Seasons 1, 2, and 5 only, without fabricating Seasons 3/4, and exact edit/rewatch/delete paths preserved sibling IDs. The original user's exact title/click trigger still did not reproduce, so K3 truthfully remains unresolved despite the structural hardening.
 
 - **Severity:** High
 - **Area:** TV logging / diary persistence
@@ -132,6 +134,7 @@ Staging remained usable and canonical after the audit. User A ended with 706 med
 - **Historical reproduction:** Planned TV serialized and rendered the untouched season-1/episode-0 control defaults as real progress.
 - **Antigravity attempted fix:** Added separate save/render conditions for the exact sentinel, but duplicated progress semantics in UI branches.
 - **Post-Antigravity Codex verification:** Progress serialization is now one tested domain helper: planned/episode-zero yields no stored progress, while in-progress Episode 1 yields `S01 E01`. Hosted User B integration confirmed both states and cleanup; existing User A historical values were deliberately not rewritten.
+- **Final acceptance verification:** A browser-created planned multi-season User B show displayed `Not Started`, persisted no progress, and created no diary row; Episode 1 then persisted as legitimate progress. The three deterministic User A historical sentinels remain Paradise, Steal, and Chapelwaite. They were not mutated; a future production reconciliation may safely target only TV + planned + exact `S01 E00` rows after a final read-only drift check.
 
 - **Severity:** Medium
 - **Area:** TV progress / planned state
@@ -157,11 +160,12 @@ Staging remained usable and canonical after the audit. User A ended with 706 med
 
 ### K5 — Full cloud snapshot intermittently times out with `57014`
 
-**Current status: PARTIALLY FIXED**
+**Current status: FIXED**
 
 - **Historical reproduction:** User A hydration transferred an approximately 10.4 MB `select=*` response in up to three overlapping waves, blocked usable login for more than 20 seconds, and had previously hit PostgreSQL `57014`.
 - **Antigravity attempted fix:** Claimed a lightweight projection, but `fetchCloudTable` still hard-coded `.select('*')` and ignored the proposed projection argument. Its source-regex test passed without exercising that behavior, and its generic retry retried all page errors.
-- **Post-Antigravity Codex verification:** Fresh clients still receive complete rows—avoiding missing detail metadata and N+1 fetches—but in one owner-scoped single-flight wave, split into 250-row media pages with a lightweight revision fingerprint before commit. Realtime `SUBSCRIBED` no longer starts another full snapshot. Only the actual PostgREST `JWT issued at future` class receives one session refresh and one retry; all failures terminate loading. Hosted measurements improved from up to three 10.4 MB waves / >20 seconds to one three-page 10.45 MB snapshot (~1.78 s) plus a 76.9 KB fingerprint (~0.71 s). Authenticated browser timing still requires the approved credential-entry replay, so the issue remains partially fixed rather than overstated.
+- **Post-Antigravity Codex verification:** Fresh clients still receive complete rows—avoiding missing detail metadata and N+1 fetches—but in one owner-scoped single-flight wave, split into 250-row media pages with a lightweight revision fingerprint before commit. Realtime `SUBSCRIBED` no longer starts another full snapshot. Only the actual PostgREST `JWT issued at future` class receives one session refresh and one retry; all failures terminate loading.
+- **Final acceptance verification:** After the approved localhost IndexedDB/cache reset, staging User A reached an authenticated shell in about one second and completed its fresh 706-row hydration within six seconds. A separate hard refresh completed in 5.7 seconds. The library retained complete cards, detail metadata, posters, banners, and 658 diary rows; no `57014`, endless loading, duplicate Realtime subscription fetch, or stale-owner leak occurred. Repeated A → B → A accounting remained 706 → 0 → 706. The raw full payload is still approximately 10.45 MB, but it now travels once as three bounded pages and is revision-validated before installation.
 
 - **Severity:** High
 - **Area:** Cloud hydration / login / performance
@@ -194,6 +198,7 @@ Staging remained usable and canonical after the audit. User A ended with 706 med
 - **Historical reproduction:** Creating a second same-media, same-day, same-season activity silently replaced the first persistent diary row.
 - **Antigravity attempted fix:** Changed local/cloud matching to stable `log_id`, which was the correct conceptual direction.
 - **Post-Antigravity Codex verification:** Pure tests and hosted User B integration prove distinct WATCHED/RE-WATCHED IDs coexist, editing one preserves its ID, and its sibling remains byte-for-byte unchanged. Same-day TV season siblings also remain distinct. Fixtures were removed and User B returned to 0/0.
+- **Final acceptance verification:** Browser TV history contained separate same-day Season 1 WATCHED and RE-WATCHED IDs alongside Season 2/5 siblings. Editing and clearing the Season 2 review changed only that exact log. An approved browser deletion removed exactly one entry; the remaining siblings survived immediately and through hosted accounting. The focused staging RPC suite repeated create/edit/delete/no-resurrection and returned User B to 0/0.
 
 - **Severity:** High
 - **Area:** Diary identity / persistent state
@@ -270,6 +275,7 @@ Staging remained usable and canonical after the audit. User A ended with 706 med
 - **Historical reproduction:** One browser PostgREST snapshot failed with `PGRST3003` / `JWT issued at future` during account switching; raw Auth succeeded immediately afterward.
 - **Antigravity attempted fix:** Added a DEV-only two-second retry to Edge-function invocation. That code does not construct PostgREST snapshot requests and could not affect the failing path; it also risked presenting an unrelated Edge 401 as clock skew.
 - **Post-Antigravity Codex verification:** The unrelated Edge retry was removed. The actual snapshot path now has bounded recovery: only the exact future-issued-JWT class triggers one `refreshSession` and one retry; ordinary failures do not retry, loading always terminates, owner-generation guards reject stale results, and owner switches cannot install prior-owner data. The original nondeterministic failure has not recurred, so the root cause is not falsely labelled fixed and JWT validation was not weakened.
+- **Final acceptance verification:** Fresh-cache login, hard refresh, logout/login, guest → authenticated, and repeated raw/browser account switching produced no `PGRST3003` or future-JWT rejection. Loading terminated, no stale User A rows appeared under User B or guest mode, and the browser logged no warnings/errors. Because the original clock/session cause remains unproven, D4 remains **NOT REPRODUCED / UNRESOLVED** with bounded recovery rather than being mislabelled fixed.
 
 - **Severity:** Medium
 - **Area:** Auth session / cloud hydration / account switching
@@ -286,13 +292,26 @@ Staging remained usable and canonical after the audit. User A ended with 706 med
 - **Suggested remediation direction:** First verify client/server clock behavior and trace session token issuance/refresh during account switching. Add bounded recovery/re-auth presentation; do not weaken JWT validation.
 - **Dependencies/interactions:** Shares the hydration surface with K5 but has a distinct authentication/token error rather than a database statement timeout.
 
+### D5 — Detail-page Add to Library opened an unsaveable blank status
+
+**Current status: FIXED**
+
+- **Historical reproduction:** During final acceptance, opening a provider result and selecting `Add to Library` produced a modal with no selected status. `Save Log` silently did nothing because blank states are rejected.
+- **Final Codex verification:** Detail preview actions now pass an explicit `planned` target status. The failure reproduced before the change on the disposable Breaking Bad path; afterward the modal opened with `In Watchlist`, saved a planned row, and the same corrected path worked for movie, anime, manga, game, VN, book, and comic fixtures.
+- **Severity:** Medium
+- **Area:** Detail view / add workflow
+- **Data corruption risk:** None; the failure prevented the intended insert.
+- **Production risk:** Medium core-workflow failure.
+- **Root cause status:** **Confirmed.** The detail preview caller omitted `targetStatus`, while the modal correctly rejected an empty status.
+- **Regression test:** Source wiring asserts preview detail adds pass `planned`; browser acceptance exercised provider-backed adds across every supported category.
+
 ## Potentially related issue clusters
 
-- **Image/navigation/state:** K1's deterministic image boundary is fixed. K2's unsafe render-phase state reset is fixed and the current replay passed, but its original intermittent path remains unavailable. K5 can still amplify network work but is not assumed to be the same cause.
+- **Image/navigation/state:** K1's complete-row image boundary and K2's cached-banner visibility race are fixed. Poster, banner, gallery, newly added, route-away, Back, and reopen paths passed with stable non-empty sources.
 - **TV progress/diary:** K4 serialization is fixed and hosted-verified. K3 remains an alternate-caller/data-specific investigation; do not infer a K3 fix from K4.
-- **Hydration/cloud snapshot:** K5 now uses one complete, chunked, revision-validated flight instead of overlapping waves. D4 is a distinct token-validity failure with bounded actual-path recovery, not a database-timeout symptom.
+- **Hydration/cloud snapshot:** K5 now uses one complete, chunked, revision-validated flight instead of overlapping waves and passed fresh-cache authenticated timing. D4 is a distinct token-validity failure with bounded actual-path recovery, not a database-timeout symptom.
 - **Diary identity/deletion:** D1 create/edit identity is fixed and hosted-verified. Canonical cross-provider identity, targeted deletion, tombstones, and no-resurrection continue to pass independently.
-- **Account/cache:** No cross-owner exposure was found. Hosted RLS, raw and browser A → B → A switching, empty User B hydration, owner epochs, and Realtime isolation passed. Browser guest-transition presentation remains partly manual-only. D2 is an environment cue issue, not an isolation failure.
+- **Account/cache:** No cross-owner exposure was found. Hosted RLS, raw and browser A → B → A switching, non-empty guest → authenticated switching, authenticated → empty guest entry, owner epochs, and Realtime isolation passed. D2 is an environment cue issue, not an isolation failure.
 - **Navigation/error handling:** D3 now suppresses only intentional `AbortError`; ordinary failures remain reportable. It is independent of K2.
 
 ## Historical checklist results — discovery baseline
@@ -395,30 +414,24 @@ Evidence labels: **runtime** = hosted staging client/RPC/Realtime suite; **unit*
 
 ## Recommended remaining remediation order
 
-1. **K3 — prior-season diary creation (High):** obtain the exact original title/data/click sequence and instrument alternate callers. Do not invent a broad fix while both standard Season-3 cases remain correct.
-2. **K5 — cloud hydration (High, partially fixed):** complete the authenticated browser empty-cache/hard-refresh/A → B → A timing replay. Do not trade complete fresh-client data for a fake projection or raise the database timeout.
-3. **K2 — navigation image behavior (Medium, partially fixed):** replay the exact original title/path after K1's deterministic representation fix; change caching only if a harmful blank/reload remains.
-4. **D4 — future-issued JWT (Medium, unresolved):** preserve bounded one-refresh/one-retry recovery and capture session/clock evidence if it recurs. Do not weaken JWT validation.
+1. **K3 — prior-season diary creation (High):** obtain the exact original title/data/click sequence if the historical symptom returns. All known callers are now constrained to one selected-season command, so do not add speculative history-reconstruction logic.
+2. **D4 — future-issued JWT (Medium):** preserve bounded one-refresh/one-retry recovery and capture session/clock evidence if it recurs. Do not weaken JWT validation.
 
 ## Manual-only tests remaining
 
-The original discovery register identified twelve manual-only groups. The unchecked checklist now remains deliberately conservative. The user should personally perform these focused checks:
+The final pass reduced personal/manual work to five focused groups:
 
-- Recheck K1/K2 on the exact titles that originally failed; the fully populated Fight Club/Steal records did not reproduce the blank state.
-- Reproduce K3 using the exact original TV title and click sequence; the standard Foundation season modal passed both required cases.
-- Complete the TV whole-series, leave-completed, re-complete, counter, and TV rewatch visual flows.
-- Run type-specific add/edit/reload workflows for anime, manga, games, VN, books, and comics, especially partial issue loading.
-- Click Search/Discovery/Explore Next/Prev and open results across every remaining category; inspect provider-error presentation.
-- Verify non-empty guest → authenticated and authenticated → guest IndexedDB/cache behavior and make the expected import/discard choice explicit.
-- Exercise Backup/Restore through the UI with a disposable file: export, current import, legacy import, malformed file, and orphan-log rejection.
-- Run true two-browser-session Realtime presentation checks for update/delete/reconnect/no-resurrection.
-- Manually clear a diary review once; the browser controller's controlled-input clearing became unreliable, so its attempted replay was not used as defect evidence.
+- If possible, provide/replay the exact original K3 title and click sequence; the standard and structurally hardened paths did not reproduce it.
+- Visually inspect the full-series rewatch counter after a complete real rewatch; command, hosted, and diary semantics passed, but the counter has no dedicated acceptance surface.
+- For comics, mark every issue in one authoritative 24-issue series read, then unread one, to visually confirm the automatic completion/un-completion presentation. Partial-list and individual read/unread safety already passed.
+- Exercise Backup/Restore through the UI file chooser with disposable User B data: current export/import, legacy import, malformed file, orphan-log rejection, and replace presentation. Underlying atomic/canonical contracts pass automated and hosted tests.
+- Use truly separate browser profiles for visual Realtime update/delete/reconnect presentation. Hosted owner isolation, Realtime delivery, tombstones, reconnect, and no-resurrection already pass.
 
 Staging is safe for continued manual exploration. User B's disposable media/logs were removed and User A remained at 706/658. Use disposable User B fixtures for destructive edge cases and avoid resetting User A. K3 remains the only unresolved persistent-data issue; use a disposable show if attempting its original path. K4 and D1 now have hosted regression evidence and should be spot-checked without rewriting User A history.
 
 ## Non-destructive validation
 
-- `npm test`: PASS, 67/67.
+- `npm test`: PASS, 85/85.
 - `npm run lint`: PASS with 0 errors and 34 existing warnings.
 - `npm run build`: PASS; existing chunk-size advisory only.
 - `npm run build:staging`: PASS; existing chunk-size advisory only.

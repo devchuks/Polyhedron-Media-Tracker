@@ -35,6 +35,10 @@ Do not casually reconstruct staging, repeat the legacy migration proof, or reset
 - Destructive operations must use proper ownership and canonical identity. A raw ID, UI category, or client-side mode alone is never a safe delete predicate.
 - Provider metadata must not overwrite newer user-controlled state such as status, progress, rating, dates, review text, or read issue IDs.
 - Diary entries have stable log identities. Updating a same-day entry must preserve its `log_id`, while distinct media types/providers with colliding raw IDs must remain independent.
+- TV library state and TV diary history are distinct. Saving status or episode progress does not create historical diary rows.
+- One explicit TV season action creates at most one log for the selected season. It never backfills earlier seasons, and completing a season does not imply starting the next season.
+- Whole-series TV completion sets overall state/date without fabricating missing season logs. Separate watch/rewatch activities require separate stable log IDs.
+- Editing or deleting TV diary history targets the exact `log_id` and does not implicitly recompute current library progress/status unless an explicitly designed workflow says otherwise.
 - Completion dates and completion status move together: completed items have a completion date; leaving completed clears it unless a workflow explicitly preserves historical completion in a diary record.
 - Issue IDs are compared canonically across string/number input, and partial issue lists must never imply that an entire series is complete.
 - Untrusted HTML must never be rendered unsanitized. Prefer rendering text/React nodes; any exceptional HTML boundary requires an allowlist sanitizer and a regression test.

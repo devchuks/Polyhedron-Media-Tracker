@@ -2,6 +2,12 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createClient } from '@supabase/supabase-js';
+import {
+  completeTvSeries,
+  executeTvSeasonCompletion,
+  saveTvLibraryState,
+  startTvRewatch,
+} from '../src/domain/tvWorkflow.js';
 
 const parseEnv = source => Object.fromEntries(
   source.split(/\r?\n/u)
@@ -75,6 +81,28 @@ const upsertLog = async row => {
   const { error } = await clientB.rpc('upsert_user_log', { p_log: row });
   assert.ifError(error);
 };
+let revisionOffset = 1_000;
+const withRevision = row => ({ ...row, updated_at: iso(revisionOffset += 10) });
+const saveState = async row => upsertMedia(withRevision(row));
+const saveMediaWithLog = async (row, category, diaryLog) => {
+  assert.equal(category, 'tv');
+  const nextMedia = withRevision(row);
+  const nextLog = {
+    ...diaryLog,
+    media_id: nextMedia.id,
+    media_type: 'tv',
+    provider: nextMedia.provider,
+    provider_id: nextMedia.provider_id,
+    media_key: nextMedia.media_key,
+    updated_at: iso(revisionOffset += 10),
+  };
+  logIds.add(nextLog.log_id);
+  const { error } = await clientB.rpc('upsert_user_media_with_log', {
+    p_media: nextMedia,
+    p_log: nextLog,
+  });
+  assert.ifError(error);
+};
 
 try {
   const d1Parent = media({ id: `${prefix}-d1`, title: 'D1 same-day fixture' });
@@ -113,6 +141,124 @@ try {
   assert.ifError(afterSeasonThree.error);
   assert.equal(afterSeasonThree.data.length, 3);
   assert.deepEqual(afterSeasonThree.data.filter(row => row.log_id !== seasons[2].log_id), beforeSeasonThree.data);
+
+  const isolatedSeasonThree = media({
+    type: 'tv', id: `${prefix}-tv-isolated-s3`, title: 'TV isolated Season 3 fixture',
+    status: 'in progress', progress: 'S03 E01',
+  });
+  await upsertMedia(isolatedSeasonThree);
+  await executeTvSeasonCompletion({
+    item: isolatedSeasonThree,
+    command: {
+      season: 3, episodeCount: 8, seasonYear: 2026,
+      completedAt: Date.parse('2026-08-24T12:00:00.000Z'),
+      logId: `${prefix}-isolated-season-3`,
+    },
+    saveMediaWithLog,
+  });
+  const isolatedLogs = await clientB.from('media_logs')
+    .select('log_id,season_label').eq('media_key', isolatedSeasonThree.media_key);
+  assert.ifError(isolatedLogs.error);
+  assert.deepEqual(isolatedLogs.data, [{ log_id: `${prefix}-isolated-season-3`, season_label: 'Season 3' }]);
+
+  let lifecycle = media({
+    type: 'tv', id: `${prefix}-lifecycle`, title: 'TV full lifecycle fixture',
+    status: 'planned', progress: null,
+  });
+  await upsertMedia(lifecycle);
+  let lifecycleLogs = await clientB.from('media_logs').select('log_id').eq('media_key', lifecycle.media_key);
+  assert.ifError(lifecycleLogs.error);
+  assert.equal(lifecycleLogs.data.length, 0);
+
+  lifecycle = saveTvLibraryState(lifecycle, { status: 'in progress', season: 1, episode: 0 });
+  await saveState(lifecycle);
+  assert.equal(lifecycle.progress, '');
+  lifecycle = saveTvLibraryState(lifecycle, { status: 'in progress', season: 1, episode: 3 });
+  await saveState(lifecycle);
+  assert.equal(lifecycle.progress, 'S01 E03');
+
+  ({ media: lifecycle } = await executeTvSeasonCompletion({
+    item: lifecycle,
+    command: {
+      season: 1, episodeCount: 10, seasonYear: 2024,
+      completedAt: Date.parse('2026-08-24T09:00:00.000Z'),
+      logId: `${prefix}-lifecycle-s1`,
+    },
+    saveMediaWithLog,
+  }));
+  assert.equal(lifecycle.status, 'in progress');
+  assert.equal(lifecycle.progress, 'S01 E10');
+  assert.equal(lifecycle.dateCompleted, null);
+
+  lifecycle = saveTvLibraryState(lifecycle, { status: 'in progress', season: 2, episode: 1 });
+  await saveState(lifecycle);
+  assert.equal(lifecycle.progress, 'S02 E01');
+  ({ media: lifecycle } = await executeTvSeasonCompletion({
+    item: lifecycle,
+    command: {
+      season: 2, episodeCount: 8, seasonYear: 2025,
+      completedAt: Date.parse('2026-08-24T10:00:00.000Z'),
+      logId: `${prefix}-lifecycle-s2`,
+    },
+    saveMediaWithLog,
+  }));
+  ({ media: lifecycle } = await executeTvSeasonCompletion({
+    item: lifecycle,
+    command: {
+      season: 3, episodeCount: 6, seasonYear: 2026,
+      completedAt: Date.parse('2026-08-24T11:00:00.000Z'),
+      logId: `${prefix}-lifecycle-s3`,
+    },
+    saveMediaWithLog,
+  }));
+  lifecycle = completeTvSeries(lifecycle, { completionTimestamp: Date.parse('2026-08-24T11:05:00.000Z') });
+  await saveState(lifecycle);
+  assert.equal(lifecycle.status, 'completed');
+  assert.equal(lifecycle.progress, 'S03 E06');
+
+  lifecycle = startTvRewatch(lifecycle, {});
+  await saveState(lifecycle);
+  assert.equal(lifecycle.status, 'in progress');
+  assert.equal(lifecycle.dateCompleted, null);
+  ({ media: lifecycle } = await executeTvSeasonCompletion({
+    item: lifecycle,
+    command: {
+      season: 1, episodeCount: 10, seasonYear: 2024, isRewatch: true,
+      completedAt: Date.parse('2026-08-24T19:00:00.000Z'),
+      logId: `${prefix}-lifecycle-s1-rewatch`,
+    },
+    saveMediaWithLog,
+  }));
+  lifecycleLogs = await clientB.from('media_logs')
+    .select('log_id,action_type,season_label,review_text').eq('media_key', lifecycle.media_key).order('log_id');
+  assert.ifError(lifecycleLogs.error);
+  assert.equal(lifecycleLogs.data.length, 4);
+  assert.equal(lifecycleLogs.data.filter(row => row.season_label === 'Season 1').length, 2);
+
+  const selectedLog = lifecycleLogs.data.find(row => row.log_id === `${prefix}-lifecycle-s2`);
+  await upsertLog({
+    ...selectedLog,
+    media_id: lifecycle.id,
+    media_type: 'tv',
+    provider: lifecycle.provider,
+    provider_id: lifecycle.provider_id,
+    media_key: lifecycle.media_key,
+    log_date: '2026-08-24T10:00:00.000Z',
+    review_text: 'edited selected season only',
+    image: lifecycle.image,
+    season_year: '2025',
+    updated_at: iso(revisionOffset += 10),
+  });
+  const { error: deleteLifecycleLogError } = await clientB.rpc('delete_user_log', {
+    p_log_id: `${prefix}-lifecycle-s1-rewatch`,
+    p_deleted_at: iso(revisionOffset += 10),
+  });
+  assert.ifError(deleteLifecycleLogError);
+  lifecycleLogs = await clientB.from('media_logs')
+    .select('log_id,review_text').eq('media_key', lifecycle.media_key).order('log_id');
+  assert.ifError(lifecycleLogs.error);
+  assert.equal(lifecycleLogs.data.length, 3);
+  assert.equal(lifecycleLogs.data.find(row => row.log_id === `${prefix}-lifecycle-s2`).review_text, 'edited selected season only');
 
   const planned = media({ type: 'tv', id: `${prefix}-planned`, title: 'Planned TV fixture', status: 'planned', progress: null });
   await upsertMedia(planned);
@@ -160,6 +306,7 @@ try {
   assert.equal(aCannotSeeB.data.length, 0);
 
   console.log('PASS D1 distinct same-day create/edit and TV season sibling preservation through staging RPCs.');
+  console.log('PASS TV explicit lifecycle: state-only progress, one-log season completion, no auto-advance, series completion, rewatch, exact edit/delete.');
   console.log('PASS K4 planned progress remains null and Episode 1 persists as S01 E01.');
   console.log('PASS owner isolation, canonical raw-ID collisions, and tombstone no-resurrection behavior.');
 } finally {

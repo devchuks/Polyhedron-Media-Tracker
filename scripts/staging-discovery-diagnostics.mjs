@@ -53,7 +53,7 @@ const aCounts = {
   mediaTombstones: await countRows(clientA, 'media_tombstones'),
   logTombstones: await countRows(clientA, 'log_tombstones'),
 };
-const imageShapeResult = await clientA.from('media_library').select('type,status,progress,image,apiData');
+const imageShapeResult = await clientA.from('media_library').select('title,media_key,type,status,progress,image,apiData');
 assert.ifError(imageShapeResult.error);
 const imageShapes = imageShapeResult.data.reduce((summary, row) => {
   const topLevel = typeof row.image === 'string' && row.image.length > 0;
@@ -68,8 +68,8 @@ const imageShapes = imageShapeResult.data.reduce((summary, row) => {
   if (topLevel && !nested && !providerDerived) summary.onlyTopLevel += 1;
   return summary;
 }, { total: 0, topLevel: 0, nested: 0, providerDerived: 0, onlyTopLevel: 0 });
-const plannedEpisodeZero = imageShapeResult.data.filter((row) => row.type === 'tv'
-  && row.status === 'planned' && /^S\d+\s*E0+$/iu.test(String(row.progress || '').trim())).length;
+const plannedEpisodeZeroRows = imageShapeResult.data.filter((row) => row.type === 'tv'
+  && row.status === 'planned' && /^S\d+\s*E0+$/iu.test(String(row.progress || '').trim()));
 const tvLogResult = await clientA.from('media_logs')
   .select('media_key,log_date,action_type,season_label,season_year')
   .eq('media_type', 'tv');
@@ -211,7 +211,8 @@ console.log(`SNAPSHOT_CHUNKED_250 pages=${chunked250Results.length} successful=$
 console.log(`SNAPSHOT_REVISION_FINGERPRINT status=${revisionFingerprint.status} duration_ms=${revisionFingerprint.durationMs} bytes=${revisionFingerprint.bytes} rows=${revisionFingerprint.rowCount ?? 'none'}`);
 console.log(`TOMBSTONES_A media=${aCounts.mediaTombstones} logs=${aCounts.logTombstones}`);
 console.log(`IMAGE_SHAPES total=${imageShapes.total} top_level=${imageShapes.topLevel} nested=${imageShapes.nested} provider_derived=${imageShapes.providerDerived} only_top_level=${imageShapes.onlyTopLevel}`);
-console.log(`TV_FORENSICS planned_episode_zero=${plannedEpisodeZero} exact_timestamp_multi_season_groups=${multiSeasonExactTimestampGroups} same_day_multi_season_groups=${multiSeasonSameDayGroups}`);
+console.log(`TV_FORENSICS planned_episode_zero=${plannedEpisodeZeroRows.length} exact_timestamp_multi_season_groups=${multiSeasonExactTimestampGroups} same_day_multi_season_groups=${multiSeasonSameDayGroups}`);
+console.log(`TV_EPISODE_ZERO_ROWS ${plannedEpisodeZeroRows.map((row) => `${row.title} [${row.media_key}]`).join(' | ') || 'none'}`);
 
 await Promise.all([
   clientA.auth.signOut(), clientB.auth.signOut(), switchClient.auth.signOut(), badPasswordClient.auth.signOut(),

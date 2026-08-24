@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { useMediaStore, useUIStore } from '../store/useMediaStore';
-import { MediaCard, MediaListRow, StarRating, getMediaTypeColors, SectionWrapper, TextBlockSkeleton, PillSkeleton, MetaItem, EpisodeCard, ImageWithFallback, getSubtype, CreativeTeamSection, UserActivitySection, GalleryAndLinks, ComicIssuesSection, formatFancyDate, getDynamicStatusLabel, getStatusColor, stripHtml, resolveMediaImage, formatMarkdownLinks } from '../components/UI';
+import { MediaCard, MediaListRow, StarRating, getMediaTypeColors, SectionWrapper, TextBlockSkeleton, PillSkeleton, MetaItem, EpisodeCard, ImageWithFallback, getSubtype, CreativeTeamSection, UserActivitySection, GalleryAndLinks, ComicIssuesSection, formatFancyDate, formatProgressLabel, getDynamicStatusLabel, getStatusColor, stripHtml, resolveMediaImage, formatMarkdownLinks } from '../components/UI';
 import { Star, ArrowLeft, Loader2, Filter, PlayCircle, X, ExternalLink, ChevronLeft, ChevronRight, Edit3, Plus, ChevronDown, ChevronUp, Download, LayoutGrid, List, Compass, Search, CalendarDays } from 'lucide-react';
 import { apiRegistry } from '../services/apiRegistry';
 import { processDetailRaw } from '../utils/normalizers';
@@ -492,7 +492,6 @@ export const DetailView = () => {
   const [showAllSeries, setShowAllSeries] = useState(false);
   const [showEpisodes, setShowEpisodes] = useState(false);
   const [showTrailer, setShowTrailer] = useState(false);
-  const [loadedBannerSrc, setLoadedBannerSrc] = useState(null);
   const activeFetchIdRef = useRef(null);
   const routeKey = `${type}:${id}`;
 
@@ -507,7 +506,6 @@ export const DetailView = () => {
     setShowAllSeries(false);
     setShowEpisodes(false);
     setShowTrailer(false);
-    setLoadedBannerSrc(null);
     activeFetchIdRef.current = null;
   }, [routeKey, location.state]);
 
@@ -686,7 +684,7 @@ export const DetailView = () => {
       {bannerSrc && (
         <div className="absolute z-0 -top-4 lg:-top-6 -left-4 lg:-left-6 -right-4 lg:-right-6 h-56 lg:h-72 overflow-hidden pointer-events-none" style={{ WebkitMaskImage: 'linear-gradient(to bottom, black 50%, transparent 100%)', maskImage: 'linear-gradient(to bottom, black 50%, transparent 100%)' }}>
           <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-black/10 to-transparent z-10" />
-          <img key={bannerSrc} src={bannerSrc} onLoad={() => setLoadedBannerSrc(bannerSrc)} className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-700 ease-in-out ${loadedBannerSrc === bannerSrc ? 'opacity-75' : 'opacity-0'}`} alt="" />
+          <img key={bannerSrc} src={bannerSrc} className="absolute inset-0 w-full h-full object-cover opacity-75" alt="" />
         </div>
       )}
       <div className="relative z-10 mb-3 lg:mb-4">
@@ -706,7 +704,14 @@ export const DetailView = () => {
             {/* UNIFIED LOGGING AREA */}
             <div className="w-full flex flex-col gap-3 lg:pt-2 lg:border-t border-base-300">
               <button 
-                onClick={() => openDiaryModal({ targetItem: storeItem || previewItem, type, isPreview, apiData, titleToSave: titleText })}
+                onClick={() => openDiaryModal({
+                  targetItem: storeItem || previewItem,
+                  type,
+                  isPreview,
+                  targetStatus: isPreview ? 'planned' : storeItem?.status,
+                  apiData,
+                  titleToSave: titleText,
+                })}
                 className={`flex items-center justify-between w-full h-12 px-4 rounded-none appearance-none font-bold font-mono uppercase tracking-widest text-[10px] sm:text-[11px] shadow-sm overflow-hidden transition-colors ${isPreview ? 'bg-primary hover:bg-primary/90 text-primary-content shadow-lg hover:shadow-primary/20' : 'border ' + getStatusBorderClass(storeItem?.status) + ' ' + getStatusColor(storeItem?.status) + ' bg-base-100 hover:bg-base-200'}`}
               >
                 <span className="truncate block flex-1 text-left">
@@ -721,7 +726,7 @@ export const DetailView = () => {
                    {type === 'tv' && (
                      <div className="flex flex-col">
                        <span className="text-[8px] font-mono text-base-content/50 uppercase">Progress</span>
-                       <span className={`text-[9px] font-bold uppercase tracking-widest text-base-content`}>{storeItem.progress || 'Not Started'}</span>
+                       <span className={`text-[9px] font-bold uppercase tracking-widest text-base-content`}>{formatProgressLabel(storeItem.progress, 'tv') || 'Not Started'}</span>
                      </div>
                    )}
                    <div className={`flex flex-col ${type === 'tv' ? 'items-end' : 'items-center'}`}>

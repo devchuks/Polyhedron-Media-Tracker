@@ -60,10 +60,18 @@ test('failed cloud snapshot is bounded and does not silently destroy owner state
   assert.doesNotMatch(source, /set\(\{ authMode: null, isCloudSyncing: false/);
 });
 
-test('TV modal uses the tested progress serializer instead of persisting episode zero', async () => {
+test('TV modal routes state-only and explicit season actions through the TV workflow boundary', async () => {
   const source = await readFile(new URL('../src/components/UI.jsx', import.meta.url), 'utf8');
-  assert.match(source, /finalProgress = serializeTvProgress\(status, inputSeason, inputEpisode\)/);
-  assert.match(source, /\^S\\d\+\\s\*E0\+\$/);
+  assert.match(source, /saveTvLibraryState\(/);
+  assert.match(source, /completeTvSeries\(/);
+  assert.match(source, /executeTvSeasonCompletion\(/);
+  assert.match(source, /Complete & Log Season/);
+  assert.match(source, /disabled=\{isSubmitting \|\| loadingModalEps \|\| maxEpisodesInSeason < 1\}/);
+  assert.match(source, /!isPreview && \(type === 'tv' \|\| status === 'completed'\)/);
+  assert.doesNotMatch(source, /setInputSeason\(nextSeason\)/);
+
+  const importSource = await readFile(new URL('../src/pages/ImportTerminal.jsx', import.meta.url), 'utf8');
+  assert.match(importSource, /executeTvSeasonCompletion\(/);
 });
 
 test('detail view resolves images from the complete stored row', async () => {
@@ -75,11 +83,22 @@ test('detail view resolves images from the complete stored row', async () => {
   assert.match(sourcePages, /resolveMediaImage\(storeItem \|\| previewItem/);
 });
 
+test('detail-page adds open with an explicit planned status instead of an unsaveable blank state', async () => {
+  const sourcePages = await readFile(new URL('../src/pages/Pages.jsx', import.meta.url), 'utf8');
+  assert.match(sourcePages, /targetStatus: isPreview \? 'planned' : storeItem\?\.status/);
+});
+
 test('ImageWithFallback tracks load and failure by source without render-phase state updates', async () => {
   const sourceUI = await readFile(new URL('../src/components/UI.jsx', import.meta.url), 'utf8');
   assert.match(sourceUI, /loadedSrc === src/);
   assert.match(sourceUI, /failedSrc === src/);
   assert.doesNotMatch(sourceUI, /if\s*\(\s*src\s*!==[\s\S]*setCurrentSrc/);
+});
+
+test('detail banners do not remain hidden when a cached image loads before route effects settle', async () => {
+  const sourcePages = await readFile(new URL('../src/pages/Pages.jsx', import.meta.url), 'utf8');
+  assert.match(sourcePages, /src=\{bannerSrc\} className="absolute inset-0 w-full h-full object-cover opacity-75"/);
+  assert.doesNotMatch(sourcePages, /loadedBannerSrc|setLoadedBannerSrc/);
 });
 
 test('login screen uses the shared environment policy without a Layout import cycle', async () => {

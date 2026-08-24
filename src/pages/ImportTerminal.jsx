@@ -5,6 +5,7 @@ import { Loader2, Check, X, Edit3, Save, Terminal, Play, Upload, FileJson, Chevr
 import { ImageWithFallback, getSubtype } from '../components/UI';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
 import { createBackup } from '../domain/backup';
+import { executeTvSeasonCompletion } from '../domain/tvWorkflow';
 
 const YOINKER_SCRIPT = `(async () => {
   console.log("🚀 Starting Twitter Yoinker...");
@@ -86,11 +87,26 @@ const processCommit = async (item, storeActions) => {
     apiDataPayload.year = pDetails.first_air_date ? pDetails.first_air_date.substring(0, 4) : finalItemData.year;
     
     apiDataPayload.raw = { ...pDetails, season_details: seasonOverride, deepFetched: true };
-    libraryPayload.progress = `S${seasonOverride.season_number.toString().padStart(2, '0')} E${(seasonOverride.episode_count || 1).toString().padStart(2, '0')}`;
-  } else {
-    if (selectedType === 'tv' && finalItemData.raw) {
-      libraryPayload.progress = `S${(finalItemData.raw.number_of_seasons || 1).toString().padStart(2, '0')} E${(finalItemData.raw.number_of_episodes || 1).toString().padStart(2, '0')}`;
-    }
+    libraryPayload.status = 'in progress';
+    libraryPayload.dateCompleted = null;
+
+    await executeTvSeasonCompletion({
+      item: libraryPayload,
+      command: {
+        season: seasonOverride.season_number,
+        episodeCount: seasonOverride.episode_count || 1,
+        seasonYear: seasonOverride.air_date ? seasonOverride.air_date.substring(0, 4) : undefined,
+        completedAt: new Date(item.tweet_timestamp).getTime(),
+        reviewText: item.extracted_note || '',
+        image: libraryPayload.image,
+      },
+      saveMediaWithLog,
+      createLogId: () => typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : Date.now().toString(36) + Math.random().toString(36).substring(2),
+    });
+    removeImportItem(item.id);
+    return;
   }
 
   const diaryLog = {
