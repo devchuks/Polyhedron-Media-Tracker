@@ -2,15 +2,16 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { useMediaStore, useUIStore } from '../store/useMediaStore';
-import { MediaCard, MediaListRow, StarRating, getMediaTypeColors, SectionWrapper, TextBlockSkeleton, PillSkeleton, MetaItem, EpisodeCard, ImageWithFallback, getSubtype, CreativeTeamSection, UserActivitySection, GalleryAndLinks, ComicIssuesSection, formatFancyDate, formatProgressLabel, getDynamicStatusLabel, getStatusColor, stripHtml, resolveMediaImage, formatMarkdownLinks } from '../components/UI';
+import { MediaCard, MediaListRow, StarRating, getMediaTypeColors, SectionWrapper, TextBlockSkeleton, PillSkeleton, MetaItem, EpisodeCard, ImageWithFallback, getSubtype, CreativeTeamSection, UserActivitySection, GalleryAndLinks, ComicIssuesSection, formatFancyDate, formatProgressLabel, getDynamicStatusLabel, getStatusColor, stripHtml, resolveMediaImage, formatMarkdownLinks, MediaGridSkeleton, DetailSkeleton, UpdatingIndicator } from '../components/UI';
 import { Star, ArrowLeft, Loader2, Filter, PlayCircle, X, ExternalLink, ChevronLeft, ChevronRight, Edit3, Plus, ChevronDown, ChevronUp, Download, LayoutGrid, List, Compass, Search, CalendarDays } from 'lucide-react';
 import { apiRegistry } from '../services/apiRegistry';
 import { processDetailRaw } from '../utils/normalizers';
 import { NotFound } from './NotFound';
 import { populateDemoData } from './Settings';
-import { filterDashboardItems, findMediaForLog, normalizeProviderScore } from '../domain/mediaState';
+import { filterDashboardItems, findMediaForLog, normalizeProviderScore, preferredMediaImage } from '../domain/mediaState';
 import { canonicalizeMediaItem, mediaKeyFor } from '../domain/mediaIdentity';
 import { safeExternalUrl } from '../utils/urlSafety';
+import { shouldShowBlockingSkeleton, shouldShowUpdatingIndicator } from '../domain/loadingState';
 
 const VALID_CATEGORIES = ['tv', 'movies', 'games', 'vn', 'anime', 'manga', 'books', 'comics'];
 
@@ -81,13 +82,11 @@ const DashSection = ({ title, items, isLoading, headerRight, horizontalMobile, i
   return (
     <section className="mb-4">
       <div className="flex flex-col sm:flex-row items-start sm:items-end justify-between border-b border-base-300 pb-2 mb-3 gap-3">
-        <h2 className="text-sm font-black uppercase tracking-widest font-sans text-base-content flex items-center gap-2">{title}</h2>
+        <h2 className="text-sm font-black uppercase tracking-widest font-sans text-base-content flex items-center gap-2">{title}{shouldShowUpdatingIndicator(isLoading, items) && <UpdatingIndicator />}</h2>
         {headerRight && <div className="w-full sm:w-auto">{headerRight}</div>}
       </div>
-      {isLoading ? (
-        <div className="w-full bg-base-100 border border-base-300 p-8 flex items-center justify-center text-[10px] font-mono text-base-content/50 uppercase tracking-widest gap-2">
-          <Loader2 className="w-4 h-4 animate-spin text-primary" /> Loading...
-        </div>
+      {shouldShowBlockingSkeleton(isLoading, items) ? (
+        <MediaGridSkeleton count={isCarousel ? 6 : 10} />
       ) : items.length > 0 ? (
         viewMode === 'list' && !isCarousel ? (
           <div className="flex flex-col gap-2 w-full mt-2">
@@ -430,12 +429,8 @@ export const MediaCategory = () => {
         </div>
       </header>
 
-      {isLoading ? (
-        <div className="w-full min-h-[40vh] bg-base-100 flex items-center justify-center border border-base-300">
-          <div className="text-[10px] font-mono font-bold text-base-content/50 tracking-[0.3em] uppercase flex items-center gap-2">
-            <Loader2 className="w-4 h-4 animate-spin text-primary" /> Loading...
-          </div>
-        </div>
+      {shouldShowBlockingSkeleton(isLoading, processedItems) ? (
+        <MediaGridSkeleton />
       ) : processedItems.length > 0 ? (
         <>
           {viewMode === 'grid' ? (
@@ -583,7 +578,10 @@ export const DetailView = () => {
         else if (type === 'books' && rawDetails.workId) updatedUrl = `https://openlibrary.org${rawDetails.workId}`;
         else if (type === 'comics' && rawDetails.id) updatedUrl = `https://metron.cloud/series/${rawDetails.id}/`;
 
-        const updatedImage = rawDetails.image || targetItem.image || previewItem?.image || null;
+        // A hydrated library row may legitimately have a complete top-level image
+        // while older/sparse apiData has no nested image. Provider enrichment must
+        // never replace that usable source with null during the first detail open.
+        const updatedImage = rawDetails.image || preferredMediaImage(storeItem || previewItem) || null;
 
         if (isPreview) setPreviewItem(prev => ({ ...prev, title: updatedTitle, image: updatedImage, raw: updatedRaw, year: updatedYear, url: updatedUrl || prev?.url }));
         else patchProviderMetadata(storeItem, type, { title: updatedTitle, image: updatedImage, apiData: { ...storeItem.apiData, image: updatedImage, raw: updatedRaw, year: updatedYear, url: updatedUrl || storeItem.apiData.url } });
@@ -623,7 +621,7 @@ export const DetailView = () => {
   const titleText = storeItem ? storeItem.title : previewItem?.title || apiData?.title || "Unknown Title";
 
   if (!isValidType) return <NotFound />;
-  if (!apiData) return <div className="p-10 font-mono text-base-content/50 font-bold animate-pulse">Loading details...</div>;
+  if (!apiData) return <DetailSkeleton />;
 
   const trailerUrl = (() => {
     if (type === 'movies' || type === 'tv') { const vid = raw.videos?.results?.find(v => v.site === 'YouTube' && v.type === 'Trailer') || raw.videos?.results?.[0]; return vid ? `https://www.youtube.com/embed/${vid.key}?autoplay=1` : null; }

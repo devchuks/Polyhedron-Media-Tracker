@@ -360,3 +360,44 @@ Three User A rows still contain the known historical planned-TV `S01 E00` sentin
 The checklist now has 51 individually verified lines. Remaining personal work is limited to five visual groups: the exact original K3 trigger/full-series counter spot-check, movie delete/re-add and per-type leave-completed presentation, authoritative all-issue comic completion/un-completion, Backup/Restore file-chooser workflows plus Discovery/Explore presentation, and true separate-profile Realtime presentation.
 
 No production database, schema, Auth, RLS, Realtime, Edge Function, frontend, secret, Telegram configuration, migration, or deployment was modified. Production remained entirely read-only.
+
+## Final Dates, Telegram, Loading, and Visual Acceptance Verification — 2026-08-24
+
+### Date and activity semantics
+
+Date handling now crosses the shared `activityLifecycle` boundary. `addedAt` remains library-add time; first genuine consumption initializes `dateStarted` once; direct completion coherently initializes missing Started and Completed from the explicit Activity Date; later progress does not rewrite Started; leaving completed clears the current completion date without erasing diary history. UI, import, store, TV, and Telegram callers use the same model. `season_year` remains provider release metadata and is never substituted for an activity date. A regression caught and corrected two narrow cloud patches that initially omitted the locally initialized `dateStarted`.
+
+### Telegram semantics and staging result
+
+The Telegram logger no longer treats free text as an implicit completion command. Structured commands distinguish planned, start, progress, item completion, selected-season completion, item/season rewatch, rating-only, and note intents. Provider resolution is deterministic and type-scoped; ambiguous remake/title matches refuse mutation. Progress-only TV commands create no diary history, selected-season completion creates exactly one season log, whole-item completion does not fabricate season history, rating-only preserves lifecycle, and rewatch uses a new stable log identity.
+
+Persistence is one atomic `apply_telegram_media_event` RPC. A repeated Telegram update is detected from its stable batch/event plan before provider resolution and cannot create a second media/log mutation. Success confirmation occurs only after atomic persistence succeeds.
+
+Staging-only synthetic webhook verification passed wrong-secret, unauthorized-chat, canonical Fight Club completion, exact retry/idempotency, rating-only, Foundation progress, selected-season completion, rewatch, ambiguity refusal, and exact cleanup. The remediated function was deployed to **Polyhedron Staging only**. Temporary parser/bot test secrets were removed and the prior staging admin setting was restored. A real Telegram bot was not repointed or exercised; live outbound bot delivery remains a separate manual integration because no staging bot is configured.
+
+### Loading and visual acceptance
+
+Dashboard/library, Diary, Discovery, and Explore now share a bounded loading vocabulary: initial states with no usable content render geometry-matched skeletons; cached/current content remains mounted during background refresh; success, empty, abort, and failure paths settle. Discovery browser pagination retained 45 existing cards during refresh and settled at 50 cards. TMDB and IGDB Explore pages rendered in the browser; Metron and VNDB visual Explore pages remain manual, although their staging provider contracts pass.
+
+The user's renewed background/detail-image report led to an additional deterministic boundary check. A disposable User B item with a valid top-level poster, sparse nested `apiData`, and failed provider enrichment kept the same visible source before refresh, after enrichment failure, through Movies → detail navigation, and after refresh. Detail enrichment now falls back to the complete stored/preview row instead of replacing a valid image with an empty sparse-provider result. A second disposable fixture confirmed ordinary provider failures display bounded category messages, not raw upstream JSON. This is recorded as D6 in `MANUAL_ACCEPTANCE_ISSUES.md`; both fixtures were removed.
+
+Fresh-cache User A login produced one bounded three-page full-fidelity media snapshot, a usable shell while background hydration ran, complete current accounting, no overlapping equivalent snapshot, no Realtime `SUBSCRIBED` refetch, no `57014`, and no endless loading. The current acceptance dataset is **707 media / 660 logs**, reflecting legitimate staging manual activity since the earlier 706/658 evidence. User B finished at **0 media / 0 logs**. Focused runtime verification continued to show zero owner leakage, canonical collisions, or canonical orphan logs.
+
+### Current issue and acceptance status
+
+- **FIXED:** K1, K2, K4, K5, D1, D2, D3, D5, D6.
+- **NOT REPRODUCED / UNRESOLVED:** K3. All known callers are structurally constrained to one selected-season mutation, but the user's exact historical title/click trigger remains unknown.
+- **NOT REPRODUCED / UNRESOLVED WITH BOUNDED RECOVERY:** D4. It did not recur during fresh login/account transitions; JWT validation was not weakened.
+- The original checklist has **52/75** checked lines, plus seven supplemental date/Telegram/loading/image checks. Remaining personal work is limited to exact K3/full-series-counter presentation, movie/per-type transition presentation, authoritative all-issue comic completion, combined Diary field editing, Metron/VNDB Explore presentation, User B Backup/Restore file selection, and true separate-profile Realtime presentation.
+
+### Final validation
+
+- `npm test`: **106/106 passing**.
+- `npm run lint`: exit 0, zero errors and 34 existing warnings.
+- `npm run build`: passing; existing chunk-size advisory only.
+- `npm run build:staging`: passing; existing chunk-size advisory only.
+- Hosted staging Edge verification: passing after temporary Telegram secrets were removed.
+- Hosted staging runtime verification: 13 grouped checks passing; focused D1/K3/K4/RLS/collision/tombstone checks passing; exact disposable cleanup confirmed.
+- `git diff --check`: performed in the final checkpoint step.
+
+No production database, schema, Auth, RLS, Realtime, Edge Function, frontend, secret, Telegram configuration, migration, or deployment was modified. Production remained entirely read-only.

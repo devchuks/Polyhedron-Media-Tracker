@@ -39,11 +39,16 @@ Do not casually reconstruct staging, repeat the legacy migration proof, or reset
 - One explicit TV season action creates at most one log for the selected season. It never backfills earlier seasons, and completing a season does not imply starting the next season.
 - Whole-series TV completion sets overall state/date without fabricating missing season logs. Separate watch/rewatch activities require separate stable log IDs.
 - Editing or deleting TV diary history targets the exact `log_id` and does not implicitly recompute current library progress/status unless an explicitly designed workflow says otherwise.
+- `addedAt`, `dateStarted`, and `dateCompleted` have distinct meanings. First genuine consumption initializes `dateStarted` once; completion uses the explicit activity time and must not silently rewrite an earlier start.
+- An activity date is the diary event timestamp. It is not a provider release year or TV `season_year`, and callers must not infer one from the other.
+- Telegram commands must preserve the same library/diary semantics as the UI, resolve canonical provider identity deterministically, persist media plus any diary event atomically, and remain idempotent for a repeated Telegram update.
 - Completion dates and completion status move together: completed items have a completion date; leaving completed clears it unless a workflow explicitly preserves historical completion in a diary record.
 - Issue IDs are compared canonically across string/number input, and partial issue lists must never imply that an entire series is complete.
 - Untrusted HTML must never be rendered unsanitized. Prefer rendering text/React nodes; any exceptional HTML boundary requires an allowlist sanitizer and a regression test.
 - External URLs require safe protocol validation. Only intended `http:` and `https:` links may open externally; reject active schemes such as `javascript:` and unsafe generated URLs.
 - Stale async provider responses must not update state for a newer route, query, modal selection, or user edit.
+- Sparse provider metadata must never erase a valid stored top-level image. Provider errors shown to users must be bounded and must not expose raw upstream diagnostics.
+- Cached/current content remains mounted during background refreshes. Blocking skeletons are reserved for an initial state with no usable content, and loading/error paths must always settle.
 
 ## Security and database invariants
 

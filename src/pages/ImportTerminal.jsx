@@ -6,6 +6,7 @@ import { ImageWithFallback, getSubtype } from '../components/UI';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
 import { createBackup } from '../domain/backup';
 import { executeTvSeasonCompletion } from '../domain/tvWorkflow';
+import { diaryActionForType } from '../domain/activityLifecycle';
 
 const YOINKER_SCRIPT = `(async () => {
   console.log("🚀 Starting Twitter Yoinker...");
@@ -70,9 +71,10 @@ const processCommit = async (item, storeActions) => {
   const selectedType = item.selected_type;
   
   const apiDataPayload = { ...finalItemData, raw: { ...(finalItemData.raw || finalItemData) } };
+  const activityAt = new Date(item.tweet_timestamp).getTime();
   let libraryPayload = {
     id: finalItemData.id, title: finalItemData.title, type: selectedType, subtype: getSubtype(selectedType),
-    status: 'completed', addedAt: Date.now(), dateCompleted: new Date(item.tweet_timestamp).getTime(),
+    status: 'completed', addedAt: Date.now(), dateStarted: activityAt, dateCompleted: activityAt,
     rating: 0, image: apiDataPayload.image, apiData: apiDataPayload
   };
 
@@ -96,7 +98,7 @@ const processCommit = async (item, storeActions) => {
         season: seasonOverride.season_number,
         episodeCount: seasonOverride.episode_count || 1,
         seasonYear: seasonOverride.air_date ? seasonOverride.air_date.substring(0, 4) : undefined,
-        completedAt: new Date(item.tweet_timestamp).getTime(),
+        completedAt: activityAt,
         reviewText: item.extracted_note || '',
         image: libraryPayload.image,
       },
@@ -111,7 +113,7 @@ const processCommit = async (item, storeActions) => {
 
   const diaryLog = {
     log_id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).substring(2), media_id: libraryPayload.id, media_type: selectedType,
-    action_type: 'LOGGED', log_date: item.tweet_timestamp, review_text: item.extracted_note || '',
+    action_type: diaryActionForType(selectedType), log_date: item.tweet_timestamp, review_text: item.extracted_note || '',
     image: libraryPayload.image, 
     season_label: seasonOverride ? seasonOverride.name : undefined,
     season_year: seasonOverride?.air_date ? seasonOverride.air_date.substring(0, 4) : undefined

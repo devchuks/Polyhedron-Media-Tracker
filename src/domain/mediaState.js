@@ -1,4 +1,5 @@
 import { canonicalizeLog, canonicalizeMediaItem, mediaKeyFor } from './mediaIdentity.js';
+import { applyActivityLifecycle, isMeaningfulProgress } from './activityLifecycle.js';
 
 const USER_FIELDS = new Set([
   'status', 'progress', 'rating', 'addedAt', 'dateStarted', 'dateCompleted', 'rewatchCount',
@@ -71,14 +72,12 @@ export const findMediaForLog = (media, log) => {
 export const applyStatusTransition = (item, status, completionTime = Date.now(), options = {}) => {
   const nextStatus = String(status || '').toLowerCase();
   const isCompleted = nextStatus === 'completed' && !options.milestoneOnly;
-  const parsedCompletion = Number(completionTime);
-  return {
-    ...item,
+  return applyActivityLifecycle(item, {
     status: nextStatus,
-    dateCompleted: isCompleted
-      ? (Number.isFinite(parsedCompletion) ? parsedCompletion : Date.now())
-      : null,
-  };
+    activityAt: completionTime,
+    provesConsumption: options.provesConsumption ?? nextStatus === 'in progress',
+    completesItem: isCompleted,
+  });
 };
 
 export const mergeProviderMetadata = (currentItem, providerPatch) => {
@@ -106,7 +105,7 @@ const authoritativeIssueTotal = (item, explicitTotal) => {
   return Number.isInteger(total) && total > 0 ? total : null;
 };
 
-export const toggleIssueState = (item, issueId, orderedIssueIds = [], explicitTotal) => {
+export const toggleIssueState = (item, issueId, orderedIssueIds = [], explicitTotal, now = Date.now()) => {
   const target = String(issueId);
   const current = [...new Set((item?.readIssueIds || []).map(String))];
   const isRead = current.includes(target);
@@ -125,7 +124,7 @@ export const toggleIssueState = (item, issueId, orderedIssueIds = [], explicitTo
   let dateCompleted = item?.dateCompleted ?? null;
   if (allRead) {
     status = 'completed';
-    dateCompleted ||= Date.now();
+    dateCompleted ||= now;
   } else if (status === 'completed') {
     status = nextRead.length ? 'in progress' : 'planned';
     dateCompleted = null;
@@ -133,13 +132,19 @@ export const toggleIssueState = (item, issueId, orderedIssueIds = [], explicitTo
     status = 'in progress';
   }
 
-  return {
+  const next = {
     ...item,
     readIssueIds: nextRead,
     progress: `${nextRead.length} Issues`,
     status,
     dateCompleted,
   };
+  return applyActivityLifecycle(next, {
+    status,
+    activityAt: now,
+    provesConsumption: !isRead && isMeaningfulProgress(nextRead.length),
+    completesItem: allRead && item?.status !== 'completed',
+  });
 };
 
 export const normalizeProviderScore = (type, raw = {}, fallback = 0) => {

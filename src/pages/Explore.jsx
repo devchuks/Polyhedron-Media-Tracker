@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { apiRegistry } from '../services/apiRegistry';
-import { MediaCard, ComicIssueModal, formatMarkdownLinks } from '../components/UI';
+import { MediaCard, ComicIssueModal, formatMarkdownLinks, DetailSkeleton, MediaGridSkeleton, UpdatingIndicator } from '../components/UI';
 import { useMediaStore } from '../store/useMediaStore';
-import { ArrowLeft, Loader2, User, Clapperboard, Gamepad2, ChevronLeft, ChevronDown, ChevronRight, Tv, Image as ImageIcon, X, Eye } from 'lucide-react';
+import { ArrowLeft, User, Clapperboard, Gamepad2, ChevronLeft, ChevronDown, ChevronRight, Tv, Image as ImageIcon, X, Eye } from 'lucide-react';
 import { safeExternalUrl } from '../utils/urlSafety';
 
 export const Explore = () => {
@@ -81,10 +81,20 @@ export const Explore = () => {
 
     let isMounted = true;
     setIsLoading(true);
-    setData(null);
-    setEntityData(null);
+    if (entityCache) {
+      setData(entityCache.data.personData || null);
+      setEntityData(entityCache.data.companyData || null);
+    } else {
+      setData(null);
+      setEntityData(null);
+    }
 
     setSortOrder(prev => type === 'person' ? 'known_for' : (prev === 'known_for' ? 'popularity' : prev));
+    const settleEntityError = (error) => {
+      if (!isMounted) return;
+      console.error('Explore entity request failed:', error);
+      setIsLoading(false);
+    };
 
     if (api === 'tmdb') {
       if (type === 'person') {
@@ -96,17 +106,17 @@ export const Explore = () => {
           else setRoleFilter('crew');
           setIsLoading(false);
         }
-      });
+      }).catch(settleEntityError);
       } else if (type === 'studio' || type === 'company') {
-        apiRegistry.getCompanyDetails(id).then(res => { if (isMounted) { setEntityData(res); setExploreCache(entityCacheKey, { personData: null, companyData: res }); setIsLoading(false); } });
+        apiRegistry.getCompanyDetails(id).then(res => { if (isMounted) { setEntityData(res); setExploreCache(entityCacheKey, { personData: null, companyData: res }); setIsLoading(false); } }).catch(settleEntityError);
       } else if (type === 'network') {
-        apiRegistry.getNetworkDetails(id).then(res => { if (isMounted) { setEntityData(res); setExploreCache(entityCacheKey, { personData: null, companyData: res }); setIsLoading(false); } });
+        apiRegistry.getNetworkDetails(id).then(res => { if (isMounted) { setEntityData(res); setExploreCache(entityCacheKey, { personData: null, companyData: res }); setIsLoading(false); } }).catch(settleEntityError);
       } else {
         setIsLoading(false);
       }
     } else if (api === 'igdb') {
       if (type === 'company') {
-        apiRegistry.getIGDBCompanyDetails(id).then(res => { if (isMounted) { setEntityData(res); setExploreCache(entityCacheKey, { personData: null, companyData: res }); setIsLoading(false); } });
+        apiRegistry.getIGDBCompanyDetails(id).then(res => { if (isMounted) { setEntityData(res); setExploreCache(entityCacheKey, { personData: null, companyData: res }); setIsLoading(false); } }).catch(settleEntityError);
       } else {
         setIsLoading(false);
       }
@@ -114,7 +124,7 @@ export const Explore = () => {
       if (type === 'person') {
         apiRegistry.getAniListPersonDetails(id).then(res => {
           if (isMounted) { setData(res); setExploreCache(entityCacheKey, { personData: res, companyData: null }); setRoleFilter('all'); setIsLoading(false); }
-        });
+        }).catch(settleEntityError);
       } else {
         setIsLoading(false);
       }
@@ -127,7 +137,7 @@ export const Explore = () => {
             setExploreCache(entityCacheKey, { personData: creatorData, companyData: null });
             setIsLoading(false);
           }
-        });
+        }).catch(settleEntityError);
       } else if (type === 'publisher') {
         apiRegistry.getMetronPublisherDetails(id).then(res => {
           if (isMounted) {
@@ -142,7 +152,7 @@ export const Explore = () => {
             setExploreCache(entityCacheKey, { personData: pubData, companyData: null });
             setIsLoading(false);
           }
-        });
+        }).catch(settleEntityError);
       } else {
         setIsLoading(false);
       }
@@ -158,7 +168,7 @@ export const Explore = () => {
             setExploreCache(entityCacheKey, { personData: null, companyData: devData });
             setIsLoading(false);
           }
-        });
+        }).catch(settleEntityError);
       } else if (type === 'staff') {
         apiRegistry.getVNDBStaffDetails(id).then(res => {
           if (isMounted) {
@@ -172,7 +182,7 @@ export const Explore = () => {
             setExploreCache(entityCacheKey, { personData: staffData, companyData: null });
             setIsLoading(false);
           }
-        });
+        }).catch(settleEntityError);
       } else {
         setIsLoading(false);
       }
@@ -197,9 +207,19 @@ export const Explore = () => {
     }
 
     let isMounted = true;
+    const settleGridError = (error) => {
+      if (!isMounted) return;
+      console.error('Explore grid request failed:', error);
+      setIsGridLoading(false);
+    };
     setIsGridLoading(true);
     setPage(1);
-    setDiscoverResults([]);
+    if (gridCache) {
+      setDiscoverResults(gridCache.data.results || []);
+      setTotalPages(gridCache.data.totalPages || 1);
+    } else {
+      setDiscoverResults([]);
+    }
     
     if (api === 'tmdb' && ['genre', 'studio', 'network'].includes(type)) {
       apiRegistry.discoverTMDB(type, id, mediaFilter, 1, sortOrder).then(res => {
@@ -209,7 +229,7 @@ export const Explore = () => {
           setExploreCache(gridKey, { results: res.results, totalPages: res.totalPages });
           setIsGridLoading(false);
         }
-      });
+      }).catch(settleGridError);
     } else if (api === 'igdb') {
       apiRegistry.discoverIGDB(type, id, 1, sortOrder).then(res => {
         if (isMounted) {
@@ -218,7 +238,7 @@ export const Explore = () => {
           setExploreCache(gridKey, { results: res.results, totalPages: res.totalPages });
           setIsGridLoading(false);
         }
-      });
+      }).catch(settleGridError);
     } else if (api === 'anilist') {
       apiRegistry.discoverAniList(type, id, mediaFilter, 1, sortOrder).then(res => {
         if (isMounted) {
@@ -227,7 +247,7 @@ export const Explore = () => {
           setExploreCache(gridKey, { results: res.results, totalPages: res.totalPages });
           setIsGridLoading(false);
         }
-      });
+      }).catch(settleGridError);
     } else if (api === 'metron') {
       apiRegistry.discoverMetron(type, id, 1).then(res => {
         if (isMounted) {
@@ -236,7 +256,7 @@ export const Explore = () => {
           setExploreCache(gridKey, { results: res.results, totalPages: res.totalPages });
           setIsGridLoading(false);
         }
-      });
+      }).catch(settleGridError);
     } else if (api === 'vndb') {
       apiRegistry.discoverVNDB(type, id, 1, sortOrder, roleFilter).then(res => {
         if (isMounted) {
@@ -245,7 +265,7 @@ export const Explore = () => {
           setExploreCache(gridKey, { results: res.results, totalPages: res.totalPages });
           setIsGridLoading(false);
         }
-      });
+      }).catch(settleGridError);
     } else {
       setIsGridLoading(false);
     }
@@ -432,7 +452,7 @@ export const Explore = () => {
     });
   }, [discoverResults, api, type, id]);
 
-  if (isLoading) return <div className="flex items-center justify-center min-h-[60vh] animate-in fade-in"><Loader2 className="w-8 h-8 animate-spin text-primary opacity-50" /></div>;
+  if (isLoading && !data && !entityData) return <DetailSkeleton />;
   if ((type === 'person' || type === 'creator' || type === 'publisher' || type === 'staff') && !data) return <div className="p-8 text-center font-mono uppercase tracking-widest text-xs opacity-50">Entity not found.</div>;
 
   const profileUrl = data?.profile_path ? `https://image.tmdb.org/t/p/h632${data.profile_path}` : data?.profile_path_custom || null;
@@ -542,6 +562,7 @@ export const Explore = () => {
         <h2 className="text-sm sm:text-lg font-black uppercase tracking-widest font-sans flex items-center gap-1 sm:gap-2 shrink-0">
           {isPersonLayout ? (type === 'publisher' ? 'Published Series' : api === 'tmdb' ? 'Filmography' : 'Credits') : 'Library'} 
           <span className="text-[9px] sm:text-xs font-mono opacity-50">({type === 'person' ? filteredCredits.length : `Page ${currentPage}`})</span>
+          {(isLoading || isGridLoading) && renderItems.length > 0 && <UpdatingIndicator />}
         </h2>
         
         <div className="flex flex-row items-center justify-end gap-1.5 sm:gap-2 overflow-x-auto custom-scrollbar pb-1 min-w-0">
@@ -606,9 +627,7 @@ export const Explore = () => {
       </div>
 
       {isGridLoading && renderItems.length === 0 ? (
-        <div className="py-20 flex items-center justify-center w-full animate-in fade-in">
-          <Loader2 className="w-8 h-8 animate-spin text-primary opacity-50" />
-        </div>
+        <MediaGridSkeleton />
       ) : renderItems.length > 0 ? (
         <>
           <div className={`grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-7 min-[2000px]:grid-cols-8 gap-3 ${isGridLoading ? 'pointer-events-none' : ''}`} style={{ gridAutoRows: 'min-content' }}>

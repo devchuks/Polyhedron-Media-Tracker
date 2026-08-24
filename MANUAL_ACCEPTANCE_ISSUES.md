@@ -8,9 +8,9 @@ Method: hosted staging Supabase clients/REST/SQL plans, existing runtime and uni
 
 The discovery baseline contained 75 checks and ended at **54 PASS, 8 FAIL, 1 BLOCKED, 12 MANUAL-ONLY, 0 NOT TESTED**. Those numbers describe the completed discovery pass, not the post-Antigravity remediation result. The checklist now distinguishes newly verified fixes from checks that still require visual/manual replay.
 
-Ten issues are now registered: **0 Critical, 3 High, 6 Medium, 1 Low**. Final Codex acceptance verification finds **8 FIXED and 2 NOT REPRODUCED / UNRESOLVED**. D1's persistent overwrite, K4's false progress writes, K5's hydration reliability, K1/K2 image paths, and the newly found D5 detail-add failure are fixed without rewriting User A history. K3 remains the unresolved persistent-data risk because the user's exact historical trigger has not been isolated. D4 retains bounded recovery but its single future-issued-JWT root cause remains unproven.
+Eleven issues are now registered: **0 Critical, 3 High, 7 Medium, 1 Low**. Final Codex acceptance verification finds **9 FIXED and 2 NOT REPRODUCED / UNRESOLVED**. D1's persistent overwrite, K4's false progress writes, K5's hydration reliability, K1/K2 image paths, D5's detail-add failure, and D6's sparse-provider error/image boundary are fixed without rewriting User A history. K3 remains the unresolved persistent-data risk because the user's exact historical trigger has not been isolated. D4 retains bounded recovery but its single future-issued-JWT root cause remains unproven.
 
-Staging remained usable and canonical after the audit. User A ended with 706 media and 658 logs; User B ended with no media or logs. Temporary runtime media/log fixtures were removed. Runtime testing added staging-only tombstones, but did not alter User A's recognizable live library. Production was not written or migrated.
+Staging remained usable and canonical after the audit. User A now has 707 media and 660 logs after legitimate manual acceptance activity; User B ended with no media or logs. Temporary runtime media/log fixtures were removed. Runtime testing added staging-only tombstones, but did not alter User A's recognizable live library. Production was not written or migrated.
 
 | Metric | Count |
 |---|---:|
@@ -22,12 +22,12 @@ Staging remained usable and canonical after the audit. User A ended with 706 med
 | NOT TESTED | 0 |
 | Critical issues | 0 |
 | High issues | 3 |
-| Medium issues | 5 |
+| Medium issues | 7 |
 | Low issues | 1 |
 
 | Current issue status | Count |
 |---|---:|
-| FIXED | 8 |
+| FIXED | 9 |
 | PARTIALLY FIXED | 0 |
 | NOT REPRODUCED / UNRESOLVED | 2 |
 | DEFERRED | 0 |
@@ -305,14 +305,27 @@ Staging remained usable and canonical after the audit. User A ended with 706 med
 - **Root cause status:** **Confirmed.** The detail preview caller omitted `targetStatus`, while the modal correctly rejected an empty status.
 - **Regression test:** Source wiring asserts preview detail adds pass `planned`; browser acceptance exercised provider-backed adds across every supported category.
 
+### D6 — Sparse provider enrichment could hide a valid stored image and expose raw diagnostics
+
+**Current status: FIXED**
+
+- **Historical reproduction:** During the final visual pass, the user again reported missing background and related detail images until refresh. A disposable User B row with a valid top-level image, sparse nested `apiData`, and unavailable provider enrichment reproduced the vulnerable boundary.
+- **Final Codex verification:** Detail enrichment now preserves `rawDetails.image || preferredMediaImage(stored/preview row)` instead of replacing a valid stored image with an empty sparse-provider value. Before refresh, after failed enrichment, through Movies → detail navigation, and after refresh, the same valid poster remained visible. A second disposable fixture proved provider failures now render bounded category messages rather than raw upstream JSON. Both fixtures were removed and User B returned to 0/0.
+- **Severity:** Medium
+- **Area:** Provider enrichment / image state / error presentation
+- **Data corruption risk:** Low; the vulnerable path could replace in-memory presentation data but no loss of the stored top-level image was found.
+- **Production risk:** Medium visible reliability and diagnostics-disclosure risk.
+- **Root cause status:** **Confirmed.** Provider detail enrichment treated sparse nested metadata as authoritative over a valid stored row, and the provider boundary forwarded raw upstream error text into UI toasts.
+- **Regression tests:** Complete-row/top-level image precedence, detail enrichment fallback wiring, intentional-abort separation, and safe provider error presentation are covered in the local suite.
+
 ## Potentially related issue clusters
 
-- **Image/navigation/state:** K1's complete-row image boundary and K2's cached-banner visibility race are fixed. Poster, banner, gallery, newly added, route-away, Back, and reopen paths passed with stable non-empty sources.
+- **Image/navigation/state:** K1's complete-row image boundary, K2's cached-banner visibility race, and D6's sparse-enrichment fallback are fixed. Poster, banner, gallery, newly added, route-away, Back, failed enrichment, and reopen paths passed with stable non-empty sources.
 - **TV progress/diary:** K4 serialization is fixed and hosted-verified. K3 remains an alternate-caller/data-specific investigation; do not infer a K3 fix from K4.
 - **Hydration/cloud snapshot:** K5 now uses one complete, chunked, revision-validated flight instead of overlapping waves and passed fresh-cache authenticated timing. D4 is a distinct token-validity failure with bounded actual-path recovery, not a database-timeout symptom.
 - **Diary identity/deletion:** D1 create/edit identity is fixed and hosted-verified. Canonical cross-provider identity, targeted deletion, tombstones, and no-resurrection continue to pass independently.
 - **Account/cache:** No cross-owner exposure was found. Hosted RLS, raw and browser A → B → A switching, non-empty guest → authenticated switching, authenticated → empty guest entry, owner epochs, and Realtime isolation passed. D2 is an environment cue issue, not an isolation failure.
-- **Navigation/error handling:** D3 now suppresses only intentional `AbortError`; ordinary failures remain reportable. It is independent of K2.
+- **Navigation/error handling:** D3 now suppresses only intentional `AbortError`; ordinary failures remain reportable through D6's safe bounded messages. They are independent of K2.
 
 ## Historical checklist results — discovery baseline
 
@@ -424,19 +437,19 @@ The final pass reduced personal/manual work to five focused groups:
 - If possible, provide/replay the exact original K3 title and click sequence; the standard and structurally hardened paths did not reproduce it.
 - Visually inspect the full-series rewatch counter after a complete real rewatch; command, hosted, and diary semantics passed, but the counter has no dedicated acceptance surface.
 - For comics, mark every issue in one authoritative 24-issue series read, then unread one, to visually confirm the automatic completion/un-completion presentation. Partial-list and individual read/unread safety already passed.
-- Exercise Backup/Restore through the UI file chooser with disposable User B data: current export/import, legacy import, malformed file, orphan-log rejection, and replace presentation. Underlying atomic/canonical contracts pass automated and hosted tests.
+- Exercise the remaining provider presentation paths (Metron and VNDB Explore detail) and Backup/Restore through the UI file chooser with disposable User B data: current export/import, legacy import, malformed file, orphan-log rejection, and replace presentation. Discovery pagination itself now has browser evidence. Underlying provider/atomic/canonical contracts pass automated and hosted tests.
 - Use truly separate browser profiles for visual Realtime update/delete/reconnect presentation. Hosted owner isolation, Realtime delivery, tombstones, reconnect, and no-resurrection already pass.
 
-Staging is safe for continued manual exploration. User B's disposable media/logs were removed and User A remained at 706/658. Use disposable User B fixtures for destructive edge cases and avoid resetting User A. K3 remains the only unresolved persistent-data issue; use a disposable show if attempting its original path. K4 and D1 now have hosted regression evidence and should be spot-checked without rewriting User A history.
+Staging is safe for continued manual exploration. User B's disposable media/logs were removed and User A remained intact at its current legitimate acceptance baseline of 707/660. Use disposable User B fixtures for destructive edge cases and avoid resetting User A. K3 remains the only unresolved persistent-data issue; use a disposable show if attempting its original path. K4 and D1 now have hosted regression evidence and should be spot-checked without rewriting User A history.
 
 ## Non-destructive validation
 
-- `npm test`: PASS, 85/85.
+- `npm test`: PASS, 106/106.
 - `npm run lint`: PASS with 0 errors and 34 existing warnings.
 - `npm run build`: PASS; existing chunk-size advisory only.
 - `npm run build:staging`: PASS; existing chunk-size advisory only.
 - Hosted staging Edge verification: PASS for JWT gates, allowlists, payload bounds, live provider calls, quota, and secret-safe errors.
-- Hosted staging runtime verification: PASS, 13/13 grouped checks plus the focused D1/K3/K4/collision/tombstone suite; User A/User B live rows returned to 706/658 and 0/0.
+- Hosted staging runtime verification: PASS, 13/13 grouped checks plus the focused D1/K3/K4/collision/tombstone suite; User A/User B live rows returned to 707/660 and 0/0.
 - `git diff --check`: PASS.
 
 NO PRODUCTION DATA OR SCHEMA WAS MODIFIED DURING THIS DISCOVERY PASS.

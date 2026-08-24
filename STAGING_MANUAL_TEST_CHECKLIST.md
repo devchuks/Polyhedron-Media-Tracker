@@ -73,7 +73,7 @@ Use `npm run dev:staging`. Confirm the header shows **STAGING** before entering 
 
 - [x] Search each supported media category and open at least one result. — Actual TMDB, AniList, IGDB, VNDB, OpenLibrary, and Metron browser flows.
 - [x] Confirm malformed/empty searches show a bounded error or empty state, not a crash. — Empty submission was a bounded no-op; timeout/error regressions terminate loading.
-- [ ] Exercise Discovery sections and pagination.
+- [x] Exercise Discovery sections and pagination. — Browser Load More retained the existing 45 cards during refresh and settled at 50 without a blocking skeleton.
 - [ ] Open Explore/provider detail pages for TMDB, IGDB, Metron, and VNDB-backed content.
 - [x] Confirm provider errors are user-safe and do not reveal credentials or raw server diagnostics. — Staging Edge JWT/allowlist/bounds/error suite and browser console review passed.
 
@@ -146,3 +146,15 @@ The 24 unchecked lines collapse into five genuinely personal/visual acceptance g
 5. true separate-profile multi-browser Realtime presentation.
 
 Underlying canonical identity, atomic backup validation, owner isolation, Realtime delivery, tombstones, reconnect, and no-resurrection contracts already pass automated/hosted verification. Unchecked UI lines remain unchecked because that wording requires a visible flow, not because those lower-level contracts failed.
+
+## Final dates, Telegram, loading, and image verification — 2026-08-24
+
+- [x] First genuine consumption initializes `dateStarted` once; later progress preserves it, and direct completion coherently supplies Started and Completed from the explicit activity time. — Behavioral transition suite plus hosted Telegram movie archetype.
+- [x] An Activity Date remains distinct from provider release year and TV `season_year`. — TV/Telegram behavioral coverage and selected-season hosted persistence.
+- [x] Telegram planned/start/progress/completion/season/rewatch/rating-only commands preserve the same library/diary semantics as the UI. — Staging synthetic webhook integration passed.
+- [x] Replaying the same Telegram update is idempotent and one media-plus-log command is atomic. — Early batch replay and stable event-plan assertions passed; User B cleanup returned to 0/0.
+- [x] Empty initial views use geometry-matched skeletons while cached/current results remain mounted during background refresh. — Dashboard/Diary/Discovery/Explore policy tests and actual Discovery pagination replay.
+- [x] A valid stored top-level image survives sparse or failed provider enrichment before refresh and through route navigation. — Disposable User B browser fixture passed before refresh, after provider failure, after Movies → detail navigation, and after refresh.
+- [x] Provider errors settle loading and display bounded messages without raw upstream JSON. — Browser sparse-provider fixture plus safe-error regression.
+
+The original checklist now has **52 of 75** checked lines. Seven supplemental checks above capture the newly accepted date, Telegram, loading, and image contracts. Remaining personal checks are still the unchecked original lines: exact K3/full-series counter presentation, movie/per-type transition presentation, authoritative all-issue comic completion, combined Diary field editing, Metron/VNDB Explore pages, User B file-chooser Backup/Restore, and true separate-profile Realtime presentation.

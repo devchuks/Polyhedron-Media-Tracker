@@ -3,6 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import { supabase } from '../services/supabase';
 import { canonicalizeLog, canonicalizeMediaItem, mediaKeyFor } from '../domain/mediaIdentity';
 import { applyStatusTransition, canonicalizeMediaCollection, mergeProviderMetadata, toggleIssueState, upsertDiaryLog } from '../domain/mediaState';
+import { applyActivityLifecycle, isMeaningfulProgress } from '../domain/activityLifecycle';
 import { normalizeBackup } from '../domain/backup';
 import { mergeLibraryState, mergePersistedSnapshots, nextRecordRevision } from '../domain/persistenceMerge';
 import { createKeyedQueue } from '../utils/keyedQueue';
@@ -721,7 +722,11 @@ export const useMediaStore = create(
               if (mediaKeyFor(item, category) === mediaKeyFor(id, category)) {
                 const now = nextRecordRevision(item.updatedAt, state.deletedMediaKeys[item.media_key]);
                 targetItem = { ...applyStatusTransition(item, newStatus, now), updatedAt: now };
-                patchPayload = { status: targetItem.status, dateCompleted: targetItem.dateCompleted };
+                patchPayload = {
+                  status: targetItem.status,
+                  dateStarted: targetItem.dateStarted,
+                  dateCompleted: targetItem.dateCompleted,
+                };
                 return targetItem;
               }
               return item;
@@ -736,20 +741,29 @@ export const useMediaStore = create(
 
       updateMediaProgress: (id, type, newProgress) => {
         let targetItem;
+        let patchPayload = {};
         set(state => {
           const items = state.media[type] || [];
           const index = items.findIndex(item => mediaKeyFor(item, type) === mediaKeyFor(id, type));
           if (index === -1) return state;
           const updated = [...items];
+          const now = nextRecordRevision(updated[index].updatedAt, state.deletedMediaKeys[updated[index].media_key]);
+          const lifecycle = applyActivityLifecycle(updated[index], {
+            status: updated[index].status,
+            activityAt: now,
+            provesConsumption: isMeaningfulProgress(newProgress),
+          });
           updated[index] = {
             ...updated[index],
             progress: newProgress,
-            updatedAt: nextRecordRevision(updated[index].updatedAt, state.deletedMediaKeys[updated[index].media_key]),
+            dateStarted: lifecycle.dateStarted,
+            updatedAt: now,
           };
           targetItem = updated[index];
+          patchPayload = { progress: newProgress, dateStarted: targetItem.dateStarted };
           return { media: { ...state.media, [type]: updated } };
         });
-        if (targetItem) void queueMediaMutation(targetItem.media_key, () => get().patchItemInCloud(targetItem, type, { progress: newProgress })).catch(error => {
+        if (targetItem) void queueMediaMutation(targetItem.media_key, () => get().patchItemInCloud(targetItem, type, patchPayload)).catch(error => {
           console.error('Supabase progress patch error:', error);
           useUIStore.getState().addToast('Progress changed locally but cloud sync failed.', 'error');
         });
@@ -789,6 +803,7 @@ export const useMediaStore = create(
                 readIssueIds: targetItem.readIssueIds,
                 progress: targetItem.progress,
                 status: targetItem.status,
+                dateStarted: targetItem.dateStarted,
                 dateCompleted: targetItem.dateCompleted,
               };
               return targetItem;
@@ -1044,7 +1059,9 @@ export const useUIStore = create((set) => ({
   toasts: [],
   addToast: (message, type = 'error') => {
     const id = Date.now() + Math.random();
-    set((state) => ({ toasts: [...state.toasts, { id, message, type }] }));
+    set((state) => state.toasts.some(toast => toast.message === message && toast.type === type)
+      ? state
+      : { toasts: [...state.toasts, { id, message, type }] });
     setTimeout(() => {
       set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) }));
     }, 4000);

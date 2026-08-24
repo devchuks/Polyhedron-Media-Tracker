@@ -1,10 +1,11 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { useMediaStore } from '../store/useMediaStore';
-import { ImageWithFallback, getMediaTypeColors, formatFancyDate, resolveMediaImage } from '../components/UI';
+import { ImageWithFallback, getMediaTypeColors, formatFancyDate, resolveMediaImage, UpdatingIndicator } from '../components/UI';
 import { Link } from 'react-router-dom';
-import { Clock, Trash2, Edit3, Save, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
+import { Clock, Trash2, Edit3, Save, ChevronLeft, ChevronRight } from 'lucide-react';
 import { findMediaForLog } from '../domain/mediaState';
 import { dateInputFromTimestamp, timestampFromDateInput } from '../utils/calendarDate';
+import { shouldShowBlockingSkeleton, shouldShowUpdatingIndicator } from '../domain/loadingState';
 
 const ExpandableReview = ({ text }) => {
   const [expanded, setExpanded] = useState(false);
@@ -34,6 +35,7 @@ export const Diary = () => {
   const [editingId, setEditingId] = useState(null);
   const [editDate, setEditDate] = useState('');
   const [editNote, setEditNote] = useState('');
+  const [editAction, setEditAction] = useState('LOGGED');
 
   const ITEMS_PER_PAGE = 30;
   const [currentPage, setCurrentPage] = useState(1);
@@ -112,12 +114,13 @@ export const Diary = () => {
     setEditingId(log.log_id);
     setEditDate(dateInputFromTimestamp(log.log_date));
     setEditNote(log.review_text || '');
+    setEditAction(log.action_type || 'LOGGED');
   };
 
   const saveEdit = () => {
     const timestamp = timestampFromDateInput(editDate);
     if (timestamp === null) return;
-    updateDiaryLog(editingId, { log_date: new Date(timestamp).toISOString(), review_text: editNote });
+    updateDiaryLog(editingId, { action_type: editAction, log_date: new Date(timestamp).toISOString(), review_text: editNote });
     setEditingId(null);
   };
 
@@ -140,15 +143,13 @@ export const Diary = () => {
         <div className="min-w-0">
           <h1 className="text-xl sm:text-2xl font-black uppercase tracking-widest font-sans truncate">Diary</h1>
           <p className="text-[10px] font-mono text-base-content/50 uppercase tracking-widest mt-0.5 truncate">
-            {mediaLogs.length} entries
+            {mediaLogs.length} entries {shouldShowUpdatingIndicator(isLoading, enrichedLogs) && <UpdatingIndicator label="Syncing" />}
           </p>
         </div>
       </header>
 
-      {isLoading ? (
-        <div className="w-full bg-base-100 border border-base-300 p-8 flex items-center justify-center text-[10px] font-mono text-base-content/50 uppercase tracking-widest gap-2 rounded-none">
-          <Loader2 className="w-4 h-4 animate-spin text-primary" /> Loading...
-        </div>
+      {shouldShowBlockingSkeleton(isLoading, enrichedLogs) ? (
+        <div aria-label="Loading diary" className="flex flex-col gap-2 animate-pulse">{Array.from({ length: 6 }, (_, index) => <div key={index} className="grid grid-cols-[64px_1fr] gap-3 border border-base-300 bg-base-100 p-3"><div className="aspect-[2/3] bg-base-300" /><div className="flex flex-col gap-2"><div className="h-4 w-2/3 bg-base-300" /><div className="h-3 w-1/3 bg-base-300" /><div className="h-3 w-full bg-base-300" /></div></div>)}</div>
       ) : groupKeys.length === 0 ? (
         <div className="w-full bg-base-100 border border-base-300 p-8 flex items-center justify-center text-[10px] font-mono text-base-content/40 uppercase tracking-widest rounded-none">No records found.</div>
       ) : (
@@ -204,7 +205,12 @@ export const Diary = () => {
                           <div className="flex flex-col flex-1 min-w-0 relative justify-center sm:justify-start">
                             {editingId === log.log_id ? (
                                <div className="flex flex-col gap-2 w-full z-10 bg-base-100 border border-primary/20 shadow-xl p-2 -mx-2 -my-2">
+                                 <label className="text-[9px] font-mono font-bold uppercase tracking-widest text-base-content/50">Activity Date</label>
                                  <input type="date" className="input input-xs input-bordered rounded-none font-mono text-[10px] focus:outline-none focus:border-primary w-full bg-base-100" value={editDate} onChange={e => setEditDate(e.target.value)} />
+                                 <label className="text-[9px] font-mono font-bold uppercase tracking-widest text-base-content/50">Activity</label>
+                                 <select className="select select-xs select-bordered rounded-none font-mono text-[10px] focus:outline-none focus:border-primary w-full bg-base-100" value={editAction} onChange={e => setEditAction(e.target.value)}>
+                                   {['WATCHED', 'RE-WATCHED', 'READ', 'RE-READ', 'PLAYED', 'RE-PLAYED', 'LOGGED'].map(action => <option key={action} value={action}>{action}</option>)}
+                                 </select>
                                  <textarea className="textarea textarea-bordered textarea-sm rounded-none font-sans min-h-[80px] focus:outline-none focus:border-primary bg-base-100" value={editNote} onChange={e => setEditNote(e.target.value)} placeholder="Add a note..."></textarea>
                                  <div className="flex gap-2 justify-end mt-1">
                                    <button onClick={() => setEditingId(null)} className="btn btn-xs btn-ghost rounded-none font-mono uppercase tracking-widest text-[9px]">Cancel</button>

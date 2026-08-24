@@ -56,14 +56,18 @@ test('planned TV has no progress and creates no implicit diary activity', () => 
 });
 
 test('starting a planned TV changes status without claiming an episode or adding history', () => {
-  const media = saveTvLibraryState(baseTv(), { status: 'in progress', season: 1, episode: 0 });
+  const activityTimestamp = Date.parse('2026-08-20T14:30:00Z');
+  const media = saveTvLibraryState(baseTv(), { status: 'in progress', season: 1, episode: 0, activityTimestamp });
   assert.equal(media.status, 'in progress');
   assert.equal(media.progress, '');
+  assert.equal(media.dateStarted, activityTimestamp);
 });
 
 test('episode progress records only the selected actual position', () => {
-  const media = saveTvLibraryState(baseTv({ status: 'in progress' }), { status: 'in progress', season: 1, episode: 4 });
+  const originalStarted = Date.parse('2026-08-19T10:00:00Z');
+  const media = saveTvLibraryState(baseTv({ status: 'in progress', dateStarted: originalStarted }), { status: 'in progress', season: 1, episode: 4, activityTimestamp: Date.parse('2026-08-22T18:00:00Z') });
   assert.equal(media.progress, 'S01 E04');
+  assert.equal(media.dateStarted, originalStarted);
 });
 
 test('completing season 1 creates one log, keeps the series open, and does not start season 2', () => {

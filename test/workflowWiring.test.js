@@ -19,6 +19,8 @@ test('narrow frontend media edits use the serialized allowlisted patch RPC', asy
   assert.doesNotMatch(source, /from\('media_library'\)\.update/);
   assert.match(source, /patchItemInCloud:[\s\S]*rpc\('patch_user_media'/);
   assert.match(source, /p_updates: updates/);
+  assert.match(source, /updateMediaStatus:[\s\S]*patchPayload = \{[\s\S]*dateStarted: targetItem\.dateStarted,[\s\S]*dateCompleted: targetItem\.dateCompleted/);
+  assert.match(source, /toggleIssueRead:[\s\S]*readIssueIds: targetItem\.readIssueIds,[\s\S]*dateStarted: targetItem\.dateStarted,[\s\S]*dateCompleted: targetItem\.dateCompleted/);
 });
 
 test('Telegram provider failures remain retryable while genuine empty results can use no-match feedback', async () => {
@@ -81,6 +83,8 @@ test('detail view resolves images from the complete stored row', async () => {
 
   const sourcePages = await readFile(new URL('../src/pages/Pages.jsx', import.meta.url), 'utf8');
   assert.match(sourcePages, /resolveMediaImage\(storeItem \|\| previewItem/);
+  assert.match(sourcePages, /rawDetails\.image \|\| preferredMediaImage\(storeItem \|\| previewItem\) \|\| null/);
+  assert.doesNotMatch(sourcePages, /rawDetails\.image \|\| targetItem\.image \|\| previewItem\?\.image/);
 });
 
 test('detail-page adds open with an explicit planned status instead of an unsaveable blank state', async () => {

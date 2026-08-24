@@ -12,7 +12,7 @@ import { supabase } from './supabase';
 import { FunctionsHttpError } from '@supabase/supabase-js';
 import { parseRetryAfter, withRetry } from '../utils/retry.js';
 import { getCachedValue, mapWithConcurrency, setCachedValue } from '../utils/boundedAsync.js';
-import { isIntentionalAbort } from '../utils/requestErrors.js';
+import { isIntentionalAbort, providerErrorMessage } from '../utils/requestErrors.js';
 
 const invokeFunction = async (name, body) => {
   return withRetry(async () => {
@@ -63,18 +63,7 @@ const reportApiError = (err, serviceName) => {
   if (isIntentionalAbort(err)) return;
   console.error(`🔴 [${serviceName}] Error Detail:`, err);
   
-  let msg = `Failed to fetch data from ${serviceName}.`;
-  
-  if (err.status === 429) msg = `Rate limit exceeded for ${serviceName}. Please wait a moment.`;
-  else if (err.status === 401 || err.status === 403) msg = `Access denied by ${serviceName}. API key may be invalid.`;
-  else if (err.status >= 500) msg = `${serviceName} server is currently unavailable.`;
-  else if (err.message && (err.message.includes('Failed to fetch') || err.message.includes('NetworkError') || err.message.includes('CORS'))) {
-    msg = `Network or CORS block. Unable to reach ${serviceName}.`;
-  } else if (err.message) {
-    msg = err.message;
-  }
-  
-  useUIStore.getState().addToast(msg, 'error');
+  useUIStore.getState().addToast(providerErrorMessage(err, serviceName), 'error');
 };
 
 const fetchAniListGraphQL = async (query, variables = {}) => {

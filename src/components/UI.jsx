@@ -10,6 +10,7 @@ import { safeExternalUrl } from '../utils/urlSafety';
 import { dateInputFromTimestamp, timestampForCalendarDateWithCurrentTime, timestampFromDateInput, todayDateInput } from '../utils/calendarDate';
 import { preferredMediaImage } from '../domain/mediaState';
 import { completeTvSeries, executeTvSeasonCompletion, saveTvLibraryState, startTvRewatch } from '../domain/tvWorkflow';
+import { applyActivityLifecycle, diaryActionForType, isMeaningfulProgress } from '../domain/activityLifecycle';
 
 // --- Restored Helpers ---
 export const formatFancyDate = (dateInput) => {
@@ -153,8 +154,9 @@ export const GlobalDiaryModal = () => {
   const [inputSeason, setInputSeason] = useState(1);
   const [inputEpisode, setInputEpisode] = useState(0);
   const [dateStarted, setDateStarted] = useState('');
-  const [dateCompleted, setDateCompleted] = useState('');
   const [activityDate, setActivityDate] = useState('');
+  const [dateStartedDirty, setDateStartedDirty] = useState(false);
+  const [activityDateDirty, setActivityDateDirty] = useState(false);
   const [reviewText, setReviewText] = useState('');
   const [isRewatch, setIsRewatch] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -188,8 +190,11 @@ export const GlobalDiaryModal = () => {
       }
 
       setDateStarted(targetItem?.dateStarted ? dateInputFromTimestamp(targetItem.dateStarted) : '');
-      setDateCompleted(targetItem?.dateCompleted ? dateInputFromTimestamp(targetItem.dateCompleted) : '');
-      setActivityDate(todayDateInput());
+      setActivityDate(targetItem?.status === 'completed' && targetItem?.dateCompleted
+        ? dateInputFromTimestamp(targetItem.dateCompleted)
+        : todayDateInput());
+      setDateStartedDirty(false);
+      setActivityDateDirty(false);
       setReviewText('');
       setIsRewatch(false);
       setIsSubmitting(false);
@@ -248,15 +253,23 @@ export const GlobalDiaryModal = () => {
     ? crypto.randomUUID()
     : Date.now().toString(36) + Math.random().toString(36).substring(2);
 
+  const selectedActivityTimestamp = () => {
+    const now = new Date();
+    if (!activityDate) return now.getTime();
+    if (targetItem?.status === 'completed' && targetItem?.dateCompleted
+      && dateInputFromTimestamp(targetItem.dateCompleted) === activityDate) {
+      return Number(targetItem.dateCompleted);
+    }
+    if (activityDate === todayDateInput(now)) return now.getTime();
+    return timestampForCalendarDateWithCurrentTime(activityDate, now) ?? now.getTime();
+  };
+
   const handleQuickSeasonComplete = async (e) => {
     if (e) { e.preventDefault(); e.stopPropagation(); }
     if (isSubmitting) return;
-    if (!window.confirm(`Mark Season ${inputSeason} as completed and log it to your diary?`)) return;
 
-    const s = dateStarted ? timestampFromDateInput(dateStarted) : null;
-    const c = activityDate
-      ? timestampForCalendarDateWithCurrentTime(activityDate, new Date())
-      : Date.now();
+    const s = dateStartedDirty ? timestampFromDateInput(dateStarted) : (targetItem?.dateStarted ?? null);
+    const c = selectedActivityTimestamp();
     const baseTvItem = {
       ...targetItem,
       id: apiData?.id || targetItem?.id,
@@ -281,6 +294,7 @@ export const GlobalDiaryModal = () => {
           reviewText,
           isRewatch,
           dateStarted: s,
+          allowStartedEdit: dateStartedDirty,
           rating,
         },
         saveMediaWithLog,
@@ -297,11 +311,7 @@ export const GlobalDiaryModal = () => {
 
   const handleStatusClick = (s) => {
     setStatus(s);
-    if (s === 'completed' && !dateCompleted) {
-      setDateCompleted(todayDateInput());
-    } else if (s !== 'completed') {
-      setDateCompleted('');
-    }
+    if (s === 'completed' && !activityDate) setActivityDate(todayDateInput());
   };
 
   const handleSave = (e) => {
@@ -311,10 +321,9 @@ export const GlobalDiaryModal = () => {
     }
     if (isSubmitting) return;
     if (!status) return; // Prevent saving purely blank states
-    const s = (type !== 'movies' && dateStarted) ? timestampFromDateInput(dateStarted) : null;
-    const c = status === 'completed'
-      ? (dateCompleted ? timestampFromDateInput(dateCompleted) : Date.now())
-      : null;
+    const activityAt = selectedActivityTimestamp();
+    const s = dateStartedDirty ? timestampFromDateInput(dateStarted) : (targetItem?.dateStarted ?? null);
+    const c = status === 'completed' ? activityAt : null;
 
     if (type === 'tv') {
       const baseTvItem = {
@@ -334,7 +343,7 @@ export const GlobalDiaryModal = () => {
           media_id: baseTvItem.id,
           media_type: 'tv',
           action_type: 'LOGGED',
-          log_date: new Date().toISOString(),
+          log_date: new Date(activityAt).toISOString(),
           review_text: reviewText.trim(),
           image: baseTvItem.image,
         });
@@ -344,7 +353,9 @@ export const GlobalDiaryModal = () => {
           season: inputSeason,
           episode: inputEpisode,
           dateStarted: s,
+          activityTimestamp: activityAt,
           completionTimestamp: c ?? undefined,
+          allowStartedEdit: dateStartedDirty,
           rating,
         };
         const isStartingRewatch = isRewatch && targetItem?.status === 'completed' && status === 'in progress';
@@ -364,13 +375,13 @@ export const GlobalDiaryModal = () => {
     if (isRewatch) r += 1;
 
     let finalProgress = progress;
-    let finalActionType = isRewatch ? `RE-${['games', 'vn'].includes(type) ? 'PLAYED' : ['manga', 'books', 'comics'].includes(type) ? 'READ' : 'WATCHED'}` : (status === 'completed' ? (['games', 'vn'].includes(type) ? 'PLAYED' : ['manga', 'books', 'comics'].includes(type) ? 'READ' : 'WATCHED') : 'LOGGED');
+    let finalActionType = status === 'completed' || isRewatch ? diaryActionForType(type, isRewatch) : 'LOGGED';
 
     if (status === 'completed' && maxProgress && !String(finalProgress).includes('S')) {
       finalProgress = `${maxProgress} ${progressUnit}`;
     }
 
-    const libraryPayload = {
+    const libraryPayload = applyActivityLifecycle({
       ...(isPreview ? targetItem : targetItem),
       id: apiData?.id || targetItem?.id,
       title: titleToSave || targetItem?.title,
@@ -380,11 +391,16 @@ export const GlobalDiaryModal = () => {
       status: status,
       rating: rating,
       addedAt: targetItem?.addedAt || Date.now(),
-      dateStarted: s,
-      dateCompleted: c,
       rewatchCount: r,
       apiData: apiData || targetItem?.apiData
-    };
+    }, {
+      status,
+      activityAt,
+      explicitStartedAt: s,
+      allowStartedEdit: dateStartedDirty,
+      provesConsumption: status === 'in progress' || isMeaningfulProgress(finalProgress),
+      completesItem: status === 'completed' && (targetItem?.status !== 'completed' || isRewatch || isPreview || activityDateDirty),
+    });
 
     const noteExists = reviewText.trim() !== '';
     
@@ -392,21 +408,12 @@ export const GlobalDiaryModal = () => {
 
     let diaryLog = null;
     if (isMilestone || noteExists || isRewatch || explicitAction === 'NOTE ADDED') {
-      const getLogDate = () => {
-        const now = new Date();
-        if (!dateCompleted) return now.toISOString();
-        const todayStr = todayDateInput(now);
-        if (dateCompleted === todayStr) return now.toISOString();
-        const timestamp = timestampForCalendarDateWithCurrentTime(dateCompleted, now);
-        return new Date(timestamp).toISOString();
-      };
-
       diaryLog = {
         log_id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).substring(2),
         media_id: libraryPayload.id,
         media_type: type,
         action_type: finalActionType,
-        log_date: getLogDate(),
+        log_date: new Date(activityAt).toISOString(),
         review_text: reviewText.trim(), // Empty string is fine, UI ignores it
         image: targetItem?.image || apiData?.image,
       };
@@ -612,21 +619,15 @@ export const GlobalDiaryModal = () => {
           {/* Review & Dates Area */}
           {showReviewSection && (
             <div className="flex flex-col gap-4 border-t border-base-200 pt-5 sm:border-0 sm:pt-0">
-              <div className={`grid ${type === 'movies' ? 'grid-cols-1' : 'grid-cols-2'} gap-4`}>
-                 {type !== 'movies' && (
-                   <div className="flex flex-col gap-1">
-                     <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest flex items-center gap-1 pl-1"><Calendar className="w-3 h-3"/> Started</label>
-                     <input type="date" value={dateStarted} onChange={e => setDateStarted(e.target.value)} className="w-full font-mono text-xs rounded-none border border-base-300 bg-base-100 h-10 min-h-[40px] focus:outline-none focus:border-primary px-2 cursor-pointer" />
-                   </div>
-                 )}
-                 {(type !== 'tv' || status === 'completed') && <div className="flex flex-col gap-1">
-                   <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest flex items-center gap-1 pl-1"><Calendar className="w-3 h-3"/> {type === 'movies' ? 'Watched' : 'Finished'}</label>
-                   <input type="date" value={dateCompleted} onChange={e => setDateCompleted(e.target.value)} className="w-full font-mono text-xs rounded-none border border-base-300 bg-base-100 h-10 min-h-[40px] focus:outline-none focus:border-primary px-2 cursor-pointer" />
-                 </div>}
-                 {type === 'tv' && <div className="flex flex-col gap-1">
-                   <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest flex items-center gap-1 pl-1"><Calendar className="w-3 h-3"/> Season Activity Date</label>
-                   <input type="date" value={activityDate} onChange={e => setActivityDate(e.target.value)} className="w-full font-mono text-xs rounded-none border border-base-300 bg-base-100 h-10 min-h-[40px] focus:outline-none focus:border-primary px-2 cursor-pointer" />
-                 </div>}
+              <div className="grid grid-cols-2 gap-4">
+                 <div className="flex flex-col gap-1">
+                   <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest flex items-center gap-1 pl-1"><Calendar className="w-3 h-3"/> Started</label>
+                   <input type="date" value={dateStarted} onChange={e => { setDateStarted(e.target.value); setDateStartedDirty(true); }} className="w-full font-mono text-xs rounded-none border border-base-300 bg-base-100 h-10 min-h-[40px] focus:outline-none focus:border-primary px-2 cursor-pointer" />
+                 </div>
+                 <div className="flex flex-col gap-1">
+                   <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest flex items-center gap-1 pl-1"><Calendar className="w-3 h-3"/> {status === 'completed' ? 'Completed On' : 'Activity Date'}</label>
+                   <input type="date" value={activityDate} onChange={e => { setActivityDate(e.target.value); setActivityDateDirty(true); }} className="w-full font-mono text-xs rounded-none border border-base-300 bg-base-100 h-10 min-h-[40px] focus:outline-none focus:border-primary px-2 cursor-pointer" />
+                 </div>
               </div>
 
               {!isPreview && (type === 'tv' || status === 'completed') && (
@@ -900,10 +901,11 @@ export const SearchModal = ({ isOpen, onClose, results, isLoading, query, type, 
           <button onClick={onClose} className="flex items-center justify-center w-8 h-8 bg-transparent hover:bg-error text-base-content/70 hover:text-error-content rounded-none appearance-none transition-colors"><X className="w-4 h-4" /></button>
         </div>
         <div className="flex-1 overflow-y-auto p-0">
-          {isLoading ? (
+          {isLoading && results.length === 0 ? (
             <div className="flex flex-col items-center justify-center p-16 text-primary"><Loader2 className="w-8 h-8 animate-spin mb-4" /><span className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] animate-pulse">Searching...</span></div>
           ) : results.length > 0 ? (
-            <div className="flex flex-col divide-y divide-base-300 pb-32">
+            <div className={`flex flex-col divide-y divide-base-300 pb-32 relative ${isLoading ? 'pointer-events-none' : ''}`}>
+              {isLoading && <div className="sticky top-0 z-10 flex justify-center p-2 bg-base-100/90 border-b border-base-300"><UpdatingIndicator label="Updating results" /></div>}
               {results.map((item, idx) => (
                 <SearchModalItem key={item.id || idx} item={item} type={type} onSelect={onSelect} handleQuickAdd={handleQuickAdd} />
               ))}
@@ -955,6 +957,9 @@ export const EpisodeCard = ({ episode, isWatched, isNext }) => {
 
 export const SectionWrapper = ({ children, className = "" }) => <div className={`mt-3 border-t border-base-300 pt-3 ${className}`}>{children}</div>;
 export const MediaCardSkeleton = () => <div className="flex flex-col gap-2 animate-pulse h-full border border-base-300 bg-base-100 p-3"><div className="aspect-[2/3] w-full bg-base-300 border border-base-300"></div><div className="h-3 bg-base-300 w-3/4 mt-2"></div><div className="h-2 bg-base-300 w-1/2 mt-1"></div></div>;
+export const MediaGridSkeleton = ({ count = 10 }) => <div aria-label="Loading media" className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-7 min-[2000px]:grid-cols-8 gap-3 w-full">{Array.from({ length: count }, (_, index) => <MediaCardSkeleton key={index} />)}</div>;
+export const DetailSkeleton = () => <div aria-label="Loading details" className="grid grid-cols-[96px_1fr] sm:grid-cols-[220px_1fr] gap-4 sm:gap-8 w-full p-4 sm:p-8 border border-base-300 bg-base-100 animate-pulse"><div className="aspect-[2/3] w-full bg-base-300" /><div className="flex flex-col gap-3"><div className="h-7 sm:h-10 w-3/4 bg-base-300" /><div className="h-3 w-1/3 bg-base-300" /><div className="h-3 w-full bg-base-300 mt-3" /><div className="h-3 w-11/12 bg-base-300" /><div className="h-3 w-4/5 bg-base-300" /></div></div>;
+export const UpdatingIndicator = ({ label = 'Updating' }) => <span role="status" className="inline-flex items-center gap-1.5 text-[9px] font-mono font-bold uppercase tracking-widest text-primary"><Loader2 className="w-3 h-3 animate-spin" />{label}</span>;
 export const TextBlockSkeleton = () => <div className="flex flex-col gap-2 animate-pulse w-full mt-2"><div className="h-3 bg-base-300 w-full"></div><div className="h-3 bg-base-300 w-11/12"></div><div className="h-3 bg-base-300 w-4/5"></div><div className="h-3 bg-base-300 w-full"></div><div className="h-3 bg-base-300 w-3/4"></div></div>;
 export const PillSkeleton = () => <div className="flex flex-wrap gap-2 animate-pulse mt-2"><div className="h-6 w-16 bg-base-300"></div><div className="h-6 w-24 bg-base-300"></div><div className="h-6 w-20 bg-base-300"></div></div>;
 export const IssueCardSkeleton = () => <div className="flex flex-col border border-base-300 bg-base-100 animate-pulse h-full"><div className="aspect-[2/3] w-full bg-base-300"></div><div className="p-2 flex flex-col items-center justify-center gap-2 mt-1"><div className="h-3 bg-base-300 w-1/2"></div><div className="h-2 bg-base-300 w-1/3"></div></div></div>;

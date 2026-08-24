@@ -3,6 +3,14 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { corsHeaders } from "../_shared/cors.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.42.0"
 import { assertGraphqlSuccess, enforceRateLimit, escapeTelegramHtml, readBoundedJson, safeHttpUrl, verifyTelegramWebhookSecret } from "../_shared/validation.js"
+import {
+  buildTelegramLifecycle,
+  classifyTelegramIntent,
+  progressForTelegramIntent,
+  providerForMediaType,
+  selectDeterministicProviderMatch,
+  telegramConfirmation,
+} from "../_shared/telegramSemantics.js"
 
 const fetchProvider = (url: string, init: RequestInit = {}) => fetch(url, {
   ...init,
@@ -100,6 +108,34 @@ const sanitizedText = String(text)
   .trim()
   .slice(0, 1500);
 
+const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? Deno.env.get('VITE_SUPABASE_URL') ?? '';
+const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? Deno.env.get('VITE_SUPABASE_ANON_KEY') ?? '';
+const userId = Deno.env.get('ADMIN_USER_ID');
+
+if (!supabaseUrl || !serviceRoleKey || !anonKey || !userId) {
+  console.error('Supabase logger configuration is incomplete.');
+  return new Response('Configuration Error', { status: 500, headers: corsHeaders });
+}
+
+const supabase = createClient(supabaseUrl, anonKey);
+const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
+const { data: existingBatch, error: existingBatchError } = await supabaseAdmin
+  .from('webhook_batches')
+  .select('plan')
+  .eq('source', 'telegram')
+  .eq('event_id', String(body.update_id))
+  .eq('user_id', userId)
+  .maybeSingle();
+if (existingBatchError) {
+  console.error('Unable to inspect Telegram batch idempotency state.');
+  return new Response('Idempotency check failed', { status: 500, headers: corsHeaders });
+}
+let items = Array.isArray(existingBatch?.plan) ? existingBatch.plan : null;
+const isNewBatch = !items;
+
+if (isNewBatch) {
+
 const systemPrompt = `
 You are a structured media parsing engine.
 
@@ -115,6 +151,11 @@ Rules:
 - CRITICAL: If the media is a Japanese Anime (whether a series or a movie), ALWAYS classify the type as 'anime'. Do NOT classify anime as 'tv' or 'movies'.
 - Confidence must be a number between 0 and 1.
 - Preserve the user's intent accurately.
+- Classify intent explicitly. "started" is START, an episode/chapter/percentage update is UPDATE_PROGRESS,
+  "watched/read/played/finished" is COMPLETE_ITEM unless a season is explicitly named, and a named
+  finished season is COMPLETE_SEASON. Rewatch/reread/replay must use the corresponding REWATCH intent.
+- A rating by itself is RATE and never implies completion.
+- Do not invent a date. The webhook message timestamp is the activity timestamp.
 `;
 
 console.log(`[Phase 2] Invoking Gemini Structured Output Parser...`);
@@ -154,6 +195,12 @@ const geminiRes = await fetch(geminiUrl, {
             items: {
               type: "OBJECT",
               properties: {
+                intent: {
+                  type: "STRING",
+                  nullable: true,
+                  enum: ["ADD_PLANNED", "START", "UPDATE_PROGRESS", "COMPLETE_ITEM", "COMPLETE_SEASON", "REWATCH_ITEM", "REWATCH_SEASON", "RATE", "NOTE"],
+                  description: "The explicit semantic user intent. Rating-only input must be RATE."
+                },
                 action: {
                   type: "STRING",
                   nullable: true,
@@ -171,6 +218,11 @@ const geminiRes = await fetch(geminiUrl, {
                   nullable: true,
                   description:
                     "Release year explicitly mentioned by the user."
+                },
+                providerId: {
+                  type: "STRING",
+                  nullable: true,
+                  description: "An explicit provider identifier only when the user supplied one."
                 },
                 season: {
                   type: "INTEGER",
@@ -265,7 +317,7 @@ try {
   });
 }
 
-let items = parsedJson.items;
+items = parsedJson.items;
 // Fallback gracefully in case the LLM returns a single object instead of the array wrapper
 if (!Array.isArray(items)) {
   if (parsedJson.cleanTitle) {
@@ -282,8 +334,9 @@ if (items.length === 0) {
 if (items.length > 10) {
   return new Response('Too many media items in one update.', { status: 200, headers: corsHeaders });
 }
+}
 
-if (items.length > 1) {
+if (isNewBatch && items.length > 1) {
   await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -292,24 +345,6 @@ if (items.length > 1) {
       text: `⏳ Processing a batch of ${items.length} items...`
     })
   });
-}
-
-const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? Deno.env.get('VITE_SUPABASE_URL') ?? '';
-const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? Deno.env.get('VITE_SUPABASE_ANON_KEY') ?? '';
-
-if (!supabaseUrl || !serviceRoleKey || !anonKey) {
-  console.error('Supabase logger configuration is incomplete.');
-  return new Response('Configuration Error', { status: 500, headers: corsHeaders });
-}
-
-const supabase = createClient(supabaseUrl, anonKey);
-const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
-const userId = Deno.env.get('ADMIN_USER_ID');
-
-if (!userId) {
-  console.error('[Phase 4] CRITICAL ERROR: ADMIN_USER_ID is missing from environment variables.');
-  return new Response('Configuration Error', { status: 500, headers: corsHeaders });
 }
 
 const { data: stablePlan, error: planError } = await supabaseAdmin.rpc('prepare_telegram_batch', {
@@ -323,11 +358,29 @@ if (planError || !Array.isArray(stablePlan)) {
 }
 items = stablePlan;
 
+const eventIds = items.map((_, itemIndex) => `${body.update_id}:${itemIndex}`);
+const { data: completedEvents, error: completedEventsError } = await supabaseAdmin
+  .from('webhook_events')
+  .select('event_id')
+  .eq('source', 'telegram')
+  .eq('user_id', userId)
+  .in('event_id', eventIds);
+if (completedEventsError) {
+  console.error('Unable to inspect Telegram event idempotency state.');
+  return new Response('Idempotency check failed', { status: 500, headers: corsHeaders });
+}
+const completedEventIds = new Set((completedEvents || []).map((event: any) => event.event_id));
+
 // BATCH PROCESSING LOOP
 let failedItems = 0;
 for (let i = 0; i < items.length; i++) {
   try {
   const item = items[i];
+  const eventId = `${body.update_id}:${i}`;
+  if (completedEventIds.has(eventId)) {
+    console.log(`Ignored duplicate Telegram event ${eventId} before provider resolution.`);
+    continue;
+  }
 
   // Confidence guard
   const confidence = typeof item.confidence === 'number' ? item.confidence : 0;
@@ -336,12 +389,12 @@ for (let i = 0; i < items.length; i++) {
   }
 
   // Safe Mapping from Structured Output
-  const action = item.action || null;
+  const intent = classifyTelegramIntent(item);
   const cleanTitle = typeof item.cleanTitle === 'string' ? item.cleanTitle.trim() : 'Unknown Title';
   const year = item.year !== null && item.year !== undefined ? parseInt(item.year, 10) : null;
+  const explicitProviderId = item.providerId !== null && item.providerId !== undefined ? String(item.providerId).trim() : null;
   const season = item.season !== null && item.season !== undefined ? parseInt(item.season, 10) : null;
   const issue = item.progressNumber !== null && item.progressNumber !== undefined ? Math.floor(item.progressNumber) : null;
-  const progressUnit = item.progressUnit || null;
 
   let type = typeof item.type === 'string' ? item.type.toLowerCase() : 'unknown';
   const VALID_TYPES = ['tv', 'movies', 'comics', 'games', 'anime', 'manga', 'vn', 'books'];
@@ -360,7 +413,7 @@ for (let i = 0; i < items.length; i++) {
 
   let reviewText = typeof item.reviewText === 'string' ? item.reviewText.trim() : '';
 
-  console.log(`[Phase 2 Resolved] Item ${i+1}/${items.length} | Action: ${action} | Type: ${type} | Confidence: ${confidence}`);
+  console.log(`[Phase 2 Resolved] Item ${i+1}/${items.length} | Intent: ${intent} | Type: ${type} | Confidence: ${confidence}`);
 
   // --- Phase 3 - Autonomous API Resolution ---
 
@@ -373,6 +426,7 @@ for (let i = 0; i < items.length; i++) {
     let apiMatch = null;
     let isComicSeries = false;
     let specificIssueId = null;
+    let ambiguityOptions: any[] = [];
 
     if (type === 'tv' || type === 'movies') {
       const path = type === 'tv' ? '/search/tv' : '/search/movie';
@@ -400,7 +454,17 @@ for (let i = 0; i < items.length; i++) {
       
       if (error) throw new Error('TMDB lookup failed');
       if (data?.results?.length > 0) {
-        const match = data.results[0];
+        const resolution = selectDeterministicProviderMatch(data.results.map((candidate: any) => ({
+          id: candidate.id,
+          title: candidate.name || candidate.title,
+          year: parseInt((candidate.first_air_date || candidate.release_date || '').split('-')[0], 10) || null,
+          raw: candidate,
+        })), cleanTitle, year, explicitProviderId);
+        ambiguityOptions = resolution.options;
+        const match = resolution.match?.raw;
+        if (!match) {
+          externalId = null;
+        } else {
         externalId = match.id;
         
         // Deep-fetch full details to prevent frontend dashboard crashes
@@ -432,6 +496,7 @@ for (let i = 0; i < items.length; i++) {
             episodeCount = seasonData.episodes?.length || null;
           }
         }
+        }
       }
     } else if (type === 'games') {
       console.log('[Phase 3] Invoking IGDB.');
@@ -441,11 +506,16 @@ for (let i = 0; i < items.length; i++) {
       
       if (error) throw new Error('IGDB lookup failed');
       if (data && data.length > 0) {
-        let match = data[0]; // fallback to top match
-        if (year) {
-          const yearMatch = data.find((g: any) => g.first_release_date && new Date(g.first_release_date * 1000).getFullYear() === year);
-          if (yearMatch) match = yearMatch;
-        }
+        const resolution = selectDeterministicProviderMatch(data.map((candidate: any) => ({
+          id: candidate.id,
+          title: candidate.name,
+          year: candidate.first_release_date ? new Date(candidate.first_release_date * 1000).getFullYear() : null,
+          raw: candidate,
+        })), cleanTitle, year, explicitProviderId);
+        ambiguityOptions = resolution.options;
+        const match = resolution.match?.raw;
+        if (!match) externalId = null;
+        else {
         
         externalId = match.id;
 
@@ -460,6 +530,7 @@ for (let i = 0; i < items.length; i++) {
         if (apiMatch.cover?.url) {
           posterUrl = apiMatch.cover.url.replace('t_thumb', 't_720p');
           if (posterUrl.startsWith('//')) posterUrl = 'https:' + posterUrl;
+        }
         }
       }
     } else if (type === 'comics') {
@@ -498,7 +569,15 @@ for (let i = 0; i < items.length; i++) {
       
       if (error) throw new Error('Metron lookup failed');
       if (data?.results?.length > 0) {
-        const match = data.results[0]; // Top issue #1 match
+        const resolution = selectDeterministicProviderMatch(data.results.map((candidate: any) => ({
+          id: candidate.series?.id ?? candidate.id,
+          title: candidate.series?.name ?? candidate.series ?? cleanTitle,
+          year: candidate.cover_date ? parseInt(candidate.cover_date.substring(0, 4), 10) : null,
+          raw: candidate,
+        })), cleanTitle, year, explicitProviderId);
+        ambiguityOptions = resolution.options;
+        const match = resolution.match?.raw;
+        if (match) {
         
         let sId = match.series?.id ?? (typeof match.series === 'number' ? match.series : null);
 
@@ -532,6 +611,7 @@ for (let i = 0; i < items.length; i++) {
 
         if (match.cover_date) canonicalYear = parseInt(match.cover_date.substring(0, 4), 10) || year;
         posterUrl = apiMatch?.image || match.image || null; 
+        }
       }
     } else if (type === 'anime' || type === 'manga') {
       console.log('[Phase 3] Invoking AniList.');
@@ -567,16 +647,22 @@ for (let i = 0; i < items.length; i++) {
         
         if (json.data?.Page?.media?.length > 0) {
           const results = json.data.Page.media;
-          let match = results[0];
-          if (year) {
-            const yearMatch = results.find((m: any) => m.startDate?.year === year);
-            if (yearMatch) match = yearMatch;
-          }
+          const resolution = selectDeterministicProviderMatch(results.map((candidate: any) => ({
+            id: candidate.id,
+            title: candidate.title?.english || candidate.title?.romaji,
+            year: candidate.startDate?.year || null,
+            raw: candidate,
+          })), cleanTitle, year, explicitProviderId);
+          ambiguityOptions = resolution.options;
+          const match = resolution.match?.raw;
+          if (!match) externalId = null;
+          else {
           externalId = match.id;
           apiMatch = match;
           canonicalTitle = match.title?.english || match.title?.romaji || cleanTitle;
           canonicalYear = match.startDate?.year || year;
           posterUrl = match.coverImage?.extraLarge || match.coverImage?.large || null;
+          }
         }
       } catch (error) {
         throw new Error('AniList lookup failed');
@@ -598,11 +684,16 @@ for (let i = 0; i < items.length; i++) {
         
         if (json.results?.length > 0) {
           const results = json.results;
-          let match = results[0];
-          if (year) {
-            const yearMatch = results.find((m: any) => m.released && m.released.startsWith(String(year)));
-            if (yearMatch) match = yearMatch;
-          }
+          const resolution = selectDeterministicProviderMatch(results.map((candidate: any) => ({
+            id: candidate.id,
+            title: candidate.title,
+            year: candidate.released ? parseInt(candidate.released.split('-')[0], 10) : null,
+            raw: candidate,
+          })), cleanTitle, year, explicitProviderId);
+          ambiguityOptions = resolution.options;
+          const match = resolution.match?.raw;
+          if (!match) externalId = null;
+          else {
           externalId = match.id;
           apiMatch = match;
           const engTitleObj = match.titles?.find((t: any) => t.lang === 'en' || t.lang === 'eng');
@@ -610,6 +701,7 @@ for (let i = 0; i < items.length; i++) {
           if (match.released) canonicalYear = parseInt(match.released.split('-')[0], 10) || year;
           // Force strict string casting to prevent corrupted object payloads
           posterUrl = match.image?.url ? String(match.image.url) : (typeof match.image === 'string' ? match.image : null);
+          }
         }
       } catch (error) {
         throw new Error('VNDB lookup failed');
@@ -624,8 +716,15 @@ for (let i = 0; i < items.length; i++) {
       const json = await res.json();
       const results = Array.isArray(json.docs) ? json.docs : [];
       if (results.length > 0) {
-        let match = results[0];
-        if (year) match = results.find((book: any) => book.first_publish_year === year) || match;
+        const resolution = selectDeterministicProviderMatch(results.map((candidate: any) => ({
+          id: String(candidate.key || '').replace(/^\/works\//, ''),
+          title: candidate.title,
+          year: candidate.first_publish_year || null,
+          raw: candidate,
+        })), cleanTitle, year, explicitProviderId);
+        ambiguityOptions = resolution.options;
+        const match = resolution.match?.raw;
+        if (match) {
         const workKey = String(match.key || '').replace(/^\/works\//, '');
         if (workKey) {
           externalId = workKey;
@@ -634,10 +733,27 @@ for (let i = 0; i < items.length; i++) {
           canonicalYear = match.first_publish_year || year;
           posterUrl = match.cover_i ? `https://covers.openlibrary.org/b/id/${match.cover_i}-L.jpg` : null;
         }
+        }
       }
     }
 
     console.log(`[Phase 3 Resolved] Provider match: ${externalId ? 'yes' : 'no'}.`);
+
+    if (!externalId && ambiguityOptions.length > 0) {
+      const optionText = ambiguityOptions.slice(0, 5)
+        .map((option: any) => `• ${escapeTelegramHtml(option.title)}${option.year ? ` (${escapeTelegramHtml(option.year)})` : ''}`)
+        .join('\n');
+      await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: `<b>Choose a more specific title/year:</b>\n${optionText}`,
+          parse_mode: 'HTML',
+        }),
+      });
+      continue;
+    }
 
     // --- Phase 4 - Database Execution and Upsert Logic ---
 
@@ -652,11 +768,8 @@ for (let i = 0; i < items.length; i++) {
       let mediaId = String(externalId);
       if (type === 'comics') mediaId = isComicSeries ? `series_${externalId}` : `issue_${externalId}`;
       else if (type === 'games') mediaId = `igdb_${externalId}`;
-      const providerByType = {
-        movies: 'tmdb', tv: 'tmdb', comics: 'metron', games: 'igdb', anime: 'anilist',
-        manga: 'anilist', vn: 'vndb', books: 'openlibrary',
-      };
-      const provider = providerByType[type];
+      const provider = providerForMediaType(type);
+      if (!provider) throw new Error('Unsupported canonical provider mapping');
       const providerId = type === 'comics' ? mediaId : String(externalId);
       const mediaKey = `${provider}:${type}:${providerId}`;
       
@@ -664,123 +777,15 @@ for (let i = 0; i < items.length; i++) {
       const timestampMs = new Date(timestamp * 1000).getTime() + i;
       const isoDate = new Date(timestampMs).toISOString();
 
-      // Pre-fetch existing library data to feed into the Smart Completion Engine
-      const { data: existingMedia } = await supabaseAdmin
+      // Read the current owner-scoped state so the same explicit-intent lifecycle
+      // contract used by the browser can preserve user-controlled fields.
+      const { data: existingMedia, error: existingMediaError } = await supabaseAdmin
         .from('media_library')
         .select('*') // Get everything to preserve existing fields safely
         .eq('media_key', mediaKey)
         .eq('user_id', userId)
         .maybeSingle();
-
-      // Determine progress strings and milestone states dynamically
-      let progressStr = null;
-
-      let isSeriesComplete = false;
-      let isSeasonComplete = false;
-
-      // Smart status resolution based on LLM extracted action and existing media
-      let safeStatus = action || existingMedia?.status || 'in progress';
-
-      // --- SMART COMPLETION ENGINE ---
-      if (apiMatch) {
-        if (type === 'tv') {
-          const isEnded = ['Ended', 'Canceled'].includes(apiMatch.status);
-          const activeSeasons = (apiMatch.seasons || []).filter((s: any) => s.season_number > 0);
-          const maxSeason = activeSeasons.length > 0 ? Math.max(...activeSeasons.map((s: any) => s.season_number)) : 1;
-          
-          if (season !== null) {
-            const isMaxSeason = season === maxSeason;
-            const seasonData = activeSeasons.find((s: any) => s.season_number === season);
-            const maxEp = seasonData?.episode_count || 0;
-            const hitFinalEp = issue !== null && maxEp > 0 && issue >= maxEp;
-
-            if (isMaxSeason) {
-              if (issue === null && isEnded && action === 'completed') isSeriesComplete = true; 
-              else if (issue !== null && hitFinalEp) isSeriesComplete = true; 
-            }
-            
-            if (action === 'completed' && issue === null) {
-              isSeasonComplete = true;
-            } else if (issue !== null && hitFinalEp && !isSeriesComplete) {
-              isSeasonComplete = true; // Auto-complete non-final seasons if final episode is hit
-            }
-          } else if (issue !== null) {
-            const totalEps = apiMatch.number_of_episodes || 0;
-            if (totalEps > 0 && issue >= totalEps) isSeriesComplete = true;
-          } else if (action === 'completed') {
-            isSeriesComplete = true;
-          }
-        } 
-        else if (type === 'anime' || type === 'manga' || type === 'books' || type === 'comics') {
-          const maxEp = type === 'anime' ? apiMatch.episodes : (type === 'manga' || type === 'books' ? apiMatch.chapters : (apiMatch.issue_count || apiMatch.issuesCount));
-          if (issue !== null && maxEp > 0 && issue >= maxEp) isSeriesComplete = true;
-          else if (action === 'completed' && issue === null) isSeriesComplete = true;
-        }
-        else if (type === 'games' || type === 'vn') {
-          if (issue !== null && issue >= 100) isSeriesComplete = true;
-          else if (action === 'completed' && issue === null) isSeriesComplete = true;
-        }
-      } else {
-        if (action === 'completed' && issue === null && season === null) isSeriesComplete = true;
-        if (action === 'completed' && type === 'tv' && season !== null && issue === null) isSeasonComplete = true;
-      }
-
-      const shouldLogToDiary = isSeriesComplete || isSeasonComplete;
-
-      // If the user specified they completed a specific season/issue, but NOT the series, status should be 'in progress'
-      if (action === 'completed' && !isSeriesComplete) {
-         if (issue !== null || season !== null) {
-             safeStatus = 'in progress';
-         }
-      }
-
-      if (isSeriesComplete) {
-        safeStatus = 'completed';
-      } else if (issue !== null || season !== null) {
-        if (safeStatus === 'completed') safeStatus = 'in progress';
-      }
-
-      if (type === 'tv' && season !== null) {
-        if (issue !== null) {
-          progressStr = `S${String(season).padStart(2, '0')} E${String(issue).padStart(2, '0')}`;
-        } else {
-          // Season progress fallback
-          if (action === 'completed' || isSeasonComplete) {
-            const seasonObj = apiMatch?.seasons?.find((s: any) => s.season_number === season);
-            const eps = seasonObj?.episode_count || 1;
-            progressStr = `S${String(season).padStart(2, '0')} E${String(eps).padStart(2, '0')}`;
-          } else if (action === 'in progress' || action === 'planned') {
-            progressStr = `S${String(season).padStart(2, '0')} E01`;
-          } else {
-            progressStr = `S${String(season).padStart(2, '0')} E01`;
-          }
-        }
-      } else if ((type === 'comics' || type === 'manga' || type === 'books') && issue !== null) {
-        progressStr = type === 'comics' ? `#${String(issue).padStart(3, '0')}` : `Ch. ${issue}`; 
-      } else if (type === 'anime' && issue !== null) {
-        progressStr = `Ep. ${issue}`;
-      } else if ((type === 'games' || type === 'vn') && issue !== null) {
-        progressStr = `${issue}%`;
-      } else if (isSeriesComplete) {
-        // Auto-complete the entire series/media if no specific episode/issue is provided
-        if (type === 'tv') {
-          const lastS = apiMatch?.number_of_seasons || 1;
-          const lastSObj = apiMatch?.seasons?.find((s: any) => s.season_number === lastS);
-          const eps = lastSObj?.episode_count || 1;
-          progressStr = `S${String(lastS).padStart(2, '0')} E${String(eps).padStart(2, '0')}`;
-        } else if (type === 'anime') {
-          const max = apiMatch?.episodes;
-          if (max) progressStr = `${max} Episodes`;
-        } else if (type === 'manga' || type === 'books') {
-          const max = apiMatch?.chapters;
-          if (max) progressStr = `${max} Chapters`;
-        } else if (type === 'comics') {
-          const max = apiMatch?.issue_count || apiMatch?.issuesCount;
-          if (max) progressStr = `${max} Issues`;
-        } else if (type === 'games' || type === 'vn') {
-          progressStr = '100%';
-        }
-      }
+      if (existingMediaError) throw new Error('Existing media lookup failed');
 
       // Append specific issue to read array if one was parsed
       let updatedReadIssues = (existingMedia?.readIssueIds || []).map(String);
@@ -791,10 +796,36 @@ for (let i = 0; i < items.length; i++) {
         }
       }
 
-      let rewatchCount = existingMedia?.rewatchCount || 0;
-      if (existingMedia?.status === 'completed' && isSeriesComplete) {
-        rewatchCount += 1;
-      }
+      const authoritativeTotal = type === 'anime'
+        ? apiMatch?.episodes
+        : type === 'manga' || type === 'books'
+          ? apiMatch?.chapters
+          : type === 'comics'
+            ? (apiMatch?.issue_count || apiMatch?.issuesCount)
+            : null;
+      const semanticProgress = progressForTelegramIntent({
+        type,
+        intent,
+        season,
+        progressNumber: issue,
+        episodeCount,
+        total: authoritativeTotal,
+      });
+      const progressStr = semanticProgress ?? existingMedia?.progress ?? null;
+      const lifecycle = buildTelegramLifecycle({
+        existing: existingMedia,
+        intent,
+        type,
+        activityAt: timestampMs,
+        rating,
+        progress: progressStr,
+        season,
+        seasonYear,
+      });
+      const safeStatus = lifecycle.status;
+      const shouldLogToDiary = lifecycle.shouldLog;
+
+      const rewatchCount = lifecycle.rewatchCount;
 
       // Resolve the exact subtype string expected by the frontend UI cards
       let subtype = 'Media';
@@ -825,17 +856,17 @@ for (let i = 0; i < items.length; i++) {
         type: safeType,
         subtype: safeSubtype,
         image: safeImage,
-        rating: rating !== null ? rating : (existingMedia?.rating || 0),
-        addedAt: existingMedia?.addedAt || timestampMs,
-        dateCompleted: isSeriesComplete ? timestampMs : (safeStatus === 'completed' ? existingMedia?.dateCompleted : null),
-        dateStarted: existingMedia?.dateStarted || timestampMs,
+        rating: lifecycle.rating,
+        addedAt: lifecycle.addedAt,
+        dateCompleted: lifecycle.dateCompleted,
+        dateStarted: lifecycle.dateStarted,
         status: safeStatus,
         rewatchCount: rewatchCount,
         ...(safeProgress && { progress: safeProgress }),
         ...(type === 'comics' && { readIssueIds: updatedReadIssues }),
         updated_at: isoDate,
         _mutation: {
-          rewatch_increment: existingMedia?.status === 'completed' && isSeriesComplete ? 1 : 0,
+          rewatch_increment: lifecycle.rewatchIncrement,
           add_read_issue: type === 'comics' && specificIssueId !== null ? String(specificIssueId) : null,
         },
         apiData: { 
@@ -850,24 +881,6 @@ for (let i = 0; i < items.length; i++) {
       if (shouldLogToDiary) {
         const logId = `telegram:${body.update_id}:${i}`;
 
-        let actionType = 'WATCHED';
-        if (type === 'games' || type === 'vn') actionType = 'PLAYED';
-        else if (type === 'comics' || type === 'manga' || type === 'books') actionType = 'READ';
-
-        if (existingMedia?.status === 'completed' && isSeriesComplete) {
-            actionType = `RE-${actionType}`;
-        }
-        
-        let logSeasonLabel = null;
-        if (type === 'tv') {
-          if (season !== null) {
-            if (isSeasonComplete || isSeriesComplete) logSeasonLabel = `Season ${season}`;
-          } else if (isSeriesComplete) {
-            const lastS = apiMatch?.number_of_seasons || 1;
-            logSeasonLabel = `Season ${lastS}`;
-          }
-        }
-
         logPayload = {
           log_id: logId,
           media_id: mediaId,
@@ -876,10 +889,10 @@ for (let i = 0; i < items.length; i++) {
           provider_id: providerId,
           media_type: type,
           media_key: mediaKey,
-          action_type: actionType,
+          action_type: lifecycle.actionType,
           log_date: isoDate,
-          season_label: logSeasonLabel,
-          season_year: seasonYear ? String(seasonYear) : null,
+          season_label: lifecycle.seasonLabel,
+          season_year: lifecycle.seasonYear,
           image: safeImage,
           review_text: reviewText
         };
@@ -887,7 +900,6 @@ for (let i = 0; i < items.length; i++) {
         console.log(`[Phase 4] Progress update only. Skipped diary log for ${mediaId}`);
       }
 
-      const eventId = `${body.update_id}:${i}`;
       const { data: applied, error: transactionError } = await supabaseAdmin.rpc('apply_telegram_media_event', {
         p_event_id: eventId,
         p_user_id: userId,
@@ -908,18 +920,17 @@ for (let i = 0; i < items.length; i++) {
       const posterLink = safePosterUrl ? `<a href="${escapeTelegramHtml(safePosterUrl)}">&#8203;</a>` : '';
       const typeLabel = type === 'movies' ? 'Movie' : type === 'tv' ? 'TV' : type === 'comics' ? 'Comic' : type === 'games' ? 'Game' : type === 'anime' ? 'Anime' : type === 'manga' ? 'Manga' : type === 'vn' ? 'VN' : 'Book';
       const escapedTitle = escapeTelegramHtml(safeTitle);
-      const escapedProgress = escapeTelegramHtml(safeProgress || '');
-      const escapedStatus = escapeTelegramHtml(safeStatus.toUpperCase());
       const escapedType = escapeTelegramHtml(typeLabel);
       const escapedYear = escapeTelegramHtml(canonicalYear || '?');
       const deepLink = `https://project-polyhedron.netlify.app/media/${encodeURIComponent(type)}/${encodeURIComponent(mediaId)}`;
-      
+      const confirmation = telegramConfirmation({ title: safeTitle, intent, lifecycle, activityAt: timestampMs });
       const messageHtml = `
-<b>✅ Cataloged Successfully</b>${posterLink}
+<b>✅ ${escapeTelegramHtml(confirmation.headline)}</b>${posterLink}
 <b>Title:</b> ${escapedTitle} (${escapedYear})
 <b>Type:</b> ${escapedType}
-${safeProgress ? `<b>Progress:</b> ${escapedProgress}\n` : ''}<b>Status:</b> ${escapedStatus}
-<b>Rating:</b> ${rating ? rating + '/10' : 'None'}
+${confirmation.lines.map((line: string) => `<b>${escapeTelegramHtml(line)}</b>`).join('\n')}
+<b>Status:</b> ${escapeTelegramHtml(safeStatus.toUpperCase())}
+<b>Rating:</b> ${lifecycle.rating ? lifecycle.rating + '/10' : 'None'}
 <b>Link:</b> <a href="${deepLink}">View in Polyhedron</a>
       `.trim();
 

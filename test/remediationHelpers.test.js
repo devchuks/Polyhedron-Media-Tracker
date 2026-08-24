@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { shouldShowEnvironmentBadge } from '../src/config/environment.js';
-import { isIntentionalAbort, isJwtIssuedAtFutureError, retryAfterJwtRefresh } from '../src/utils/requestErrors.js';
+import { isIntentionalAbort, isJwtIssuedAtFutureError, providerErrorMessage, retryAfterJwtRefresh } from '../src/utils/requestErrors.js';
 import { createSingleFlight } from '../src/utils/singleFlight.js';
 
 test('staging badge is development-only and never labels production', () => {
@@ -13,6 +13,12 @@ test('staging badge is development-only and never labels production', () => {
 test('intentional cancellation is distinguished from provider failure', () => {
   assert.equal(isIntentionalAbort(Object.assign(new Error('cancelled'), { name: 'AbortError' })), true);
   assert.equal(isIntentionalAbort(new Error('provider unavailable')), false);
+});
+
+test('provider errors are presented without raw upstream diagnostics', () => {
+  assert.equal(providerErrorMessage({ status: 400, message: '{"error":"internal route detail"}' }, 'TMDB'), 'TMDB could not complete this request.');
+  assert.equal(providerErrorMessage({ status: 503, message: 'upstream stack trace' }, 'IGDB'), 'IGDB server is currently unavailable.');
+  assert.equal(providerErrorMessage({ message: 'Failed to fetch' }, 'Metron'), 'Network error. Unable to reach Metron.');
 });
 
 test('future-issued JWT recovery refreshes once and retries the failing operation once', async () => {

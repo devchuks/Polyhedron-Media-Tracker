@@ -42,7 +42,7 @@ const DiscoverySkeleton = () => (
       <section key={section} className="flex flex-col gap-3">
         <div className="h-5 w-40 bg-base-300 mb-2"></div>
         <div className="flex overflow-x-hidden gap-2 sm:gap-4">
-          {[1, 2, 3, 4, 5].map(i => <div key={i} className="w-[calc(33.333%-0.34rem)] sm:w-36 md:w-44 aspect-[2/3] bg-base-300 flex-shrink-0 border border-base-300"></div>)}
+          {[1, 2, 3, 4, 5].map(i => <div key={i} className="w-[calc((100%_-_1rem)/3)] sm:w-36 md:w-44 aspect-[2/3] bg-base-300 flex-shrink-0 border border-base-300"></div>)}
         </div>
       </section>
     ))}
@@ -418,8 +418,8 @@ export const Discovery = () => {
         </button>
       </div>
 
-      {isLoading ? <DiscoverySkeleton /> : (
-      <div className="flex flex-col gap-6 sm:gap-8 animate-in fade-in duration-500">
+      {isLoading && currentData.trending.length === 0 ? <DiscoverySkeleton /> : (
+      <div className={`flex flex-col gap-6 sm:gap-8 animate-in fade-in duration-500 ${isLoading ? 'pointer-events-none' : ''}`}>
         <CarouselSection key={`${activeTab}-trending`} title={section1Title} icon={<Flame className="w-4 h-4 text-warning" />} items={currentData.trending} type={activeTab} showRank={!isComics} categoryKey="trending" onLoadMore={handleLoadMoreItems} />
         <CarouselSection key={`${activeTab}-upcoming`} title={section2Title} icon={<CalendarClock className="w-4 h-4 text-info" />} items={currentData.upcoming} type={activeTab} categoryKey="upcoming" onLoadMore={handleLoadMoreItems} />
         <CarouselSection key={`${activeTab}-popular`} title={section3Title} icon={<Star className="w-4 h-4 text-success" />} items={currentData.popular} type={activeTab} showRank={!isComics} categoryKey="popular" onLoadMore={handleLoadMoreItems} />

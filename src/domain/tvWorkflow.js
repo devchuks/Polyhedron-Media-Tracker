@@ -1,4 +1,5 @@
 import { serializeTvProgress } from './mediaState.js';
+import { applyActivityLifecycle, isMeaningfulProgress } from './activityLifecycle.js';
 
 const positiveInteger = (value, label) => {
   const parsed = Number(value);
@@ -19,6 +20,8 @@ export const saveTvLibraryState = (item, {
   season,
   episode,
   dateStarted = item?.dateStarted ?? null,
+  allowStartedEdit = false,
+  activityTimestamp,
   completionTimestamp,
   rating = item?.rating ?? 0,
   startingRewatch = false,
@@ -32,19 +35,25 @@ export const saveTvLibraryState = (item, {
   if (nextStatus === 'planned' || startingRewatch) progress = '';
   if (item?.status === 'planned' && nextStatus === 'in progress' && !selectedProgress) progress = '';
 
-  const dateCompleted = nextStatus === 'completed'
-    ? finiteTimestamp(completionTimestamp ?? item?.dateCompleted ?? Date.now(), 'TV completion date')
-    : null;
-
-  return {
+  const activityTime = finiteTimestamp(activityTimestamp ?? completionTimestamp ?? Date.now(), 'TV activity date');
+  const completionTime = nextStatus === 'completed'
+    ? finiteTimestamp(completionTimestamp ?? activityTime, 'TV completion date')
+    : activityTime;
+  const next = {
     ...item,
     status: nextStatus,
     progress,
     rating,
-    dateStarted,
-    dateCompleted,
     rewatchCount: (item?.rewatchCount || 0) + (nextStatus === 'completed' && completingRewatch ? 1 : 0),
   };
+  return applyActivityLifecycle(next, {
+    status: nextStatus,
+    activityAt: completionTime,
+    explicitStartedAt: dateStarted,
+    allowStartedEdit,
+    provesConsumption: nextStatus === 'in progress' || isMeaningfulProgress(selectedProgress),
+    completesItem: nextStatus === 'completed' && (item?.status !== 'completed' || completingRewatch),
+  });
 };
 
 export const completeTvSeries = (item, command = {}) => saveTvLibraryState(item, {
@@ -70,6 +79,7 @@ export const buildTvSeasonCompletion = (item, {
   logId,
   createLogId,
   dateStarted = item?.dateStarted ?? null,
+  allowStartedEdit = false,
   rating = item?.rating ?? 0,
 } = {}) => {
   const seasonNumber = positiveInteger(season, 'TV season');
@@ -79,15 +89,21 @@ export const buildTvSeasonCompletion = (item, {
   if (!stableLogId) throw new TypeError('TV season activity requires a stable log_id');
 
   const preservesCompletedSeries = item?.status === 'completed' && !isRewatch;
-  const media = {
+  const media = applyActivityLifecycle({
     ...item,
     status: preservesCompletedSeries ? 'completed' : 'in progress',
     progress: serializeTvProgress('in progress', seasonNumber, finalEpisode),
     rating,
-    dateStarted,
     dateCompleted: preservesCompletedSeries ? item.dateCompleted : null,
     rewatchCount: item?.rewatchCount || 0,
-  };
+  }, {
+    status: preservesCompletedSeries ? 'completed' : 'in progress',
+    activityAt: logDate,
+    explicitStartedAt: dateStarted,
+    allowStartedEdit,
+    provesConsumption: true,
+    completesItem: false,
+  });
 
   const log = {
     log_id: stableLogId,
