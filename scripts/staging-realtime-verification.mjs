@@ -78,18 +78,44 @@ const tombstonesB = [];
 const channels = [];
 
 const subscribe = (client, label, mediaEvents, tombstoneEvents) => new Promise((resolve, reject) => {
-  const timer = setTimeout(() => reject(new Error(`${label} subscription timed out`)), 30_000);
+  const startedAt = Date.now();
+  let transportSubscribedAt = null;
+  let postgresReadyAt = null;
+  let settled = false;
+  let timer;
+  const finishIfReady = () => {
+    if (settled || transportSubscribedAt === null || postgresReadyAt === null) return;
+    settled = true;
+    clearTimeout(timer);
+    console.log(`READY ${label}: transport ${transportSubscribedAt - startedAt} ms; PostgreSQL ${postgresReadyAt - startedAt} ms; gap ${postgresReadyAt - transportSubscribedAt} ms.`);
+    resolve(channel);
+  };
+  const fail = message => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    reject(new Error(message));
+  };
+  timer = setTimeout(() => fail(`${label} subscription timed out`), 30_000);
   const channel = client.channel(`${prefix}-${label}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'media_library' }, payload => mediaEvents.push(payload));
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'media_library' }, payload => mediaEvents.push(payload))
+    .on('system', {}, payload => {
+      if (payload?.extension !== 'postgres_changes') return;
+      if (payload.status === 'ok') {
+        postgresReadyAt = Date.now();
+        finishIfReady();
+      } else {
+        fail(`${label} PostgreSQL listener status ${payload.status || 'unknown'}`);
+      }
+    });
   if (tombstoneEvents) channel.on('postgres_changes', { event: '*', schema: 'public', table: 'media_tombstones' }, payload => tombstoneEvents.push(payload));
+  channels.push([client, channel]);
   channel.subscribe(status => {
     if (status === 'SUBSCRIBED') {
-      clearTimeout(timer);
-      channels.push([client, channel]);
-      resolve(channel);
+      transportSubscribedAt = Date.now();
+      finishIfReady();
     } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-      clearTimeout(timer);
-      reject(new Error(`${label} status ${status}`));
+      fail(`${label} status ${status}`);
     }
   });
 });

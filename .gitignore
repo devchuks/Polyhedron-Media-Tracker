@@ -1,43 +1,75 @@
-# Logs
-logs
+# Dependencies
+/node_modules/
+
+# Build and generated output
+/dist/
+/dist-ssr/
+/coverage/
+/.vite/
+
+# Environment, credentials, and machine-local configuration
+.env
+.env.*
+!.env.example
+!.env.sample
+*.local
+
+# Local agent instructions and internal project documentation
+/AGENTS.md
+/project-docs/
+
+# Supabase local CLI state and production recovery artifacts
+/.supabase/
+/supabase/.temp/
+
+# Netlify local link/state
+/.netlify/
+
+# Logs and temporary files
+/logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+/.cache/
+/.tmp/
+/temp/
+/tmp/
+*.tmp
 
-node_modules
-dist
-dist-ssr
-*.local
+# Local backups and exports
+/polybacks/
+*.bak
+*.backup
+*.dump
+*.sql.gz
+*.old
+*.orig
 
-polybacks
-
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
+# OS and editor files
 .DS_Store
+Thumbs.db
+Desktop.ini
+/.vscode/*
+!/.vscode/extensions.json
+/.idea/
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
-*.sw?
+*.swp
+*.swo
+*~
 
-.env
-# Local Netlify folder
-.netlify
-
-# Supabase & Python cache
-.supabase/
+# Python cache
 __pycache__/
 *.pyc
 
+# Local research and one-off import diagnostics
 count_library.py
 count_missing_notes.py
-igdb-documentation.md
 metrondocumentation.docx
-metron documentation.md
 src/yoinker_script.js
 src/yoinker_script_2.js
