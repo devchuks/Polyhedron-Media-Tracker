@@ -10,8 +10,10 @@ import { safeExternalUrl } from '../utils/urlSafety';
 import { shouldShowMetadataSkeleton } from '../domain/detailEnrichment';
 import { dateInputFromTimestamp, timestampForCalendarDateWithCurrentTime, timestampFromDateInput, todayDateInput } from '../utils/calendarDate';
 import { preferredMediaImage } from '../domain/mediaState';
+import { firstUsableImageUrl, normalizeImageUrl } from '../domain/mediaImages';
 import { completeTvSeries, executeTvSeasonCompletion, saveTvLibraryState, startTvRewatch } from '../domain/tvWorkflow';
 import { applyActivityLifecycle, diaryActionForType, isMeaningfulProgress } from '../domain/activityLifecycle';
+import { mediaCompletionDateLabel, mediaStatusActionLabel, mediaStatusLabel, ratingForInteraction } from '../domain/mediaTerminology';
 
 // --- Restored Helpers ---
 export const formatFancyDate = (dateInput) => {
@@ -29,15 +31,7 @@ export const formatFancyDate = (dateInput) => {
 };
 
 export const getDynamicStatusLabel = (status, type, isMenu = false) => {
-  const isList = status === 'planned';
-  const listName = ['games', 'vn'].includes(type) ? 'Backlog' : ['manga', 'books', 'comics'].includes(type) ? 'Reading List' : 'Watchlist';
-  const activeName = ['games', 'vn'].includes(type) ? 'Playing' : ['manga', 'books', 'comics'].includes(type) ? 'Reading' : 'Watching';
-  const completeName = ['games', 'vn'].includes(type) ? 'Played' : ['manga', 'books', 'comics'].includes(type) ? 'Read' : type === 'movies' ? 'Watched' : 'Completed';
-  if (isList) return isMenu ? `Add to ${listName}` : `In ${listName}`;
-  if (status === 'in progress') return `Currently ${activeName}`;
-  if (status === 'completed') return completeName;
-  if (status === 'dropped') return 'Dropped';
-  return status;
+  return isMenu ? mediaStatusActionLabel(status, type) : mediaStatusLabel(status, type, 'detail');
 };
 
 export const getRewatchTerm = (type) => ['games', 'vn'].includes(type) ? 'REPLAY' : ['manga', 'books', 'comics'].includes(type) ? 'REREAD' : 'REWATCH';
@@ -101,13 +95,8 @@ export const stripHtml = (html) => {
 export const formatMarkdownLinks = formatSafeMarkup;
 
 export const getOptimizedImage = (url, w = 342) => {
-  if (!url) return null;
-  let safeUrl = url;
-  // Defensive check in case the API payload accidentally saved the image as a raw object
-  if (typeof safeUrl === 'object') {
-    safeUrl = safeUrl.url || safeUrl.image || safeUrl.thumbnail || null;
-  }
-  if (typeof safeUrl !== 'string') return null;
+  const safeUrl = normalizeImageUrl(url);
+  if (!safeUrl) return null;
 
   if (safeUrl.includes('vndb.org') || safeUrl.includes('image.tmdb.org') || safeUrl.includes('images.igdb.com') || safeUrl.includes('wsrv.nl')) return safeUrl;
   return `https://wsrv.nl/?url=${encodeURIComponent(safeUrl)}&w=${w}&output=webp`;
@@ -278,7 +267,7 @@ export const GlobalDiaryModal = () => {
       type,
       subtype: getSubtype(type),
       addedAt: isPreview ? (c || Date.now()) : (targetItem?.addedAt || Date.now()),
-      image: targetItem?.image || apiData?.image,
+      image: firstUsableImageUrl(targetItem?.image, apiData?.image),
       apiData: apiData || targetItem?.apiData,
     };
 
@@ -334,7 +323,7 @@ export const GlobalDiaryModal = () => {
         type,
         subtype: getSubtype(type),
         addedAt: targetItem?.addedAt || Date.now(),
-        image: targetItem?.image || apiData?.image,
+        image: firstUsableImageUrl(targetItem?.image, apiData?.image),
         apiData: apiData || targetItem?.apiData,
       };
 
@@ -416,7 +405,7 @@ export const GlobalDiaryModal = () => {
         action_type: finalActionType,
         log_date: new Date(activityAt).toISOString(),
         review_text: reviewText.trim(), // Empty string is fine, UI ignores it
-        image: targetItem?.image || apiData?.image,
+        image: firstUsableImageUrl(targetItem?.image, apiData?.image),
       };
     }
 
@@ -449,7 +438,7 @@ export const GlobalDiaryModal = () => {
   };
 
   const title = titleToSave || targetItem?.title || 'Unknown Title';
-  const displayImage = targetItem?.image || apiData?.image;
+  const displayImage = firstUsableImageUrl(targetItem?.image, apiData?.image);
   const showReviewSection = status !== 'planned' && status !== '';
   const primaryActionLabel = type === 'tv'
     ? explicitAction === 'NOTE ADDED'
@@ -626,7 +615,7 @@ export const GlobalDiaryModal = () => {
                    <input type="date" value={dateStarted} onChange={e => { setDateStarted(e.target.value); setDateStartedDirty(true); }} className="w-full font-mono text-xs rounded-none border border-base-300 bg-base-100 h-10 min-h-[40px] focus:outline-none focus:border-primary px-2 cursor-pointer" />
                  </div>
                  <div className="flex flex-col gap-1">
-                   <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest flex items-center gap-1 pl-1"><Calendar className="w-3 h-3"/> {status === 'completed' ? 'Completed On' : 'Activity Date'}</label>
+                   <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest flex items-center gap-1 pl-1"><Calendar className="w-3 h-3"/> {status === 'completed' ? mediaCompletionDateLabel(type) : 'Activity Date'}</label>
                    <input type="date" value={activityDate} onChange={e => { setActivityDate(e.target.value); setActivityDateDirty(true); }} className="w-full font-mono text-xs rounded-none border border-base-300 bg-base-100 h-10 min-h-[40px] focus:outline-none focus:border-primary px-2 cursor-pointer" />
                  </div>
               </div>
@@ -695,9 +684,10 @@ export const ToastContainer = () => {
 export const ImageWithFallback = ({ src, alt, className, fallbackText = "NO IMG" }) => {
   const [loadedSrc, setLoadedSrc] = useState(null);
   const [failedSrc, setFailedSrc] = useState(null);
-  const loaded = Boolean(src) && loadedSrc === src;
-  const error = Boolean(src) && failedSrc === src;
-  if (!src || error) {
+  const imageSrc = normalizeImageUrl(src);
+  const loaded = Boolean(imageSrc) && loadedSrc === imageSrc;
+  const error = Boolean(imageSrc) && failedSrc === imageSrc;
+  if (!imageSrc || error) {
     return (
       <div className={`flex flex-col items-center justify-center bg-base-200 text-base-content/20 w-full h-full ${className} border border-base-300`}>
          <div className="w-1/3 aspect-square mb-2 opacity-20"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg></div>
@@ -709,11 +699,11 @@ export const ImageWithFallback = ({ src, alt, className, fallbackText = "NO IMG"
     <div className={`relative bg-base-300 w-full h-full ${className} overflow-hidden`}>
       {!loaded && <div className="absolute inset-0 bg-base-300 animate-pulse z-0"></div>}
       <img
-        key={src}
-        src={src}
+        key={imageSrc}
+        src={imageSrc}
         alt={alt}
-        onLoad={() => setLoadedSrc(src)}
-        onError={() => setFailedSrc(src)}
+        onLoad={() => setLoadedSrc(imageSrc)}
+        onError={() => setFailedSrc(imageSrc)}
         className={`w-full h-full object-cover transition-opacity duration-500 ease-in-out ${loaded ? 'opacity-100' : 'opacity-0'} relative z-10 ${className}`}
         loading="lazy"
       />
@@ -726,8 +716,7 @@ export const StarRating = ({ rating = 0, onChange, readOnly = false }) => {
   const handleMouseMove = (e, index) => {
     if (readOnly) return;
     const { left, width } = e.currentTarget.getBoundingClientRect();
-    const isHalf = (e.clientX - left) / width < 0.5;
-    setHoverRating(index * 2 + (isHalf ? 1 : 2));
+    setHoverRating(ratingForInteraction({ starIndex: index, clientX: e.clientX, left, width }));
   };
   return (
     <div className={`flex flex-col sm:flex-row items-center justify-center sm:justify-start gap-1 w-full ${readOnly ? 'pointer-events-none' : ''}`} onMouseLeave={() => !readOnly && setHoverRating(0)}>
@@ -740,9 +729,13 @@ export const StarRating = ({ rating = 0, onChange, readOnly = false }) => {
           if (displayValue >= starValue) fillClass = "text-info fill-info";
           else if (displayValue === starValue - 1) { StarComponent = StarHalf; fillClass = "text-info fill-info"; }
           return (
-            <div key={i} className={readOnly ? 'p-0.5' : 'cursor-pointer transition-transform hover:scale-110 p-3 sm:p-1'} onMouseMove={(e) => handleMouseMove(e, i)} onClick={() => !readOnly && onChange(hoverRating)}>
+            <button type="button" key={i} disabled={readOnly} aria-label={`Set rating to ${starValue} out of 10`} aria-pressed={rating === starValue} className={readOnly ? 'p-0.5 bg-transparent border-0' : 'cursor-pointer transition-transform hover:scale-110 p-3 sm:p-1 bg-transparent border-0'} onMouseMove={(e) => handleMouseMove(e, i)} onClick={(event) => {
+              if (readOnly) return;
+              const { left, width } = event.currentTarget.getBoundingClientRect();
+              onChange(ratingForInteraction({ starIndex: i, clientX: event.clientX, left, width, keyboard: event.detail === 0 }));
+            }}>
               <StarComponent className={`w-5 h-5 sm:w-6 sm:h-6 ${fillClass}`} />
-            </div>
+            </button>
           );
         })}
       </div>
@@ -777,7 +770,7 @@ export const MediaCard = ({ item, onClickOverride, onMouseEnterOverride }) => {
         <div className="flex items-end justify-between mt-3 font-mono border-t border-base-200 pt-3">
           <div className="flex flex-col text-left min-w-0 flex-1">
             {item.status && <span className={`text-[10px] font-black uppercase tracking-widest text-left truncate flex items-center gap-1 ${getStatusColorCard(item.status)}`}>
-              {item.status}
+              {mediaStatusLabel(item.status, item.type)}
             </span>}
             {item.roleLabel ? (
               <span className="text-[8px] font-bold text-base-content/60 uppercase tracking-widest truncate mt-0.5">{item.roleLabel}</span>
@@ -808,7 +801,7 @@ export const MediaListRow = ({ item }) => {
         <h2 className="text-sm sm:text-base font-bold leading-tight truncate uppercase tracking-wide font-sans">{item.title}</h2>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 sm:mt-2 text-[10px] font-mono text-base-content/60 uppercase tracking-widest">
           <span>{item.apiData?.year || '----'}</span>
-          <span className={`font-black ${getStatusColorCard(item.status)}`}>{item.status}</span>
+          <span className={`font-black ${getStatusColorCard(item.status)}`}>{mediaStatusLabel(item.status, item.type)}</span>
           {formatProgressLabel(item.progress, item.type) && <span className="hidden sm:inline-block">{formatProgressLabel(item.progress, item.type)}</span>}
           {item.rating > 0 && <span className="flex items-center gap-0.5 text-info bg-base-200 px-1.5 py-0.5"><Star className="w-3 h-3 fill-info"/>{item.rating}.0</span>}
         </div>
@@ -859,9 +852,9 @@ const SearchModalItem = ({ item, type, onSelect, handleQuickAdd }) => {
             <div className="absolute top-full right-0 mt-2 z-[200] shadow-2xl bg-base-100 border border-base-300 w-44 rounded-none text-[9px] sm:text-[10px] font-mono uppercase font-bold tracking-widest animate-in slide-in-from-top-2 duration-150">
               <div className="p-1.5 flex flex-col gap-0.5">
                 <div className="text-[8px] sm:text-[9px] opacity-50 px-2 py-1 pb-1.5">Quick Add</div>
-                <button type="button" className="text-left px-2 py-1.5 bg-transparent hover:bg-base-200 hover:text-primary transition-colors min-h-0 appearance-none" onClick={(e) => { setIsOpen(false); handleQuickAdd(e, item, 'planned'); }}>To {['games', 'vn'].includes(type) ? 'Backlog' : ['movies', 'tv', 'anime'].includes(type) ? 'Watchlist' : 'Reading List'}</button>
-                <button type="button" className="text-left px-2 py-1.5 bg-transparent hover:bg-base-200 hover:text-primary transition-colors min-h-0 appearance-none" onClick={(e) => { setIsOpen(false); handleQuickAdd(e, item, 'in progress'); }}>Currently {['games', 'vn'].includes(type) ? 'Playing' : ['movies', 'tv', 'anime'].includes(type) ? 'Watching' : 'Reading'}</button>
-                <button type="button" className="text-left px-2 py-1.5 bg-transparent hover:bg-base-200 hover:text-primary transition-colors min-h-0 appearance-none" onClick={(e) => { setIsOpen(false); handleQuickAdd(e, item, 'completed'); }}>Mark as {['games', 'vn'].includes(type) ? 'Played' : ['movies', 'tv', 'anime'].includes(type) ? 'Watched' : 'Read'}</button>
+                <button type="button" className="text-left px-2 py-1.5 bg-transparent hover:bg-base-200 hover:text-primary transition-colors min-h-0 appearance-none" onClick={(e) => { setIsOpen(false); handleQuickAdd(e, item, 'planned'); }}>{mediaStatusActionLabel('planned', type)}</button>
+                <button type="button" className="text-left px-2 py-1.5 bg-transparent hover:bg-base-200 hover:text-primary transition-colors min-h-0 appearance-none" onClick={(e) => { setIsOpen(false); handleQuickAdd(e, item, 'in progress'); }}>{mediaStatusActionLabel('in progress', type)}</button>
+                <button type="button" className="text-left px-2 py-1.5 bg-transparent hover:bg-base-200 hover:text-primary transition-colors min-h-0 appearance-none" onClick={(e) => { setIsOpen(false); handleQuickAdd(e, item, 'completed'); }}>{mediaStatusActionLabel('completed', type)}</button>
               </div>
             </div>
           </>
@@ -871,7 +864,7 @@ const SearchModalItem = ({ item, type, onSelect, handleQuickAdd }) => {
   );
 };
 
-export const SearchModal = ({ isOpen, onClose, results, isLoading, query, type, onSelect, page, totalPages, onPageChange }) => {
+export const SearchModal = ({ isOpen, onClose, results, isLoading, error, onRetry, query, type, onSelect, page, totalPages, onPageChange }) => {
   const { openDiaryModal } = useMediaStore();
 
   if (!isOpen) return null;
@@ -902,6 +895,12 @@ export const SearchModal = ({ isOpen, onClose, results, isLoading, query, type, 
           <button onClick={onClose} className="flex items-center justify-center w-8 h-8 bg-transparent hover:bg-error text-base-content/70 hover:text-error-content rounded-none appearance-none transition-colors"><X className="w-4 h-4" /></button>
         </div>
         <div className="flex-1 overflow-y-auto p-0">
+          {error && !isLoading && (
+            <div role="alert" className="m-4 border border-error/40 bg-error/10 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <span className="text-xs text-error font-mono leading-relaxed">{error}</span>
+              <button type="button" onClick={onRetry} className="h-9 px-4 border border-error text-error hover:bg-error hover:text-error-content font-mono text-[10px] font-bold uppercase tracking-widest">Retry Search</button>
+            </div>
+          )}
           {isLoading && results.length === 0 ? (
             <div className="flex flex-col items-center justify-center p-16 text-primary"><Loader2 className="w-8 h-8 animate-spin mb-4" /><span className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] animate-pulse">Searching...</span></div>
           ) : results.length > 0 ? (
@@ -911,9 +910,9 @@ export const SearchModal = ({ isOpen, onClose, results, isLoading, query, type, 
                 <SearchModalItem key={item.id || idx} item={item} type={type} onSelect={onSelect} handleQuickAdd={handleQuickAdd} />
               ))}
             </div>
-          ) : (
+          ) : !error ? (
             <div className="flex flex-col items-center justify-center p-16"><span className="text-[10px] font-mono font-bold text-base-content/30 uppercase tracking-[0.2em]">No records found</span></div>
-          )}
+          ) : null}
         </div>
         <div className="p-3 border-t border-base-300 bg-base-200 flex justify-between items-center">
           <button disabled={page <= 1 || isLoading} onClick={() => onPageChange(page - 1)} className="flex items-center justify-center h-8 px-2 sm:px-4 bg-transparent hover:bg-base-300 text-base-content hover:text-base-content rounded-none appearance-none font-mono text-[10px] uppercase tracking-widest disabled:opacity-30 disabled:cursor-not-allowed transition-colors"><ChevronLeft className="w-4 h-4 sm:mr-1" /> <span className="hidden sm:inline">Prev</span></button>
@@ -926,10 +925,12 @@ export const SearchModal = ({ isOpen, onClose, results, isLoading, query, type, 
 };
 
 export const EpisodeCard = ({ episode, isWatched, isNext }) => {
-  const [revealSpoiler, setRevealSpoiler] = useState(false);
+  const [spoilerHovered, setSpoilerHovered] = useState(false);
+  const [spoilerPinned, setSpoilerPinned] = useState(false);
   const image = episode.still_path ? `https://image.tmdb.org/t/p/w300${episode.still_path}` : null;
   const isSpoilery = !isWatched && !isNext && episode.overview;
   const isAired = new Date(episode.air_date) <= new Date();
+  const revealSpoiler = spoilerHovered || spoilerPinned;
 
   return (
     <div className={`flex flex-col md:flex-row gap-4 p-4 border transition-all group ${isWatched ? 'border-base-300 bg-base-200/50 opacity-60' : isNext ? 'border-primary bg-primary/5 shadow-md shadow-primary/10' : isAired ? 'border-base-300 bg-base-200' : 'border-base-300 bg-base-100 opacity-50'}`}>
@@ -947,10 +948,10 @@ export const EpisodeCard = ({ episode, isWatched, isNext }) => {
           <span>{formatFancyDate(episode.air_date) || 'TBA'}</span>
           <span>{episode.runtime ? `${episode.runtime}m` : ''}</span>
         </div>
-        <div className="relative mt-2 flex-1" onMouseEnter={() => setRevealSpoiler(true)} onMouseLeave={() => setRevealSpoiler(false)}>
+        <button type="button" disabled={!isSpoilery} aria-label={isSpoilery ? (revealSpoiler ? 'Hide episode synopsis spoiler' : 'Reveal episode synopsis spoiler') : undefined} aria-pressed={isSpoilery ? spoilerPinned : undefined} className="relative mt-2 flex-1 text-left bg-transparent border-0 p-0 disabled:cursor-default" onPointerEnter={(event) => event.pointerType === 'mouse' && setSpoilerHovered(true)} onPointerLeave={(event) => event.pointerType === 'mouse' && setSpoilerHovered(false)} onClick={() => isSpoilery && setSpoilerPinned(value => !value)}>
           <p className={`text-xs leading-relaxed text-base-content/70 line-clamp-3 transition-all duration-300 ${isSpoilery && !revealSpoiler ? 'blur-sm select-none' : ''}`}>{episode.overview || 'No transmission data.'}</p>
-          {isSpoilery && !revealSpoiler && <div className="absolute inset-0 flex items-center justify-center pointer-events-none"><span className="bg-base-300/80 backdrop-blur-md px-2 py-1 text-[9px] font-mono font-bold uppercase tracking-widest text-base-content/80 flex items-center gap-1 border border-base-content/10 shadow-lg"><EyeOff className="w-3 h-3" /> Hover to Reveal</span></div>}
-        </div>
+          {isSpoilery && !revealSpoiler && <div className="absolute inset-0 flex items-center justify-center pointer-events-none"><span className="bg-base-300/80 backdrop-blur-md px-2 py-1 text-[9px] font-mono font-bold uppercase tracking-widest text-base-content/80 flex items-center gap-1 border border-base-content/10 shadow-lg"><EyeOff className="w-3 h-3" /> Tap or Hover to Reveal</span></div>}
+        </button>
       </div>
     </div>
   );

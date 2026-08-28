@@ -7,6 +7,7 @@ import { useMediaStore } from '../store/useMediaStore';
 import { Gate } from '../pages/Gate';
 import { supabase } from '../services/supabase';
 import { appEnvironment, showEnvironmentBadge } from '../config/environment';
+import { mediaTypeFromPathname } from '../domain/mediaTerminology';
 
 export const THEMES = [
   'light', 'dark', 'cupcake', 'bumblebee', 'emerald', 'corporate', 'synthwave', 'retro',
@@ -65,9 +66,8 @@ export const Header = ({ onSearch, theme, setTheme }) => {
 
   // NEW: Automatically sync search dropdown with sidebar navigation
   useEffect(() => {
-    const currentType = location.pathname.split('/')[1]; 
-    const validTypes = ['movies', 'tv', 'games', 'anime', 'manga', 'vn', 'books', 'comics'];
-    if (validTypes.includes(currentType)) {
+    const currentType = mediaTypeFromPathname(location.pathname);
+    if (currentType) {
       setSearchType(currentType);
     }
   }, [location.pathname]);
@@ -140,7 +140,6 @@ export const Header = ({ onSearch, theme, setTheme }) => {
         </div>
         <ul tabIndex={0} className="dropdown-content z-[60] menu p-2 shadow-2xl bg-base-100 border border-base-300 w-56 mt-0 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest max-h-[85vh] overflow-y-auto overscroll-contain custom-scrollbar flex-nowrap">
           <li className="menu-title text-[9px] opacity-50 px-4 py-2 border-b border-base-300 mb-1">Account</li>
-          <li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight">Profile</a></li>
           <li><Link to="/settings" onClick={() => document.activeElement.blur()} className="py-1.5 px-3 min-h-0 text-[10px] leading-tight">Settings</Link></li>
         {authMode === 'admin' && (
           <li><Link to="/import" onClick={() => document.activeElement.blur()} className="text-primary py-1.5 px-3 min-h-0 text-[10px] leading-tight">Terminal (Import)</Link></li>
@@ -214,7 +213,7 @@ export const AppLayout = () => {
   const { authMode, _hasHydrated, isLoading, initAuthSubscription } = useMediaStore();
 
   const [searchState, setSearchState] = useState({
-    isOpen: false, isLoading: false, query: '', type: 'movies', results: [], page: 1, totalPages: 1
+    isOpen: false, isLoading: false, query: '', type: 'movies', results: [], page: 1, totalPages: 1, error: null
   });
   const searchRequestIdRef = useRef(0);
 
@@ -239,7 +238,20 @@ export const AppLayout = () => {
   }, []);
 
   const handleGlobalSearch = async (query, type, page = 1) => {
-    setSearchState(prev => ({ ...prev, isOpen: true, isLoading: true, query, type, page }));
+    setSearchState(prev => {
+      const sameSearch = prev.query === query && prev.type === type;
+      return {
+        ...prev,
+        isOpen: true,
+        isLoading: true,
+        query,
+        type,
+        page,
+        error: null,
+        results: sameSearch ? prev.results : [],
+        totalPages: sameSearch ? prev.totalPages : 1,
+      };
+    });
     const requestId = ++searchRequestIdRef.current;
     
     try {
@@ -256,11 +268,11 @@ export const AppLayout = () => {
         default: break;
       }
       if (requestId === searchRequestIdRef.current) {
-        setSearchState(prev => ({ ...prev, isLoading: false, results: response.results, totalPages: response.totalPages }));
+        setSearchState(prev => ({ ...prev, isLoading: false, results: response.results, totalPages: response.totalPages, error: response.error || null }));
       }
-    } catch (error) {
+    } catch (_error) {
       if (requestId === searchRequestIdRef.current) {
-        setSearchState(prev => ({ ...prev, isLoading: false, results: [], totalPages: 1 }));
+        setSearchState(prev => ({ ...prev, isLoading: false, results: [], totalPages: 1, error: 'Search could not reach the selected media provider. Please retry.' }));
       }
     }
   };
@@ -306,6 +318,7 @@ export const AppLayout = () => {
         <SearchModal
           isOpen={searchState.isOpen} isLoading={searchState.isLoading} query={searchState.query}
           type={searchState.type} results={searchState.results} page={searchState.page}
+          error={searchState.error} onRetry={() => handleGlobalSearch(searchState.query, searchState.type, searchState.page)}
           totalPages={searchState.totalPages} onClose={() => setSearchState(prev => ({ ...prev, isOpen: false }))}
           onSelect={handleSelectItem} onPageChange={handlePageChange}
         />

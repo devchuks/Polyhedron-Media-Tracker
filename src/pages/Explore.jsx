@@ -275,7 +275,6 @@ export const Explore = () => {
   const handleDiscoverPageChange = async (newPage) => {
     if (isFetchingMore || newPage < 1 || newPage > totalPages) return;
     setIsFetchingMore(true);
-    setPage(newPage);
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
     const newGridCacheKey = `grid_${api}_${type}_${id}_${mediaFilter}_${sortOrder}_${roleFilter}_${newPage}`;
@@ -283,37 +282,29 @@ export const Explore = () => {
     if (pageCache && Date.now() - pageCache.timestamp < 30 * 60_000) {
       setDiscoverResults(pageCache.data.results);
       setTotalPages(pageCache.data.totalPages);
+      setPage(newPage);
       setIsFetchingMore(false);
       return;
     }
 
-    if (api === 'tmdb') {
-      const res = await apiRegistry.discoverTMDB(type, id, mediaFilter, newPage, sortOrder);
-      setDiscoverResults(res.results);
-      setTotalPages(res.totalPages);
-      setExploreCache(newGridCacheKey, { results: res.results, totalPages: res.totalPages });
-    } else if (api === 'igdb') {
-      const res = await apiRegistry.discoverIGDB(type, id, newPage, sortOrder);
-      setDiscoverResults(res.results);
-      setTotalPages(res.totalPages);
-      setExploreCache(newGridCacheKey, { results: res.results, totalPages: res.totalPages });
-    } else if (api === 'anilist') {
-      const res = await apiRegistry.discoverAniList(type, id, mediaFilter, newPage, sortOrder);
-      setDiscoverResults(res.results);
-      setTotalPages(res.totalPages);
-      setExploreCache(newGridCacheKey, { results: res.results, totalPages: res.totalPages });
-    } else if (api === 'metron') {
-      const res = await apiRegistry.discoverMetron(type, id, newPage);
-      setDiscoverResults(res.results);
-      setTotalPages(res.totalPages);
-      setExploreCache(newGridCacheKey, { results: res.results, totalPages: res.totalPages });
-    } else if (api === 'vndb') {
-      const res = await apiRegistry.discoverVNDB(type, id, newPage, sortOrder, roleFilter);
-      setDiscoverResults(res.results);
-      setTotalPages(res.totalPages);
-      setExploreCache(newGridCacheKey, { results: res.results, totalPages: res.totalPages });
+    try {
+      let res = null;
+      if (api === 'tmdb') res = await apiRegistry.discoverTMDB(type, id, mediaFilter, newPage, sortOrder);
+      else if (api === 'igdb') res = await apiRegistry.discoverIGDB(type, id, newPage, sortOrder);
+      else if (api === 'anilist') res = await apiRegistry.discoverAniList(type, id, mediaFilter, newPage, sortOrder);
+      else if (api === 'metron') res = await apiRegistry.discoverMetron(type, id, newPage);
+      else if (api === 'vndb') res = await apiRegistry.discoverVNDB(type, id, newPage, sortOrder, roleFilter);
+      if (res) {
+        setDiscoverResults(res.results);
+        setTotalPages(res.totalPages);
+        setPage(newPage);
+        setExploreCache(newGridCacheKey, { results: res.results, totalPages: res.totalPages });
+      }
+    } catch (error) {
+      console.error('Explore pagination failed:', error);
+    } finally {
+      setIsFetchingMore(false);
     }
-    setIsFetchingMore(false);
   };
 
   const credits = useMemo(() => {

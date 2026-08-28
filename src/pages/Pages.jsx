@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { useMediaStore, useUIStore } from '../store/useMediaStore';
@@ -12,7 +12,10 @@ import { filterDashboardItems, findMediaForLog, normalizeProviderScore, preferre
 import { canonicalizeMediaItem, mediaKeyFor } from '../domain/mediaIdentity';
 import { safeExternalUrl } from '../utils/urlSafety';
 import { shouldShowBlockingSkeleton, shouldShowUpdatingIndicator } from '../domain/loadingState';
-import { isDetailEnrichmentPending, runSettlingDetailRequest } from '../domain/detailEnrichment';
+import { isDetailEnrichmentPending, previewItemForRoute, resolveDetailTitle, runSettlingDetailRequest } from '../domain/detailEnrichment';
+import { firstUsableImageUrl } from '../domain/mediaImages';
+import { createLatestRequestGate } from '../utils/latestRequest';
+import { formatSeasonNumber, mediaStatusLabel } from '../domain/mediaTerminology';
 
 const VALID_CATEGORIES = ['tv', 'movies', 'games', 'vn', 'anime', 'manga', 'books', 'comics'];
 
@@ -288,7 +291,7 @@ export const Dashboard = () => {
                     <div role="button" tabIndex={0} className="w-full h-8 rounded-none border border-base-300 bg-base-100 hover:bg-base-200 hover:border-primary text-[10px] font-mono uppercase font-bold tracking-widest flex px-2 sm:px-3 justify-between items-center cursor-pointer appearance-none transition-colors"><div className="flex items-center min-w-0"><Filter className="w-3 h-3 mr-1 shrink-0" /> <span className="truncate">{filter === 'all' ? 'Filter' : 'Filtered'}</span></div></div>
                     <ul tabIndex={0} className="dropdown-content z-50 menu p-2 shadow-xl bg-base-100 border border-base-300 w-52 mt-1 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest">
                       <li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setFilter('all'); document.activeElement.blur(); }}>All Entries</a></li>
-                      {['planned', 'in progress', 'completed', 'dropped'].map(s => (<li key={s}><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setFilter(s); document.activeElement.blur(); }}>{s}</a></li>))}
+                      {['planned', 'in progress', 'completed', 'dropped'].map(s => (<li key={s}><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setFilter(s); document.activeElement.blur(); }}>{mediaStatusLabel(s, null)}</a></li>))}
                     </ul>
                   </div>
                 </div>
@@ -412,7 +415,7 @@ export const MediaCategory = () => {
             </div>
             <div className="dropdown dropdown-bottom sm:dropdown-end flex-1 sm:flex-none min-w-0">
               <div role="button" tabIndex={0} className="w-full h-8 rounded-none border border-base-300 bg-base-100 hover:bg-base-200 hover:border-primary text-[10px] font-mono uppercase font-bold tracking-widest flex px-2 sm:px-3 justify-between items-center cursor-pointer appearance-none transition-colors"><div className="flex items-center min-w-0"><Filter className="w-3 h-3 mr-1 shrink-0" /> <span className="truncate">{filter === 'all' ? 'Filter' : 'Filtered'}</span></div></div>
-              <ul tabIndex={0} className="dropdown-content z-50 menu p-2 shadow-xl bg-base-100 border border-base-300 w-52 mt-1 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest"><li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setFilter('all'); document.activeElement.blur(); }}>All Entries</a></li>{['planned', 'in progress', 'completed', 'dropped'].map(s => (<li key={s}><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setFilter(s); document.activeElement.blur(); }}>{s}</a></li>))}</ul>
+              <ul tabIndex={0} className="dropdown-content z-50 menu p-2 shadow-xl bg-base-100 border border-base-300 w-52 mt-1 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest"><li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setFilter('all'); document.activeElement.blur(); }}>All Entries</a></li>{['planned', 'in progress', 'completed', 'dropped'].map(s => (<li key={s}><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setFilter(s); document.activeElement.blur(); }}>{mediaStatusLabel(s, category)}</a></li>))}</ul>
             </div>
             <div className="dropdown dropdown-bottom sm:dropdown-end flex-1 sm:flex-none min-w-0">
               <div role="button" tabIndex={0} className="w-full h-8 rounded-none border border-base-300 bg-base-100 hover:bg-base-200 hover:border-primary text-[10px] font-mono uppercase font-bold tracking-widest flex px-2 sm:px-3 justify-between items-center cursor-pointer appearance-none transition-colors"><span className="truncate">Sort: {sortLabels[sort] || 'Date Added'}</span></div>
@@ -477,7 +480,7 @@ export const DetailView = () => {
   const openDiaryModal = useMediaStore((state) => state.openDiaryModal);
   const isPreview = !storeItem;
 
-  const [previewItem, setPreviewItem] = useState(location.state?.previewData || null);
+  const [previewItem, setPreviewItem] = useState(() => previewItemForRoute(location.state?.previewData, type, id));
   const [detailEnrichment, setDetailEnrichment] = useState({ routeKey: null, phase: 'idle' });
   const [recs, setRecs] = useState([]);
   const [loadingRecs, setLoadingRecs] = useState(true);
@@ -489,6 +492,7 @@ export const DetailView = () => {
   const [showEpisodes, setShowEpisodes] = useState(false);
   const [showTrailer, setShowTrailer] = useState(false);
   const activeFetchIdRef = useRef(null);
+  const seasonRequestGateRef = useRef(createLatestRequestGate());
   const routeKey = `${type}:${id}`;
   const currentRouteRef = useRef(routeKey);
   const mountedRef = useRef(true);
@@ -509,7 +513,7 @@ export const DetailView = () => {
   }, []);
 
   useEffect(() => {
-    setPreviewItem(location.state?.previewData || null);
+    setPreviewItem(previewItemForRoute(location.state?.previewData, type, id));
     setDetailEnrichment({ routeKey, phase: 'idle' });
     setRecs([]);
     setLoadingRecs(true);
@@ -520,7 +524,7 @@ export const DetailView = () => {
     setShowEpisodes(false);
     setShowTrailer(false);
     activeFetchIdRef.current = null;
-  }, [routeKey, location.state]);
+  }, [id, routeKey, location.state, type]);
 
   const apiData = storeItem ? storeItem.apiData : previewItem;
   const raw = apiData?.raw || {};
@@ -564,6 +568,22 @@ export const DetailView = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [id]);
 
+  const fetchSeason = useCallback(async (tvId, seasonNum) => {
+    const requestToken = seasonRequestGateRef.current.begin();
+    setLoadingEps(true);
+    try {
+      const response = await apiRegistry.getTVSeason(tvId, seasonNum);
+      if (!mountedRef.current || currentRouteRef.current !== routeKey || !seasonRequestGateRef.current.isCurrent(requestToken)) return false;
+      setEpisodes(response.episodes || []);
+      return true;
+    } catch {
+      if (mountedRef.current && currentRouteRef.current === routeKey && seasonRequestGateRef.current.isCurrent(requestToken)) setEpisodes([]);
+      return false;
+    } finally {
+      if (mountedRef.current && currentRouteRef.current === routeKey && seasonRequestGateRef.current.isCurrent(requestToken)) setLoadingEps(false);
+    }
+  }, [routeKey]);
+
   useEffect(() => {
     if (!isValidType) {
       setDetailEnrichment({ routeKey, phase: 'settled' });
@@ -591,12 +611,7 @@ export const DetailView = () => {
         const processed = processDetailRaw(rawDetails, type);
         const updatedRaw = { ...targetItem.raw, ...rawDetails, ...processed, deepFetched: true };
         const updatedYear = rawDetails.release_date?.substring(0, 4) || rawDetails.first_air_date?.substring(0, 4) || rawDetails.released?.substring(0, 4) || rawDetails.startDate?.year || rawDetails.year_began || (rawDetails.first_release_date ? new Date(rawDetails.first_release_date * 1000).getFullYear().toString() : targetItem?.year);
-        let updatedTitle = targetItem.title || previewItem?.title;
-        if (type === 'vn' && rawDetails.titles) {
-          const engTitleObj = rawDetails.titles.find(t => t.lang === 'en' || t.lang === 'eng');
-          const displayTitle = engTitleObj?.latin || engTitleObj?.title || rawDetails.title;
-          if (displayTitle) updatedTitle = displayTitle;
-        }
+        const updatedTitle = resolveDetailTitle(rawDetails, type, targetItem.title || previewItem?.title);
         
         let updatedUrl = null;
         if (type === 'movies' && rawDetails.id) updatedUrl = `https://www.themoviedb.org/movie/${rawDetails.id}`;
@@ -611,7 +626,7 @@ export const DetailView = () => {
         // A hydrated library row may legitimately have a complete top-level image
         // while older/sparse apiData has no nested image. Provider enrichment must
         // never replace that usable source with null during the first detail open.
-        const updatedImage = rawDetails.image || preferredMediaImage(storeItem || previewItem) || null;
+        const updatedImage = firstUsableImageUrl(rawDetails.image, preferredMediaImage(storeItem || previewItem));
 
         if (isPreview) setPreviewItem(prev => ({ ...prev, title: updatedTitle, image: updatedImage, raw: updatedRaw, year: updatedYear, url: updatedUrl || prev?.url }));
         else patchProviderMetadata(storeItem, type, { title: updatedTitle, image: updatedImage, apiData: { ...storeItem.apiData, image: updatedImage, raw: updatedRaw, year: updatedYear, url: updatedUrl || storeItem.apiData.url } });
@@ -636,19 +651,10 @@ export const DetailView = () => {
       if (isMounted) { setRecs(res); setLoadingRecs(false); }
     }).catch(() => { if (isMounted) setLoadingRecs(false); });
     if (type === 'tv' && (raw.number_of_seasons > 0 || apiData?.raw?.number_of_seasons > 0)) {
-      setLoadingEps(true);
-      apiRegistry.getTVSeason(cleanId, 1).then(res => {
-        if (isMounted) { setEpisodes(res.episodes || []); setLoadingEps(false); }
-      }).catch(() => { if (isMounted) { setEpisodes([]); setLoadingEps(false); } });
+      void fetchSeason(cleanId, 1);
     }
     return () => { isMounted = false; };
-  }, [cleanId, type, isValidType, raw.number_of_seasons, apiData?.raw?.number_of_seasons]);
-
-  const fetchSeason = async (tvId, seasonNum) => {
-    setLoadingEps(true);
-    try { setEpisodes((await apiRegistry.getTVSeason(tvId, seasonNum)).episodes || []); } catch (err) { setEpisodes([]); }
-    setLoadingEps(false);
-  };
+  }, [cleanId, type, isValidType, raw.number_of_seasons, apiData?.raw?.number_of_seasons, fetchSeason]);
 
   const titleText = storeItem ? storeItem.title : previewItem?.title || apiData?.title || "Unknown Title";
 
@@ -872,7 +878,7 @@ export const DetailView = () => {
                   </button>
                   {showEpisodes && (
                     <select value={season} onChange={(e) => { setSeason(e.target.value); fetchSeason(raw.id || apiData.id, e.target.value); }} className="w-full sm:w-auto h-11 sm:h-8 px-2 bg-base-100 border border-base-300 hover:border-primary focus:outline-none focus:border-primary text-base sm:text-xs font-mono font-bold uppercase tracking-widest rounded-none appearance-none cursor-pointer transition-colors">
-                      {Array.from({ length: raw.number_of_seasons || apiData.raw?.number_of_seasons }, (_, i) => <option key={i+1} value={i+1}>Season 0{i+1}</option>)}
+                      {Array.from({ length: raw.number_of_seasons || apiData.raw?.number_of_seasons }, (_, i) => <option key={i+1} value={i+1}>Season {formatSeasonNumber(i + 1)}</option>)}
                     </select>
                   )}
                 </div>

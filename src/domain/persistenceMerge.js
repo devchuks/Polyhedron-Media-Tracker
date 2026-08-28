@@ -1,4 +1,5 @@
 import { canonicalizeLog, canonicalizeMediaItem } from './mediaIdentity.js';
+import { preserveUsableMediaImage } from './mediaImages.js';
 
 const recordTime = (record, fallbackField) => {
   const value = record?.updatedAt ?? record?.updated_at ?? record?.[fallbackField] ?? 0;
@@ -37,7 +38,13 @@ export const mergeLibraryState = (current = {}, incoming = {}) => {
         try {
           const item = canonicalizeMediaItem(rawItem, category);
           const previous = mediaByKey.get(item.media_key);
-          if (!previous || recordTime(item, 'addedAt') >= recordTime(previous, 'addedAt')) mediaByKey.set(item.media_key, item);
+          if (!previous) {
+            mediaByKey.set(item.media_key, item);
+          } else if (recordTime(item, 'addedAt') >= recordTime(previous, 'addedAt')) {
+            mediaByKey.set(item.media_key, preserveUsableMediaImage(item, previous));
+          } else {
+            mediaByKey.set(item.media_key, preserveUsableMediaImage(previous, item));
+          }
         } catch {
           // Malformed persisted rows are quarantined by omission instead of colliding with valid records.
         }

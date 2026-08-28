@@ -6,6 +6,7 @@ import { Clock, Trash2, Edit3, Save, ChevronLeft, ChevronRight } from 'lucide-re
 import { findMediaForLog } from '../domain/mediaState';
 import { dateInputFromTimestamp, timestampFromDateInput } from '../utils/calendarDate';
 import { shouldShowBlockingSkeleton, shouldShowUpdatingIndicator } from '../domain/loadingState';
+import { diaryActionsForMediaType } from '../domain/mediaTerminology';
 
 const ExpandableReview = ({ text }) => {
   const [expanded, setExpanded] = useState(false);
@@ -209,7 +210,8 @@ export const Diary = () => {
                                  <input type="date" className="input input-xs input-bordered rounded-none font-mono text-[10px] focus:outline-none focus:border-primary w-full bg-base-100" value={editDate} onChange={e => setEditDate(e.target.value)} />
                                  <label className="text-[9px] font-mono font-bold uppercase tracking-widest text-base-content/50">Activity</label>
                                  <select className="select select-xs select-bordered rounded-none font-mono text-[10px] focus:outline-none focus:border-primary w-full bg-base-100" value={editAction} onChange={e => setEditAction(e.target.value)}>
-                                   {['WATCHED', 'RE-WATCHED', 'READ', 'RE-READ', 'PLAYED', 'RE-PLAYED', 'LOGGED'].map(action => <option key={action} value={action}>{action}</option>)}
+                                   {!diaryActionsForMediaType(log.media_type).includes(editAction) && <option value={editAction}>{editAction} (Legacy)</option>}
+                                   {diaryActionsForMediaType(log.media_type).map(action => <option key={action} value={action}>{action}</option>)}
                                  </select>
                                  <textarea className="textarea textarea-bordered textarea-sm rounded-none font-sans min-h-[80px] focus:outline-none focus:border-primary bg-base-100" value={editNote} onChange={e => setEditNote(e.target.value)} placeholder="Add a note..."></textarea>
                                  <div className="flex gap-2 justify-end mt-1">

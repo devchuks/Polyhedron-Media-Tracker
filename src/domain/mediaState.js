@@ -1,4 +1,5 @@
 import { canonicalizeLog, canonicalizeMediaItem, mediaKeyFor } from './mediaIdentity.js';
+import { firstUsableImageUrl, normalizeImageUrl } from './mediaImages.js';
 import { applyActivityLifecycle, isMeaningfulProgress } from './activityLifecycle.js';
 
 const USER_FIELDS = new Set([
@@ -48,7 +49,7 @@ export const serializeTvProgress = (status, season, episode) => {
   return `S${String(seasonNumber).padStart(2, '0')} E${String(episodeNumber).padStart(2, '0')}`;
 };
 
-export const preferredMediaImage = item => item?.image || item?.apiData?.image || null;
+export const preferredMediaImage = item => firstUsableImageUrl(item?.image, item?.apiData?.image);
 
 export const findMediaForLog = (media, log) => {
   let targetKey;
@@ -83,18 +84,31 @@ export const applyStatusTransition = (item, status, completionTime = Date.now(),
 export const mergeProviderMetadata = (currentItem, providerPatch) => {
   const next = { ...currentItem };
   for (const [key, value] of Object.entries(providerPatch || {})) {
-    if (!USER_FIELDS.has(key)) next[key] = value;
+    if (USER_FIELDS.has(key) || key === 'apiData') continue;
+    if (key === 'image') {
+      next.image = firstUsableImageUrl(value, currentItem?.image, currentItem?.apiData?.image);
+    } else {
+      next[key] = value;
+    }
   }
   if (providerPatch?.apiData) {
+    const nestedImage = firstUsableImageUrl(
+      providerPatch.apiData.image,
+      next.image,
+      currentItem?.apiData?.image,
+    );
     next.apiData = {
       ...(currentItem?.apiData || {}),
       ...providerPatch.apiData,
+      image: nestedImage,
       raw: {
         ...(currentItem?.apiData?.raw || {}),
         ...(providerPatch.apiData.raw || {}),
       },
     };
   }
+  next.image = firstUsableImageUrl(next.image, next.apiData?.image);
+  if (next.apiData?.image) next.apiData.image = normalizeImageUrl(next.apiData.image);
   return next;
 };
 

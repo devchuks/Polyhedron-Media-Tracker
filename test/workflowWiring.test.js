@@ -83,8 +83,22 @@ test('detail view resolves images from the complete stored row', async () => {
 
   const sourcePages = await readFile(new URL('../src/pages/Pages.jsx', import.meta.url), 'utf8');
   assert.match(sourcePages, /resolveMediaImage\(storeItem \|\| previewItem/);
-  assert.match(sourcePages, /rawDetails\.image \|\| preferredMediaImage\(storeItem \|\| previewItem\) \|\| null/);
+  assert.match(sourcePages, /firstUsableImageUrl\(rawDetails\.image, preferredMediaImage\(storeItem \|\| previewItem\)\)/);
   assert.doesNotMatch(sourcePages, /rawDetails\.image \|\| targetItem\.image \|\| previewItem\?\.image/);
+});
+
+test('detail routes remount by canonical route identity and season requests use a latest-request gate', async () => {
+  const sourceApp = await readFile(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  const sourcePages = await readFile(new URL('../src/pages/Pages.jsx', import.meta.url), 'utf8');
+  assert.match(sourceApp, /<DetailView key=\{`\$\{type\}:\$\{id\}`\} \/>/);
+  assert.match(sourcePages, /previewItemForRoute\(location\.state\?\.previewData, type, id\)/);
+  assert.match(sourcePages, /seasonRequestGateRef\.current\.isCurrent\(requestToken\)/);
+});
+
+test('cloud media writes and realtime merges normalize scalar image URLs', async () => {
+  const sourceStore = await readFile(new URL('../src/store/useMediaStore.js', import.meta.url), 'utf8');
+  assert.match(sourceStore, /image: normalizeImageUrl\(canonical\.image\)/);
+  assert.match(sourceStore, /image: firstUsableImageUrl\([\s\S]*normalizedRecord\.image/);
 });
 
 test('detail-page adds open with an explicit planned status instead of an unsaveable blank state', async () => {
@@ -94,8 +108,9 @@ test('detail-page adds open with an explicit planned status instead of an unsave
 
 test('ImageWithFallback tracks load and failure by source without render-phase state updates', async () => {
   const sourceUI = await readFile(new URL('../src/components/UI.jsx', import.meta.url), 'utf8');
-  assert.match(sourceUI, /loadedSrc === src/);
-  assert.match(sourceUI, /failedSrc === src/);
+  assert.match(sourceUI, /const imageSrc = normalizeImageUrl\(src\)/);
+  assert.match(sourceUI, /loadedSrc === imageSrc/);
+  assert.match(sourceUI, /failedSrc === imageSrc/);
   assert.doesNotMatch(sourceUI, /if\s*\(\s*src\s*!==[\s\S]*setCurrentSrc/);
 });
 
@@ -118,10 +133,36 @@ test('login screen uses the shared environment policy without a Layout import cy
 
 test('intentional abort handling is wired narrowly and ordinary errors still reach reporting', async () => {
   const sourceApi = await readFile(new URL('../src/services/apiRegistry.js', import.meta.url), 'utf8');
-  assert.match(sourceApi, /if \(isIntentionalAbort\(err\)\) return;/);
+  assert.match(sourceApi, /if \(isIntentionalAbort\(err\)\) return null;/);
   assert.match(sourceApi, /console\.error\(`🔴 \[\$\{serviceName\}\] Error Detail:/);
   assert.doesNotMatch(sourceApi, /error\.context\?\.status === 401[\s\S]*setTimeout\(resolve, 2000\)/);
 
   const sourceDiscovery = await readFile(new URL('../src/pages/Discovery.jsx', import.meta.url), 'utf8');
   assert.match(sourceDiscovery, /if \(!isIntentionalAbort\(err\)\) console\.error/);
+});
+
+test('deterministic post-audit UI fixes remain wired to shared semantics', async () => {
+  const sourceUI = await readFile(new URL('../src/components/UI.jsx', import.meta.url), 'utf8');
+  const sourceLayout = await readFile(new URL('../src/components/Layout.jsx', import.meta.url), 'utf8');
+  const sourceDiary = await readFile(new URL('../src/pages/Diary.jsx', import.meta.url), 'utf8');
+  const sourceExplore = await readFile(new URL('../src/pages/Explore.jsx', import.meta.url), 'utf8');
+
+  assert.match(sourceUI, /ratingForInteraction\(\{ starIndex: i,[\s\S]*keyboard: event\.detail === 0/);
+  assert.match(sourceUI, /Tap or Hover to Reveal/);
+  assert.match(sourceUI, /event\.pointerType === 'mouse'/);
+  assert.match(sourceUI, /mediaStatusLabel\(item\.status, item\.type\)/);
+  assert.match(sourceLayout, /mediaTypeFromPathname\(location\.pathname\)/);
+  assert.doesNotMatch(sourceLayout, />Profile<\/a>/);
+  assert.match(sourceDiary, /diaryActionsForMediaType\(log\.media_type\)/);
+  assert.match(sourceExplore, /finally \{\s*setIsFetchingMore\(false\)/);
+});
+
+test('provider search failures have a persistent retry state distinct from empty results', async () => {
+  const sourceApi = await readFile(new URL('../src/services/apiRegistry.js', import.meta.url), 'utf8');
+  const sourceUI = await readFile(new URL('../src/components/UI.jsx', import.meta.url), 'utf8');
+  const sourceLayout = await readFile(new URL('../src/components/Layout.jsx', import.meta.url), 'utf8');
+  assert.match(sourceApi, /const failedSearchResult/);
+  assert.match(sourceLayout, /error: response\.error \|\| null/);
+  assert.match(sourceUI, /role="alert"/);
+  assert.match(sourceUI, /Retry Search/);
 });

@@ -60,11 +60,18 @@ const getOpenLibraryUrl = (endpoint) => {
 };
 
 const reportApiError = (err, serviceName) => {
-  if (isIntentionalAbort(err)) return;
+  if (isIntentionalAbort(err)) return null;
   console.error(`🔴 [${serviceName}] Error Detail:`, err);
-  
-  useUIStore.getState().addToast(providerErrorMessage(err, serviceName), 'error');
+  const message = providerErrorMessage(err, serviceName);
+  useUIStore.getState().addToast(message, 'error');
+  return message;
 };
+
+const failedSearchResult = (err, serviceName) => ({
+  results: [],
+  totalPages: 1,
+  error: reportApiError(err, serviceName),
+});
 
 const fetchAniListGraphQL = async (query, variables = {}) => {
   return withRetry(async () => {
@@ -106,13 +113,13 @@ export const apiRegistry = {
     try {
       const data = await invokeFunction('tmdb', { path: '/search/movie', query: { query, page } });
       return { results: data.results.map((item) => normalizeTMDB(item, 'movies')), totalPages: data.total_pages || 1 };
-    } catch (err) { reportApiError(err, 'TMDB (Movies)'); return { results: [], totalPages: 1 }; }
+    } catch (err) { return failedSearchResult(err, 'TMDB (Movies)'); }
   },
   searchTV: async (query, page = 1) => {
     try {
       const data = await invokeFunction('tmdb', { path: '/search/tv', query: { query, page } });
       return { results: data.results.map((item) => normalizeTMDB(item, 'tv')), totalPages: data.total_pages || 1 };
-    } catch (err) { reportApiError(err, 'TMDB (TV)'); return { results: [], totalPages: 1 }; }
+    } catch (err) { return failedSearchResult(err, 'TMDB (TV)'); }
   },
   searchGames: async (query, page = 1) => {
     try {
@@ -120,7 +127,7 @@ export const apiRegistry = {
       const data = await invokeFunction('igdb', { operation: 'searchGames', params: { query, page } });
       const results = (data || []).map(normalizeIGDB);
       return { results, totalPages: results.length === limit ? page + 1 : page };
-    } catch (err) { reportApiError(err, 'IGDB'); return { results: [], totalPages: 1 }; }
+    } catch (err) { return failedSearchResult(err, 'IGDB'); }
   },
   searchAnime: async (query, page = 1) => {
     try {
@@ -155,8 +162,7 @@ export const apiRegistry = {
         totalPages: res?.Page?.pageInfo?.lastPage || 1
       };
     } catch (err) { 
-      reportApiError(err, 'AniList (Anime)'); 
-      return { results: [], totalPages: 1 }; 
+      return failedSearchResult(err, 'AniList (Anime)');
     }
   },
 
@@ -194,8 +200,7 @@ export const apiRegistry = {
         totalPages: res?.Page?.pageInfo?.lastPage || 1
       };
     } catch (err) { 
-      reportApiError(err, 'AniList (Manga)'); 
-      return { results: [], totalPages: 1 }; 
+      return failedSearchResult(err, 'AniList (Manga)');
     }
   },
   
@@ -256,8 +261,7 @@ export const apiRegistry = {
 
       return { results: paginatedResults, totalPages };
     } catch (err) {
-      reportApiError(err, 'Metron (Comics)');
-      return { results: [], totalPages: 1 };
+      return failedSearchResult(err, 'Metron (Comics)');
     }
   },
 
@@ -377,14 +381,14 @@ export const apiRegistry = {
     try {
       const data = await safeApiClient('https://api.vndb.org/kana/vn', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filters: ['search', '=', query], fields: 'id, title, titles.lang, titles.title, titles.latin, released, image.url, image.thumbnail, developers.id, developers.name, description', results: 10, page, count: true }) });
       return { results: (data.results || []).map(normalizeVNDB), totalPages: Math.ceil(data.count / 10) || 1 };
-    } catch (err) { reportApiError(err, 'VNDB'); return { results: [], totalPages: 1 }; }
+    } catch (err) { return failedSearchResult(err, 'VNDB'); }
   },
   searchBooks: async (query, page = 1) => {
     try {
       const endpoint = `/search.json?q=${encodeURIComponent(query)}&limit=10&page=${page}`;
       const data = await safeApiClient(getOpenLibraryUrl(endpoint));
       return { results: (data.docs || []).map(normalizeOpenLibrary), totalPages: Math.ceil(data.numFound / 10) || 1 };
-    } catch (err) { reportApiError(err, 'OpenLibrary'); return { results: [], totalPages: 1 }; }
+    } catch (err) { return failedSearchResult(err, 'OpenLibrary'); }
   },
 
   getPersonDetails: async (personId) => {

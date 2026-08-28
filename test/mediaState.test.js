@@ -72,9 +72,9 @@ test('TV progress serializes only genuine watched episodes', () => {
 });
 
 test('row-level image remains authoritative when nested provider metadata is sparse', () => {
-  assert.equal(preferredMediaImage({ image: 'row.jpg', apiData: {} }), 'row.jpg');
-  assert.equal(preferredMediaImage({ apiData: { image: 'nested.jpg' } }), 'nested.jpg');
-  assert.equal(preferredMediaImage({ image: 'row.jpg', apiData: { image: 'stale.jpg' } }), 'row.jpg');
+  assert.equal(preferredMediaImage({ image: 'https://images.example/row.jpg', apiData: {} }), 'https://images.example/row.jpg');
+  assert.equal(preferredMediaImage({ apiData: { image: 'https://images.example/nested.jpg' } }), 'https://images.example/nested.jpg');
+  assert.equal(preferredMediaImage({ image: 'https://images.example/row.jpg', apiData: { image: 'https://images.example/stale.jpg' } }), 'https://images.example/row.jpg');
 });
 
 test('same raw ID in another media type produces a distinct diary entry', () => {
@@ -110,6 +110,16 @@ test('provider metadata patches cannot overwrite newer user-controlled state', (
     { status: 'completed', rating: 9, progress: '100%', dateCompleted: 42 },
   );
   assert.equal(merged.title, 'Hydrated');
+});
+
+test('provider metadata preserves a valid image when enrichment is empty and normalizes image objects', () => {
+  const current = { image: 'https://images.example/current.jpg', apiData: { image: 'https://images.example/nested.jpg' } };
+  const preserved = mergeProviderMetadata(current, { image: null, apiData: { image: '' } });
+  assert.equal(preserved.image, 'https://images.example/current.jpg');
+  assert.equal(preserved.apiData.image, 'https://images.example/current.jpg');
+
+  const enriched = mergeProviderMetadata(current, { image: { url: 'https://images.example/new.jpg' } });
+  assert.equal(enriched.image, 'https://images.example/new.jpg');
 });
 
 test('comic issue IDs normalize across string/number and partial lists never imply completion', () => {

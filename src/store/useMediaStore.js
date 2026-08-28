@@ -3,6 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import { supabase } from '../services/supabase';
 import { canonicalizeLog, canonicalizeMediaItem, mediaKeyFor } from '../domain/mediaIdentity';
 import { applyStatusTransition, canonicalizeMediaCollection, mergeProviderMetadata, toggleIssueState, upsertDiaryLog } from '../domain/mediaState';
+import { firstUsableImageUrl, normalizeImageUrl } from '../domain/mediaImages';
 import { applyActivityLifecycle, isMeaningfulProgress } from '../domain/activityLifecycle';
 import { normalizeBackup } from '../domain/backup';
 import { mergeLibraryState, mergePersistedSnapshots, nextRecordRevision } from '../domain/persistenceMerge';
@@ -215,7 +216,7 @@ const mediaCloudRow = (item, category, userId) => {
     dateCompleted: canonical.dateCompleted || null,
     rewatchCount: canonical.rewatchCount || 0,
     readIssueIds: canonical.readIssueIds || [],
-    image: canonical.image || null,
+    image: normalizeImageUrl(canonical.image),
     apiData: canonical.apiData || {},
     updated_at: new Date(canonical.updatedAt || Date.now()).toISOString(),
   };
@@ -423,6 +424,12 @@ export const useMediaStore = create(
                   ...normalizedRecord,
                   apiData: (normalizedRecord.apiData && Object.keys(normalizedRecord.apiData).length > 0) ? normalizedRecord.apiData :
                            existingItem?.apiData ?? {},
+                  image: firstUsableImageUrl(
+                    normalizedRecord.image,
+                    normalizedRecord.apiData?.image,
+                    existingItem?.image,
+                    existingItem?.apiData?.image,
+                  ),
                 };
                 if (newMedia[type]) {
                   newMedia[type] = [...newMedia[type]]; // 3. Fix Array Mutation Trap to force React to re-render

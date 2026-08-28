@@ -1,4 +1,5 @@
 import { canonicalizeMediaItem } from '../domain/mediaIdentity.js';
+import { normalizeImageUrl } from '../domain/mediaImages.js';
 
 const TMDB_GENRES = {
   28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy", 80: "Crime", 99: "Documentary", 
@@ -9,9 +10,10 @@ const TMDB_GENRES = {
 };
 
 const applyImageProxy = (url, width = 300) => {
-  if (!url) return null;
-  if (url.includes('vndb.org')) return url;
-  return `https://wsrv.nl/?url=${encodeURIComponent(url)}&w=${width}&output=webp`;
+  const normalized = normalizeImageUrl(url);
+  if (!normalized) return null;
+  if (normalized.includes('vndb.org')) return normalized;
+  return `https://wsrv.nl/?url=${encodeURIComponent(normalized)}&w=${width}&output=webp`;
 };
 
 export const normalizeTMDB = (item, type) => {

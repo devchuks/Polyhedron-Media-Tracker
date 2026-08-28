@@ -14,6 +14,24 @@ export const isDetailEnrichmentPending = (state, routeKey) => (
   state?.routeKey === routeKey && state?.phase === 'pending'
 );
 
+export const previewItemForRoute = (previewItem, type, id) => {
+  if (!previewItem || String(previewItem.id) !== String(id) || String(previewItem.type || type) !== String(type)) return null;
+  return previewItem;
+};
+
+export const resolveDetailTitle = (details, type, currentTitle = '') => {
+  if (!details || typeof details !== 'object') return currentTitle;
+  const structuredTitle = details.title && typeof details.title === 'object'
+    ? details.title.english || details.title.romaji || details.title.native
+    : details.title;
+  if (type === 'tv') return details.name || structuredTitle || currentTitle;
+  if (type === 'vn' && Array.isArray(details.titles)) {
+    const english = details.titles.find(title => title.lang === 'en' || title.lang === 'eng');
+    return english?.latin || english?.title || structuredTitle || currentTitle;
+  }
+  return structuredTitle || details.name || currentTitle;
+};
+
 export const runSettlingDetailRequest = async ({ load, isCurrent, onResolved }) => {
   try {
     const value = await load();

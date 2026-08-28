@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useParams } from 'react-router-dom';
 import { AppLayout } from './components/Layout';
 import { Dashboard, MediaCategory, DetailView } from './pages/Pages';
 import Settings from './pages/Settings';
@@ -8,6 +8,11 @@ import { ImportTerminal } from './pages/ImportTerminal';
 import { NotFound } from './pages/NotFound';
 import { Discovery } from './pages/Discovery';
 import { Explore } from './pages/Explore';
+
+const KeyedDetailView = () => {
+  const { type, id } = useParams();
+  return <DetailView key={`${type}:${id}`} />;
+};
 
 function App() {
   return (
@@ -20,7 +25,7 @@ function App() {
           <Route path="import" element={<ImportTerminal />} />
           <Route path="settings" element={<Settings />} />
           <Route path=":category" element={<MediaCategory />} />
-          <Route path="media/:type/:id" element={<DetailView />} />
+          <Route path="media/:type/:id" element={<KeyedDetailView />} />
           <Route path="explore/:api/:type/:id" element={<Explore />} />
           {/* Fallback 404 Route */}
           <Route path="*" element={<NotFound />} />

@@ -16,6 +16,20 @@ test('concurrent tab snapshots preserve unrelated record updates', () => {
   assert.equal(JSON.parse(serialized).state.media.movies.length, 1);
 });
 
+test('a newer hydrated row cannot erase an older usable image with invalid provider data', () => {
+  const current = {
+    media: { vn: [{ id: 'v1', type: 'vn', provider: 'vndb', provider_id: 'v1', image: 'https://images.example/good.jpg', apiData: {}, updatedAt: 1 }] },
+    mediaLogs: [], deletedMediaKeys: {}, deletedLogIds: {},
+  };
+  const incoming = {
+    media: { vn: [{ id: 'v1', type: 'vn', provider: 'vndb', provider_id: 'v1', image: '{bad-json', apiData: { image: null }, updatedAt: 2 }] },
+    mediaLogs: [], deletedMediaKeys: {}, deletedLogIds: {},
+  };
+  const merged = mergeLibraryState(current, incoming);
+  assert.equal(merged.media.vn[0].image, 'https://images.example/good.jpg');
+  assert.equal(merged.media.vn[0].apiData.image, 'https://images.example/good.jpg');
+});
+
 test('newer tombstones prevent stale snapshots from resurrecting deleted media and logs', () => {
   const stale = {
     media: { movies: [{ id: 12, type: 'movies', updatedAt: 10 }] },

@@ -1,3 +1,5 @@
+import { normalizeImageUrl, normalizeMediaImageFields } from './mediaImages.js';
+
 export const MEDIA_TYPES = Object.freeze(['tv', 'movies', 'games', 'vn', 'anime', 'manga', 'books', 'comics']);
 
 export const PROVIDER_BY_MEDIA_TYPE = Object.freeze({
@@ -70,13 +72,13 @@ export const canonicalizeMediaItem = (item, category) => {
     item.provider || item.apiSource || item.apiData?.apiSource || parsedKey?.provider,
   );
   const providerId = normalizeProviderId(getProviderIdFromItem(item, mediaType), mediaType);
-  return {
+  return normalizeMediaImageFields({
     ...item,
     type: mediaType,
     provider,
     provider_id: providerId,
     media_key: createMediaKey(provider, mediaType, providerId),
-  };
+  });
 };
 
 export const canonicalizeLog = (log) => {
@@ -87,6 +89,7 @@ export const canonicalizeLog = (log) => {
   const providerId = normalizeProviderId(log.provider_id ?? log.providerId ?? parsedKey?.providerId ?? log.media_id ?? log.mediaId, mediaType);
   return {
     ...log,
+    image: normalizeImageUrl(log.image),
     media_type: mediaType,
     provider,
     provider_id: providerId,
