@@ -40,7 +40,7 @@ export const providerForMediaType = type => ({
 
 export const telegramMediaTypeLabel = type => ({
   movies: 'Movie',
-  tv: 'TV show',
+  tv: 'TV Show',
   comics: 'Comic',
   games: 'Game',
   anime: 'Anime',
@@ -48,6 +48,78 @@ export const telegramMediaTypeLabel = type => ({
   vn: 'Visual novel',
   books: 'Book',
 }[type] || 'Media');
+
+export const telegramStatusLabel = (type, status) => {
+  const normalizedStatus = String(status || '').trim().toLowerCase();
+  if (normalizedStatus === 'completed') {
+    if (['books', 'manga', 'comics'].includes(type)) return 'Read';
+    if (['games', 'vn'].includes(type)) return 'Played';
+    return 'Watched';
+  }
+  if (normalizedStatus === 'in progress') {
+    if (['books', 'manga', 'comics'].includes(type)) return 'Reading';
+    if (['games', 'vn'].includes(type)) return 'Playing';
+    return 'Watching';
+  }
+  if (normalizedStatus === 'planned') return 'Planned';
+  if (normalizedStatus === 'dropped') return 'Dropped';
+  return normalizedStatus.replace(/\b\w/gu, letter => letter.toUpperCase()) || 'Unknown';
+};
+
+export const formatTelegramDate = value => {
+  const timestamp = finiteNumber(value);
+  if (timestamp === null) return null;
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return null;
+  const day = date.getUTCDate();
+  const remainder = day % 100;
+  const suffix = remainder >= 11 && remainder <= 13
+    ? 'th'
+    : ({ 1: 'st', 2: 'nd', 3: 'rd' })[day % 10] || 'th';
+  const month = date.toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
+  return `${month} ${day}${suffix}, ${date.getUTCFullYear()}`;
+};
+
+export const resolveTelegramAmbiguityReply = (options, reply) => {
+  const rows = (Array.isArray(options) ? options : []).filter(option => option?.id != null && option?.title);
+  const rawReply = String(reply || '').trim();
+  if (!rows.length || !rawReply) return null;
+
+  if (/^[1-9]\d*$/u.test(rawReply)) {
+    const optionNumber = Number(rawReply);
+    if (optionNumber <= rows.length) return rows[optionNumber - 1];
+  }
+
+  const explicitIdReply = /^id\s*[:#-]?\s*(.+)$/iu.exec(rawReply);
+  if (explicitIdReply) {
+    const byExplicitId = rows.filter(option => String(option.id) === explicitIdReply[1].trim());
+    return byExplicitId.length === 1 ? byExplicitId[0] : null;
+  }
+
+  const replyKey = normalizedText(rawReply);
+  const mentionedYears = rows.filter(option => option.year && new RegExp(`(^|\\D)${String(option.year).replace(/[^0-9]/gu, '')}(\\D|$)`, 'u').test(rawReply));
+  if (mentionedYears.length === 1) return mentionedYears[0];
+
+  const byId = rows.filter(option => String(option.id) === rawReply);
+  if (byId.length === 1) return byId[0];
+
+  const byTitle = rows.filter(option => normalizedText(option.title) === replyKey);
+  return byTitle.length === 1 ? byTitle[0] : null;
+};
+
+export const applyTelegramAmbiguitySelection = ({ item, selection, activityTimestamp, pendingEventId } = {}) => {
+  if (!item || !selection) return null;
+  return {
+    ...item,
+    cleanTitle: selection.title || item.cleanTitle,
+    year: selection.year ?? item.year ?? null,
+    providerId: String(selection.id),
+    type: selection.mediaType || item.type,
+    confidence: 1,
+    _activityTimestamp: activityTimestamp,
+    _pendingEventId: pendingEventId,
+  };
+};
 
 const decisiveRankedCandidate = (candidates, allRows) => {
   if (candidates.length < 2) return candidates[0] || null;
@@ -192,27 +264,28 @@ export const buildTelegramLifecycle = ({
   };
 };
 
-export const telegramConfirmation = ({ title, intent, lifecycle, activityAt }) => {
+export const telegramConfirmation = ({ title, year, type, intent, lifecycle, activityAt }) => {
   const verb = ({
     ADD_PLANNED: 'Added', START: 'Started', UPDATE_PROGRESS: 'Updated', COMPLETE_ITEM: 'Completed',
     COMPLETE_SEASON: 'Completed & logged', REWATCH_ITEM: 'Rewatched', REWATCH_SEASON: 'Rewatched & logged',
     RATE: 'Rated', NOTE: 'Logged',
   })[intent] || 'Updated';
-  const date = new Date(activityAt).toISOString().slice(0, 10);
   const activity = lifecycle.actionType
     ? lifecycle.actionType.toLowerCase().replace(/(^|-)\w/gu, value => value.toUpperCase())
     : null;
-  const stateEvent = ({ ADD_PLANNED: 'Added', START: 'Started', UPDATE_PROGRESS: 'Updated', RATE: 'Rated' })[intent] || null;
-  const event = lifecycle.shouldLog
-    ? `${activity} · ${date}`
-    : stateEvent
-      ? `${stateEvent} · ${date}`
-      : null;
+  const titleWithYear = `${title}${year ? ` (${year})` : ''}`;
+  const dateAdded = formatTelegramDate(lifecycle.addedAt);
+  const activityDate = formatTelegramDate(activityAt);
   return {
-    headline: `${verb} ${title}${lifecycle.seasonLabel ? ` — ${lifecycle.seasonLabel}` : ''}`,
+    headline: `${verb} ${titleWithYear}${lifecycle.seasonLabel ? ` — ${lifecycle.seasonLabel}` : ''}`,
     lines: [
-      event,
-      lifecycle.progress ? `Progress · ${lifecycle.progress}` : null,
+      `Type: ${telegramMediaTypeLabel(type)}`,
+      dateAdded ? `Date Added: ${dateAdded}` : null,
+      `Status: ${telegramStatusLabel(type, lifecycle.status)}`,
+      lifecycle.progress ? `Progress: ${lifecycle.progress}` : null,
+      lifecycle.shouldLog && activity ? `Activity: ${activity}` : null,
+      lifecycle.shouldLog && activityDate ? `Activity Date: ${activityDate}` : null,
+      lifecycle.rating ? `Rating: ${lifecycle.rating}/10` : null,
     ].filter(Boolean),
   };
 };

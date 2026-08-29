@@ -55,6 +55,13 @@ test('detail page has one media-aware status control and no sibling Log Activity
   assert.doesNotMatch(source, /<CalendarDays[^>]*\/>Log Activity/);
 });
 
+test('detail page preserves the established stacked mobile poster layout', async () => {
+  const source = await readFile(new URL('../src/pages/Pages.jsx', import.meta.url), 'utf8');
+  assert.match(source, /p-3 lg:p-5 flex flex-col gap-3 lg:gap-5/);
+  assert.match(source, /w-48 sm:w-56 lg:w-full mx-auto lg:mx-0 flex flex-col gap-2/);
+  assert.doesNotMatch(source, /p-3 lg:p-5 flex flex-row items-start gap-3 lg:flex-col/);
+});
+
 test('movie date input is wired to dateStarted while the unified modal offers both actions', async () => {
   const source = await readFile(new URL('../src/components/UI.jsx', import.meta.url), 'utf8');
   assert.match(source, /selectedActivityTimestamp = \(\) => type === 'movies'[\s\S]*dateStarted/);

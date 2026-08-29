@@ -4,10 +4,12 @@ import { corsHeaders } from "../_shared/cors.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.42.0"
 import { assertGraphqlSuccess, enforceRateLimit, escapeTelegramHtml, readBoundedJson, safeHttpUrl, verifyTelegramWebhookSecret } from "../_shared/validation.js"
 import {
+  applyTelegramAmbiguitySelection,
   buildTelegramLifecycle,
   classifyTelegramIntent,
   progressForTelegramIntent,
   providerForMediaType,
+  resolveTelegramAmbiguityReply,
   selectDeterministicProviderMatch,
   telegramConfirmation,
   telegramMediaTypeLabel,
@@ -121,6 +123,16 @@ if (!supabaseUrl || !serviceRoleKey || !anonKey || !userId) {
 
 const supabase = createClient(supabaseUrl, anonKey);
 const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
+const clearPendingResolution = async (eventId: unknown) => {
+  if (typeof eventId !== 'string' || !eventId) return;
+  const { error } = await supabaseAdmin
+    .from('webhook_batches')
+    .delete()
+    .eq('source', 'telegram')
+    .eq('event_id', eventId)
+    .eq('user_id', userId);
+  if (error) throw new Error('Pending Telegram resolution cleanup failed');
+};
 const { data: existingBatch, error: existingBatchError } = await supabaseAdmin
   .from('webhook_batches')
   .select('plan')
@@ -134,8 +146,57 @@ if (existingBatchError) {
 }
 let items = Array.isArray(existingBatch?.plan) ? existingBatch.plan : null;
 const isNewBatch = !items;
+const pendingResolutionEventId = `pending-resolution:${chatId}`;
 
 if (isNewBatch) {
+  const pendingCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data: pendingBatch, error: pendingBatchError } = await supabaseAdmin
+    .from('webhook_batches')
+    .select('plan,created_at')
+    .eq('source', 'telegram')
+    .eq('event_id', pendingResolutionEventId)
+    .eq('user_id', userId)
+    .gte('created_at', pendingCutoff)
+    .maybeSingle();
+  if (pendingBatchError) {
+    console.error('Unable to inspect pending Telegram ambiguity state.');
+    return new Response('Pending resolution check failed', { status: 500, headers: corsHeaders });
+  }
+  const pendingResolution = Array.isArray(pendingBatch?.plan) ? pendingBatch.plan[0] : null;
+  if (pendingResolution?.originalItem && Array.isArray(pendingResolution.options)) {
+    if (/^\/?cancel$/iu.test(text)) {
+      await clearPendingResolution(pendingResolutionEventId);
+      await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text: 'Cancelled the pending media choice.' }),
+      });
+      return new Response('Pending resolution cancelled', { status: 200, headers: corsHeaders });
+    }
+
+    const selection = resolveTelegramAmbiguityReply(pendingResolution.options, text);
+    if (selection) {
+      items = [applyTelegramAmbiguitySelection({
+        item: pendingResolution.originalItem,
+        selection,
+        activityTimestamp: pendingResolution.activityTimestamp,
+        pendingEventId: pendingResolutionEventId,
+      })];
+    } else {
+      await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: 'I could not match that choice. Reply with the option number, year, or provider ID shown above. Send /cancel to start over.',
+        }),
+      });
+      return new Response('Pending resolution remains open', { status: 200, headers: corsHeaders });
+    }
+  }
+}
+
+if (isNewBatch && !items) {
 
 const systemPrompt = `
 You are a structured media parsing engine.
@@ -381,6 +442,7 @@ for (let i = 0; i < items.length; i++) {
   const eventId = `${body.update_id}:${i}`;
   if (completedEventIds.has(eventId)) {
     console.log(`Ignored duplicate Telegram event ${eventId} before provider resolution.`);
+    await clearPendingResolution(item._pendingEventId);
     continue;
   }
 
@@ -747,15 +809,39 @@ for (let i = 0; i < items.length; i++) {
     console.log(`[Phase 3 Resolved] Provider match: ${externalId ? 'yes' : 'no'}.`);
 
     if (!externalId && ambiguityOptions.length > 0) {
-      const optionText = ambiguityOptions.slice(0, 5)
-        .map((option: any) => `• ${escapeTelegramHtml(option.title)}${option.year ? ` (${escapeTelegramHtml(option.year)})` : ''} — ${escapeTelegramHtml(telegramMediaTypeLabel(option.mediaType || type))}`)
+      const pendingOptions = ambiguityOptions.slice(0, 5).map((option: any) => ({
+        id: option.id,
+        title: option.title,
+        year: option.year || null,
+        mediaType: option.mediaType || type,
+      }));
+      const originalItem = { ...item };
+      delete originalItem._activityTimestamp;
+      delete originalItem._pendingEventId;
+      const { error: pendingResolutionError } = await supabaseAdmin
+        .from('webhook_batches')
+        .upsert({
+          source: 'telegram',
+          event_id: pendingResolutionEventId,
+          user_id: userId,
+          plan: [{
+            originalItem,
+            options: pendingOptions,
+            activityTimestamp: Number(item._activityTimestamp ?? timestamp),
+          }],
+          created_at: new Date().toISOString(),
+        }, { onConflict: 'source,event_id' });
+      if (pendingResolutionError) throw new Error('Unable to preserve Telegram ambiguity context');
+
+      const optionText = pendingOptions
+        .map((option: any, optionIndex: number) => `${optionIndex + 1}. ${escapeTelegramHtml(option.title)}${option.year ? ` (${escapeTelegramHtml(option.year)})` : ''} — ${escapeTelegramHtml(telegramMediaTypeLabel(option.mediaType))} · ID ${escapeTelegramHtml(option.id)}`)
         .join('\n');
       await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chat_id: chatId,
-          text: `<b>I found a few genuinely close matches:</b>\n${optionText}\n\nReply with the matching title, year, or provider ID.`,
+          text: `<b>I found a few genuinely close matches:</b>\n${optionText}\n\nReply with the option number, year, or provider ID. Your original activity will be preserved. Send /cancel to start over.`,
           parse_mode: 'HTML',
         }),
       });
@@ -775,7 +861,8 @@ for (let i = 0; i < items.length; i++) {
       const mediaKey = `${provider}:${type}:${providerId}`;
       
       // Advance timestamp minimally to guarantee chronological ordering in the UI 
-      const timestampMs = new Date(timestamp * 1000).getTime() + i;
+      const activityTimestamp = Number(item._activityTimestamp ?? timestamp);
+      const timestampMs = new Date(activityTimestamp * 1000).getTime() + i;
       const isoDate = new Date(timestampMs).toISOString();
 
       // Read the current owner-scoped state so the same explicit-intent lifecycle
@@ -910,27 +997,27 @@ for (let i = 0; i < items.length; i++) {
       if (transactionError) throw new Error(`Telegram media transaction failed: ${transactionError.code || 'unknown'}`);
       if (!applied) {
         console.log(`Ignored duplicate Telegram event ${eventId}.`);
+        await clearPendingResolution(item._pendingEventId);
         continue;
       }
 
-      // --- Phase 5 - Compact feedback ---
+      // --- Phase 5 - Structured feedback ---
       const telegramUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
       
       // Invisible link trick to force Telegram to show the high-res poster as a preview
       const safePosterUrl = safeHttpUrl(posterUrl);
       const posterLink = safePosterUrl ? `<a href="${escapeTelegramHtml(safePosterUrl)}">&#8203;</a>` : '';
-      const typeLabel = telegramMediaTypeLabel(type);
-      const statusLabel = safeStatus.replace(/\b\w/gu, (letter: string) => letter.toUpperCase());
-      const resolvedYear = canonicalYear ? ` <code>${escapeTelegramHtml(canonicalYear)}</code>` : '';
-      const confirmation = telegramConfirmation({ title: safeTitle, intent, lifecycle, activityAt: timestampMs });
-      const detailLines = [
-        `${typeLabel} · ${statusLabel}`,
-        ...confirmation.lines,
-        lifecycle.rating ? `Rating · ${lifecycle.rating}/10` : null,
-      ].filter(Boolean);
+      const confirmation = telegramConfirmation({
+        title: safeTitle,
+        year: canonicalYear,
+        type,
+        intent,
+        lifecycle,
+        activityAt: timestampMs,
+      });
       const messageHtml = `
-<b>✅ ${escapeTelegramHtml(confirmation.headline)}</b>${resolvedYear}${posterLink}
-${detailLines.map((line: string) => escapeTelegramHtml(line)).join('\n')}
+<b>✅ ${escapeTelegramHtml(confirmation.headline)}</b>${posterLink}
+${confirmation.lines.map((line: string) => escapeTelegramHtml(line)).join('\n')}
       `.trim();
 
       try {
@@ -943,6 +1030,7 @@ ${detailLines.map((line: string) => escapeTelegramHtml(line)).join('\n')}
       } catch {
         console.warn('Telegram feedback delivery failed after a successful database commit.');
       }
+      await clearPendingResolution(item._pendingEventId);
     } else {
       // API missing fallback logging
       try {

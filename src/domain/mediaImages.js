@@ -42,47 +42,6 @@ export const firstUsableImageUrl = (...values) => {
   return null;
 };
 
-const finiteMetadataNumber = value => {
-  if (value === null || value === undefined || value === '') return null;
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
-};
-
-export const selectVnBannerImage = (screenshots) => {
-  if (!Array.isArray(screenshots)) return null;
-
-  const candidates = screenshots.map(screenshot => {
-    const url = normalizeImageUrl(screenshot?.url);
-    const dimensions = Array.isArray(screenshot?.dims)
-      ? screenshot.dims
-      : Array.isArray(screenshot?.dimensions)
-        ? screenshot.dimensions
-        : [];
-    const width = finiteMetadataNumber(dimensions[0] ?? screenshot?.width);
-    const height = finiteMetadataNumber(dimensions[1] ?? screenshot?.height);
-    const sexual = finiteMetadataNumber(screenshot?.sexual);
-    const violence = finiteMetadataNumber(screenshot?.violence);
-    if (!url || !width || !height || width / height < 1.25 || sexual === null || violence === null) return null;
-    if (sexual > 0.5 || violence > 1) return null;
-
-    const aspectRatio = width / height;
-    return {
-      url,
-      contentScore: sexual + violence,
-      aspectDistance: Math.abs(aspectRatio - (16 / 9)),
-      area: width * height,
-    };
-  }).filter(Boolean);
-
-  candidates.sort((left, right) => (
-    left.contentScore - right.contentScore
-    || left.aspectDistance - right.aspectDistance
-    || right.area - left.area
-    || left.url.localeCompare(right.url)
-  ));
-  return candidates[0]?.url || null;
-};
-
 export const normalizeMediaImageFields = (item) => {
   if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
   const hasTopLevelImage = Object.prototype.hasOwnProperty.call(item, 'image');

@@ -11,7 +11,7 @@ import { safeExternalUrl } from '../utils/urlSafety';
 import { shouldShowMetadataSkeleton } from '../domain/detailEnrichment';
 import { dateInputFromTimestamp, timestampForCalendarDateWithCurrentTime, timestampFromDateInput, todayDateInput } from '../utils/calendarDate';
 import { preferredMediaImage } from '../domain/mediaState';
-import { firstUsableImageUrl, normalizeImageUrl, selectVnBannerImage } from '../domain/mediaImages';
+import { firstUsableImageUrl, normalizeImageUrl } from '../domain/mediaImages';
 import { completeTvSeries, executeTvSeasonCompletion, saveTvLibraryState, startTvRewatch } from '../domain/tvWorkflow';
 import { applyActivityLifecycle, diaryActionForType, isMeaningfulProgress } from '../domain/activityLifecycle';
 import { mediaStatusActionLabel, mediaStatusLabel, ratingForInteraction } from '../domain/mediaTerminology';
@@ -105,7 +105,7 @@ export const resolveMediaImage = (item, type, size = 'md') => {
     if (size === 'banner') return raw.artworks?.[0]?.image_id ? `https://images.igdb.com/igdb/image/upload/t_1080p/${raw.artworks[0].image_id}.jpg` : (raw.screenshots?.[0]?.image_id ? `https://images.igdb.com/igdb/image/upload/t_1080p/${raw.screenshots[0].image_id}.jpg` : null);
     if (imgId) return `https://images.igdb.com/igdb/image/upload/${size === 'thumb' ? 't_cover_small' : size === 'original' ? 't_original' : 't_720p'}/${imgId}.jpg`;
   } else if (type === 'vn') {
-    if (size === 'banner') return selectVnBannerImage(raw.screenshots);
+    if (size === 'banner') return raw.screenshots?.[0]?.url || null;
     // Uses fallback image below
   } else if (type === 'anime' || type === 'manga') {
     if (size === 'banner') return raw.bannerImage || null;

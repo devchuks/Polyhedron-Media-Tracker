@@ -15,7 +15,7 @@ test('Telegram retries are rejected before provider resolution and persistence r
   const lifecycleBoundary = telegramSource.indexOf('buildTelegramLifecycle({', providerResolution);
   const successReply = telegramSource.indexOf('const confirmation = telegramConfirmation', atomicCall);
   assert.ok(existingBatchGuard > 0 && existingBatchGuard < parserCall);
-  assert.match(telegramSource, /let items = Array\.isArray\(existingBatch\?\.plan\)[\s\S]*if \(isNewBatch\) \{[\s\S]*Invoking Gemini Structured Output Parser/iu);
+  assert.match(telegramSource, /let items = Array\.isArray\(existingBatch\?\.plan\)[\s\S]*if \(isNewBatch && !items\) \{[\s\S]*Invoking Gemini Structured Output Parser/iu);
   assert.ok(duplicateGuard > 0 && duplicateGuard < providerResolution);
   assert.ok(lifecycleBoundary > providerResolution && atomicCall > lifecycleBoundary && successReply > atomicCall);
   assert.match(migrationSource, /insert into public\.webhook_events[\s\S]*insert into public\.media_library[\s\S]*if p_log is not null[\s\S]*insert into public\.media_logs/iu);
@@ -27,15 +27,22 @@ test('Telegram persistence failure cannot send a success confirmation', () => {
 
 test('Telegram uses provider confidence and labels only genuinely ambiguous alternatives', () => {
   assert.doesNotMatch(telegramSource, /preferredProviderId|\.ilike\('title', cleanTitle\)/u);
-  assert.match(telegramSource, /telegramMediaTypeLabel\(option\.mediaType \|\| type\)/u);
+  assert.match(telegramSource, /telegramMediaTypeLabel\(option\.mediaType\)/u);
   assert.match(telegramSource, /I found a few genuinely close matches/);
   assert.doesNotMatch(telegramSource, /Choose a more specific title\/year/);
 });
 
-test('Telegram success feedback omits empty fields, duplicate title metadata, and the unreliable deep link', () => {
-  assert.match(telegramSource, /detailLines = \[[\s\S]*lifecycle\.rating \? `Rating/iu);
+test('Telegram ambiguity follow-ups reuse the original activity instead of becoming planned items', () => {
+  assert.match(telegramSource, /pending-resolution:\$\{chatId\}[\s\S]*resolveTelegramAmbiguityReply[\s\S]*applyTelegramAmbiguitySelection/iu);
+  assert.match(telegramSource, /originalItem[\s\S]*activityTimestamp[\s\S]*Your original activity will be preserved/iu);
+  assert.match(telegramSource, /I could not match that choice[\s\S]*Pending resolution remains open/iu);
+  assert.match(telegramSource, /Number\(item\._activityTimestamp \?\? timestamp\)/u);
+  assert.match(telegramSource, /apply_telegram_media_event[\s\S]*clearPendingResolution\(item\._pendingEventId\)/iu);
+});
+
+test('Telegram success feedback uses labelled meaningful fields and omits empty values and the unreliable deep link', () => {
+  assert.match(telegramSource, /telegramConfirmation\(\{[\s\S]*year: canonicalYear[\s\S]*type,[\s\S]*lifecycle/iu);
   assert.doesNotMatch(telegramSource, /Diary: none|Rating:<\/b>.*None|View in Polyhedron|project-polyhedron\.netlify\.app\/media/iu);
-  assert.doesNotMatch(telegramSource, /<b>Title:<\/b>|<b>Type:<\/b>|<b>Status:<\/b>/u);
 });
 
 test('Casino Royale, Quantum of Solace, and The Odyssey direct-completion archetypes remain coherent', () => {

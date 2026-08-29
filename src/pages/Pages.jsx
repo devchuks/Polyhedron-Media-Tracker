@@ -735,8 +735,8 @@ export const DetailView = () => {
 
       <div className={`flex flex-col lg:flex-row gap-0 items-stretch relative z-10 ${bannerSrc ? 'bg-gradient-to-b from-transparent via-base-100/70 to-base-100 mt-8 lg:mt-12 shadow-xl' : 'bg-base-100 border border-base-300 shadow-xl'}`}>
         <div className={`w-full lg:w-56 xl:w-64 shrink-0 ${bannerSrc ? 'bg-transparent' : 'bg-base-200/30 border-b lg:border-b-0 lg:border-r border-base-300'}`}>
-          <div className="p-3 lg:p-5 flex flex-row items-start gap-3 lg:flex-col lg:gap-5 lg:sticky lg:top-16 z-10">
-            <div className="w-24 sm:w-28 lg:w-full mx-0 flex flex-col gap-2 shrink-0">
+          <div className="p-3 lg:p-5 flex flex-col gap-3 lg:gap-5 lg:sticky lg:top-16 z-10">
+            <div className="w-48 sm:w-56 lg:w-full mx-auto lg:mx-0 flex flex-col gap-2">
               <figure className="aspect-[2/3] w-full bg-base-300 border border-base-300 overflow-hidden shadow-xl cursor-pointer" onClick={() => { if (originalPosterUrl) setGlobalLightbox(originalPosterUrl); }}>
                 <ImageWithFallback src={posterImage} alt={titleText} />
               </figure>
@@ -744,7 +744,7 @@ export const DetailView = () => {
             </div>
             
             {/* UNIFIED LOGGING AREA */}
-            <div className="min-w-0 flex-1 flex flex-col gap-3 lg:w-full lg:pt-2 lg:border-t border-base-300">
+            <div className="w-full flex flex-col gap-3 lg:pt-2 lg:border-t border-base-300">
               <button 
                 onClick={() => openDiaryModal({
                   targetItem: storeItem || previewItem,
