@@ -13,7 +13,8 @@ import { preferredMediaImage } from '../domain/mediaState';
 import { firstUsableImageUrl, normalizeImageUrl } from '../domain/mediaImages';
 import { completeTvSeries, executeTvSeasonCompletion, saveTvLibraryState, startTvRewatch } from '../domain/tvWorkflow';
 import { applyActivityLifecycle, diaryActionForType, isMeaningfulProgress } from '../domain/activityLifecycle';
-import { mediaCompletionDateLabel, mediaStatusActionLabel, mediaStatusLabel, ratingForInteraction } from '../domain/mediaTerminology';
+import { mediaStatusActionLabel, mediaStatusLabel, ratingForInteraction } from '../domain/mediaTerminology';
+import { lifecycleDateFields, persistStateOrActivity } from '../domain/stateActivityModal';
 
 // --- Restored Helpers ---
 export const formatFancyDate = (dateInput) => {
@@ -133,7 +134,6 @@ export const GlobalDiaryModal = () => {
   const activeDiaryModal = useMediaStore((state) => state.activeDiaryModal);
   const closeDiaryModal = useMediaStore((state) => state.closeDiaryModal);
   const addMediaItem = useMediaStore((state) => state.addMediaItem);
-  const addDiaryLog = useMediaStore((state) => state.addDiaryLog);
   const saveMediaWithLog = useMediaStore((state) => state.saveMediaWithLog);
   const removeMediaItem = useMediaStore((state) => state.removeMediaItem);
   const navigate = useNavigate();
@@ -144,9 +144,10 @@ export const GlobalDiaryModal = () => {
   const [inputSeason, setInputSeason] = useState(1);
   const [inputEpisode, setInputEpisode] = useState(0);
   const [dateStarted, setDateStarted] = useState('');
+  const [dateCompleted, setDateCompleted] = useState('');
   const [activityDate, setActivityDate] = useState('');
   const [dateStartedDirty, setDateStartedDirty] = useState(false);
-  const [activityDateDirty, setActivityDateDirty] = useState(false);
+  const [dateCompletedDirty, setDateCompletedDirty] = useState(false);
   const [reviewText, setReviewText] = useState('');
   const [isRewatch, setIsRewatch] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -157,14 +158,13 @@ export const GlobalDiaryModal = () => {
   useEffect(() => {
     if (activeDiaryModal) {
       const { targetItem, newProgressOverride, explicitAction, isPreview } = activeDiaryModal;
-      const isLogIntent = activeDiaryModal.mode === 'log' || explicitAction === 'NOTE ADDED';
       
       let initialStatus = targetItem?.status || ''; 
       if (explicitAction === 'SEASON FINISHED') initialStatus = 'in progress';
       if (activeDiaryModal.targetStatus) initialStatus = activeDiaryModal.targetStatus;
       
       setStatus(initialStatus);
-      setRating(isPreview || isLogIntent ? 0 : (targetItem?.rating || 0));
+      setRating(isPreview ? 0 : (targetItem?.rating || 0));
 
       let initProgress = newProgressOverride || targetItem?.progress || '';
       setProgress(initProgress);
@@ -181,11 +181,10 @@ export const GlobalDiaryModal = () => {
       }
 
       setDateStarted(targetItem?.dateStarted ? dateInputFromTimestamp(targetItem.dateStarted) : '');
-      setActivityDate(!isLogIntent && targetItem?.status === 'completed' && targetItem?.dateCompleted
-        ? dateInputFromTimestamp(targetItem.dateCompleted)
-        : todayDateInput());
+      setDateCompleted(targetItem?.dateCompleted ? dateInputFromTimestamp(targetItem.dateCompleted) : '');
+      setActivityDate(todayDateInput());
       setDateStartedDirty(false);
-      setActivityDateDirty(false);
+      setDateCompletedDirty(false);
       setReviewText('');
       setIsRewatch(false);
       setIsSubmitting(false);
@@ -222,7 +221,7 @@ export const GlobalDiaryModal = () => {
   if (!activeDiaryModal) return null;
 
   const { targetItem, type, isPreview, seasonOverride, explicitAction, apiData, titleToSave } = activeDiaryModal;
-  const isLogMode = activeDiaryModal.mode === 'log' || explicitAction === 'NOTE ADDED';
+  const openedForActivity = activeDiaryModal.mode === 'log' || explicitAction === 'NOTE ADDED';
   const raw = apiData?.raw || targetItem?.raw || targetItem?.apiData?.raw || {};
   const maxProgress = type === 'tv' ? raw.number_of_episodes : type === 'anime' ? raw.episodes : type === 'manga' || type === 'comics' ? (raw.chapters || raw.issuesCount) : null;
   const progressUnit = type === 'tv' || type === 'anime' ? 'Episodes' : type === 'manga' || type === 'comics' ? (type === 'comics' ? 'Issues' : 'Chapters') : '';
@@ -245,16 +244,23 @@ export const GlobalDiaryModal = () => {
     ? crypto.randomUUID()
     : Date.now().toString(36) + Math.random().toString(36).substring(2);
 
-  const selectedActivityTimestamp = () => {
+  const timestampForSelectedDate = (value, existingTimestamp = null) => {
     const now = new Date();
-    if (!activityDate) return now.getTime();
-    if (targetItem?.status === 'completed' && targetItem?.dateCompleted
-      && dateInputFromTimestamp(targetItem.dateCompleted) === activityDate) {
-      return Number(targetItem.dateCompleted);
+    if (!value) return now.getTime();
+    if (existingTimestamp && dateInputFromTimestamp(existingTimestamp) === value) {
+      return Number(existingTimestamp);
     }
-    if (activityDate === todayDateInput(now)) return now.getTime();
-    return timestampForCalendarDateWithCurrentTime(activityDate, now) ?? now.getTime();
+    if (value === todayDateInput(now)) return now.getTime();
+    return timestampForCalendarDateWithCurrentTime(value, now) ?? now.getTime();
   };
+
+  const selectedActivityTimestamp = () => type === 'movies'
+    ? timestampForSelectedDate(dateStarted, targetItem?.dateStarted)
+    : timestampForSelectedDate(activityDate);
+
+  const selectedCompletionTimestamp = () => type === 'movies'
+    ? selectedActivityTimestamp()
+    : timestampForSelectedDate(dateCompleted, targetItem?.dateCompleted);
 
   const handleQuickSeasonComplete = async (e) => {
     if (e) { e.preventDefault(); e.stopPropagation(); }
@@ -303,20 +309,42 @@ export const GlobalDiaryModal = () => {
 
   const handleStatusClick = (s) => {
     setStatus(s);
-    if (s === 'completed' && !activityDate) setActivityDate(todayDateInput());
+    if (s === 'completed') {
+      if (type === 'movies' && !dateStarted) {
+        setDateStarted(todayDateInput());
+        setDateStartedDirty(true);
+      } else if (type !== 'movies' && !dateCompleted) {
+        setDateCompleted(todayDateInput());
+        setDateCompletedDirty(true);
+      }
+    }
   };
 
-  const handleSave = (e) => {
+  const handleSubmit = async (intent, e) => {
     if (e) {
       e.preventDefault();
       e.stopPropagation();
     }
     if (isSubmitting) return;
-    if (!status && !isLogMode) return; // Prevent saving purely blank library states
+    if (!status) return;
     const activityAt = selectedActivityTimestamp();
     const s = dateStartedDirty ? timestampFromDateInput(dateStarted) : (targetItem?.dateStarted ?? null);
-    const c = status === 'completed' ? activityAt : null;
+    const c = status === 'completed' ? selectedCompletionTimestamp() : null;
+    const isActivityIntent = intent === 'activity';
 
+    const buildDiaryLog = (mediaItem) => ({
+      log_id: createLogId(),
+      media_id: mediaItem.id,
+      media_type: type,
+      action_type: explicitAction === 'NOTE ADDED' ? 'LOGGED' : diaryActionForType(type, isRewatch),
+      log_date: new Date(activityAt).toISOString(),
+      review_text: reviewText.trim(),
+      image: firstUsableImageUrl(mediaItem.image, apiData?.image),
+      rating,
+    });
+
+    setIsSubmitting(true);
+    try {
     if (type === 'tv') {
       const baseTvItem = {
         ...targetItem,
@@ -329,91 +357,81 @@ export const GlobalDiaryModal = () => {
         apiData: apiData || targetItem?.apiData,
       };
 
-      if (isLogMode) {
-        addDiaryLog({
-          log_id: createLogId(),
-          media_id: baseTvItem.id,
-          media_type: 'tv',
-          action_type: explicitAction === 'NOTE ADDED' ? 'LOGGED' : diaryActionForType(type, isRewatch),
-          log_date: new Date(activityAt).toISOString(),
-          review_text: reviewText.trim(),
-          image: baseTvItem.image,
-          rating,
-        });
-      } else {
-        const command = {
-          status,
-          season: inputSeason,
-          episode: inputEpisode,
-          dateStarted: s,
-          activityTimestamp: activityAt,
-          completionTimestamp: c ?? undefined,
-          allowStartedEdit: dateStartedDirty,
-          rating,
-        };
-        const isStartingRewatch = isRewatch && targetItem?.status === 'completed' && status === 'in progress';
-        const libraryPayload = status === 'completed'
-          ? completeTvSeries(baseTvItem, { ...command, isRewatch })
-          : isStartingRewatch
-            ? startTvRewatch(baseTvItem, command)
-            : saveTvLibraryState(baseTvItem, command);
-        addMediaItem(libraryPayload, type);
+      const command = {
+        status,
+        season: inputSeason,
+        episode: inputEpisode,
+        dateStarted: s,
+        activityTimestamp: activityAt,
+        completionTimestamp: c ?? undefined,
+        allowStartedEdit: dateStartedDirty,
+        rating,
+      };
+      const isStartingRewatch = isActivityIntent && isRewatch && targetItem?.status === 'completed' && status === 'in progress';
+      const libraryPayload = status === 'completed'
+        ? completeTvSeries(baseTvItem, { ...command, isRewatch: isActivityIntent && isRewatch })
+        : isStartingRewatch
+          ? startTvRewatch(baseTvItem, command)
+          : saveTvLibraryState(baseTvItem, command);
+
+      await persistStateOrActivity({
+        intent,
+        media: libraryPayload,
+        type,
+        log: isActivityIntent ? buildDiaryLog(libraryPayload) : null,
+        saveLibrary: addMediaItem,
+        saveWithLog: saveMediaWithLog,
+      });
+    } else {
+      let finalProgress = progress;
+      if (status === 'completed' && maxProgress && !String(finalProgress).includes('S')) {
+        finalProgress = `${maxProgress} ${progressUnit}`;
       }
 
-      setTimeout(() => closeDiaryModal(), 10);
-      return;
-    }
-    
-    if (isLogMode) {
-      addDiaryLog({
-        log_id: createLogId(),
-        media_id: targetItem.id,
-        media_type: type,
-        action_type: explicitAction === 'NOTE ADDED' ? 'LOGGED' : diaryActionForType(type, isRewatch),
-        log_date: new Date(activityAt).toISOString(),
-        review_text: reviewText.trim(),
-        image: firstUsableImageUrl(targetItem?.image, apiData?.image),
+      const libraryPayload = applyActivityLifecycle({
+        ...targetItem,
+        id: apiData?.id || targetItem?.id,
+        title: titleToSave || targetItem?.title,
+        type,
+        subtype: getSubtype(type),
+        progress: finalProgress,
+        status,
         rating,
+        addedAt: targetItem?.addedAt || Date.now(),
+        rewatchCount: (targetItem?.rewatchCount || 0) + (isActivityIntent && isRewatch ? 1 : 0),
+        apiData: apiData || targetItem?.apiData,
+      }, {
+        status,
+        activityAt: c ?? activityAt,
+        explicitStartedAt: s,
+        allowStartedEdit: dateStartedDirty,
+        provesConsumption: status === 'in progress' || isMeaningfulProgress(finalProgress),
+        completesItem: status === 'completed' && (
+          targetItem?.status !== 'completed'
+          || (isActivityIntent && isRewatch)
+          || isPreview
+          || dateCompletedDirty
+          || (type === 'movies' && dateStartedDirty)
+        ),
       });
-      setTimeout(() => closeDiaryModal(), 10);
-      return;
+
+      await persistStateOrActivity({
+        intent,
+        media: libraryPayload,
+        type,
+        log: isActivityIntent ? buildDiaryLog(libraryPayload) : null,
+        saveLibrary: addMediaItem,
+        saveWithLog: saveMediaWithLog,
+      });
     }
 
-    let r = targetItem?.rewatchCount || 0;
-    if (isRewatch) r += 1;
-
-    let finalProgress = progress;
-
-    if (status === 'completed' && maxProgress && !String(finalProgress).includes('S')) {
-      finalProgress = `${maxProgress} ${progressUnit}`;
-    }
-
-    const libraryPayload = applyActivityLifecycle({
-      ...(isPreview ? targetItem : targetItem),
-      id: apiData?.id || targetItem?.id,
-      title: titleToSave || targetItem?.title,
-      type,
-      subtype: getSubtype(type),
-      progress: finalProgress,
-      status: status,
-      rating: rating,
-      addedAt: targetItem?.addedAt || Date.now(),
-      rewatchCount: r,
-      apiData: apiData || targetItem?.apiData
-    }, {
-      status,
-      activityAt,
-      explicitStartedAt: s,
-      allowStartedEdit: dateStartedDirty,
-      provesConsumption: status === 'in progress' || isMeaningfulProgress(finalProgress),
-      completesItem: status === 'completed' && (targetItem?.status !== 'completed' || isRewatch || isPreview || activityDateDirty),
-    });
-
-    addMediaItem(libraryPayload, type);
-
-    setTimeout(() => {
       closeDiaryModal();
-    }, 10);
+    } catch (error) {
+      console.error('State/activity save failed:', error);
+      useUIStore.getState().addToast('The change could not be synchronized. Please retry.', 'error');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleDelete = (e) => {
@@ -432,17 +450,8 @@ export const GlobalDiaryModal = () => {
 
   const title = titleToSave || targetItem?.title || 'Unknown Title';
   const displayImage = firstUsableImageUrl(targetItem?.image, apiData?.image);
-  const showReviewSection = isLogMode || (status !== 'planned' && status !== '');
-  const showLibraryCompletionDate = !isLogMode && status === 'completed';
-  const primaryActionLabel = isLogMode
-    ? explicitAction === 'NOTE ADDED' ? 'Add Note' : 'Log Activity'
-    : type === 'tv'
-      ? explicitAction === 'NOTE ADDED'
-      ? 'Add Note'
-      : status === 'completed'
-        ? (isRewatch ? 'Complete Rewatch' : 'Complete Series')
-        : 'Save Changes'
-      : 'Save Changes';
+  const showActivityFields = status !== 'planned' && status !== '';
+  const dateFields = lifecycleDateFields(type, status);
 
   return createPortal(
     <div className="fixed inset-0 z-[100000] bg-black/80 backdrop-blur-sm flex flex-col justify-center items-center p-4 animate-in fade-in duration-200 touch-manipulation" style={{ overscrollBehavior: 'none' }} onClick={handleClose}>
@@ -465,8 +474,11 @@ export const GlobalDiaryModal = () => {
 
              {/* Mobile Actions */}
              <div className="flex sm:hidden items-center gap-2 mt-4 w-full">
-               <button type="button" onClick={handleSave} disabled={isSubmitting} className="flex items-center justify-center bg-primary hover:bg-primary/90 disabled:opacity-50 text-primary-content border-none rounded-none appearance-none font-black font-mono uppercase tracking-widest text-[11px] shadow-none flex-1 touch-manipulation h-12 transition-colors">
-                 {primaryActionLabel}
+               <button type="button" onClick={(event) => handleSubmit('library', event)} disabled={isSubmitting} className="flex items-center justify-center border border-primary bg-base-100 text-primary hover:bg-primary hover:text-primary-content disabled:opacity-50 rounded-none appearance-none font-black font-mono uppercase tracking-widest text-[9px] shadow-none flex-1 touch-manipulation h-12 transition-colors">
+                 Save Changes
+               </button>
+               <button type="button" onClick={(event) => handleSubmit('activity', event)} disabled={isSubmitting} className="flex items-center justify-center bg-primary hover:bg-primary/90 disabled:opacity-50 text-primary-content border border-primary rounded-none appearance-none font-black font-mono uppercase tracking-widest text-[9px] shadow-none flex-1 touch-manipulation h-12 transition-colors">
+                 Log Activity
                </button>
                {!isPreview && (
                  <button type="button" onClick={handleDelete} className="flex items-center justify-center border border-base-300 bg-base-100 text-error hover:bg-error/10 rounded-none appearance-none px-4 shrink-0 touch-manipulation h-12 transition-colors">
@@ -486,11 +498,11 @@ export const GlobalDiaryModal = () => {
 
           <div className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar p-4 sm:p-8 flex flex-col gap-5 sm:gap-6">
           <div className="border-l-4 border-primary bg-base-200 px-3 py-2">
-            <p className="font-mono text-[10px] font-black uppercase tracking-widest">{isLogMode ? 'Diary Activity' : 'Library State'}</p>
-            <p className="mt-1 text-xs text-base-content/60">{isLogMode ? 'Creates one explicit history entry. It does not silently rewrite current library state.' : 'Updates current status, progress and overall rating. It does not create Diary history.'}</p>
+            <p className="font-mono text-[10px] font-black uppercase tracking-widest">Library State & Diary</p>
+            <p className="mt-1 text-xs text-base-content/60">{openedForActivity ? 'Activity fields are ready. Save Changes updates only the Library; Log Activity updates the Library and creates one Diary entry.' : 'Save Changes updates only the Library. Log Activity applies these changes and creates one Diary entry.'}</p>
           </div>
           {/* Status Selection */}
-          {!isLogMode && <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5">
             <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest">Status</label>
             <div className="grid grid-cols-2 gap-2">
               {['planned', 'in progress', 'completed', 'dropped'].map(s => (
@@ -499,13 +511,13 @@ export const GlobalDiaryModal = () => {
                 </button>
               ))}
             </div>
-          </div>}
+          </div>
 
           {/* Rating Engine */}
           <div className={`flex flex-col gap-1.5 ${type === 'tv' ? 'border-t border-base-200 pt-5 sm:border-0 sm:pt-0' : 'items-center justify-center pt-2 sm:items-start sm:justify-start sm:pt-0'}`}>
             {type === 'tv' && (
               <div className="flex justify-between items-center w-full sm:mb-1">
-                 <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest">{isLogMode ? 'Activity Rating' : 'Overall Rating'}</label>
+                 <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest">Rating</label>
                  {rating > 0 && <button onClick={() => setRating(0)} className="hidden sm:block text-[9px] font-mono text-base-content/40 hover:text-error uppercase tracking-widest px-2 py-1 transition-colors">Clear</button>}
               </div>
             )}
@@ -564,7 +576,7 @@ export const GlobalDiaryModal = () => {
           </div>
 
           {/* Progress Tracker */}
-          {progressUnit && (!isLogMode || type === 'tv') && (
+          {progressUnit && (
              <div className="flex flex-col gap-1.5 border-t border-base-200 pt-5 sm:border-0 sm:pt-0">
                <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest">Progress</label>
                {type === 'tv' ? (
@@ -607,37 +619,43 @@ export const GlobalDiaryModal = () => {
           )}
 
           {/* Review & Dates Area */}
-          {showReviewSection && (
+          {showActivityFields && (
             <div className="flex flex-col gap-4 border-t border-base-200 pt-5 sm:border-0 sm:pt-0">
-              <div className={`grid ${isLogMode || !showLibraryCompletionDate ? 'grid-cols-1' : 'grid-cols-2'} gap-4`}>
-                 {!isLogMode && <div className="flex flex-col gap-1">
-                   <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest flex items-center gap-1 pl-1"><Calendar className="w-3 h-3"/> Started</label>
-                   <input type="date" value={dateStarted} onChange={e => { setDateStarted(e.target.value); setDateStartedDirty(true); }} className="w-full font-mono text-xs rounded-none border border-base-300 bg-base-100 h-10 min-h-[40px] focus:outline-none focus:border-primary px-2 cursor-pointer" />
-                 </div>}
-                 {(isLogMode || showLibraryCompletionDate) && <div className="flex flex-col gap-1">
-                   <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest flex items-center gap-1 pl-1"><Calendar className="w-3 h-3"/> {status === 'completed' ? mediaCompletionDateLabel(type) : 'Activity Date'}</label>
-                   <input type="date" value={activityDate} onChange={e => { setActivityDate(e.target.value); setActivityDateDirty(true); }} className="w-full font-mono text-xs rounded-none border border-base-300 bg-base-100 h-10 min-h-[40px] focus:outline-none focus:border-primary px-2 cursor-pointer" />
+              <div className={`grid ${dateFields.length + (type === 'movies' ? 0 : 1) > 1 ? 'grid-cols-2' : 'grid-cols-1'} gap-4`}>
+                 {dateFields.map(field => (
+                   <div key={field.key} className="flex flex-col gap-1">
+                     <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest flex items-center gap-1 pl-1"><Calendar className="w-3 h-3"/> {field.label}</label>
+                     {field.key === 'dateStarted' ? (
+                       <input type="date" value={dateStarted} onChange={e => { setDateStarted(e.target.value); setDateStartedDirty(true); }} className="w-full font-mono text-xs rounded-none border border-base-300 bg-base-100 h-10 min-h-[40px] focus:outline-none focus:border-primary px-2 cursor-pointer" />
+                     ) : (
+                       <input type="date" value={dateCompleted} onChange={e => { setDateCompleted(e.target.value); setDateCompletedDirty(true); }} className="w-full font-mono text-xs rounded-none border border-base-300 bg-base-100 h-10 min-h-[40px] focus:outline-none focus:border-primary px-2 cursor-pointer" />
+                     )}
+                   </div>
+                 ))}
+                 {type !== 'movies' && <div className="flex flex-col gap-1">
+                   <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest flex items-center gap-1 pl-1"><Calendar className="w-3 h-3"/> Activity Date</label>
+                   <input type="date" value={activityDate} onChange={e => setActivityDate(e.target.value)} className="w-full font-mono text-xs rounded-none border border-base-300 bg-base-100 h-10 min-h-[40px] focus:outline-none focus:border-primary px-2 cursor-pointer" />
                  </div>}
               </div>
 
-              {isLogMode && !isPreview && (
+              {!isPreview && (
                  <div className="flex items-center gap-3 bg-base-100 border border-base-300 p-3 rounded-none">
                    <input type="checkbox" id="rewatch-check" checked={isRewatch} onChange={e => setIsRewatch(e.target.checked)} className="appearance-none w-4 h-4 border border-base-300 bg-base-100 checked:bg-primary checked:border-primary rounded-none cursor-pointer flex items-center justify-center transition-colors relative checked:after:content-['✓'] checked:after:absolute checked:after:text-primary-content checked:after:text-[10px] checked:after:font-bold" />
                    <label htmlFor="rewatch-check" className="text-[10px] font-mono font-bold uppercase tracking-widest cursor-pointer select-none">{type === 'tv' ? 'This is rewatch activity' : `Mark as ${getRewatchTerm(type)}`}</label>
                  </div>
               )}
 
-              {isLogMode && <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest pl-1">{type === 'tv' ? 'Season / Activity Review (used when logging a season)' : 'Review / Notes'}</label>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest pl-1">{type === 'tv' ? 'Season / Activity Review (used only when logging)' : 'Diary Review / Notes (used only by Log Activity)'}</label>
                 <textarea placeholder="" className="w-full min-h-[100px] p-3 sm:p-4 bg-base-100 border border-base-300 focus:outline-none focus:border-primary rounded-none appearance-none font-sans text-[16px] sm:text-sm leading-relaxed transition-colors" value={reviewText} onChange={e => setReviewText(e.target.value)} />
-              </div>}
+              </div>
             </div>
           )}
           </div>
 
           {/* Desktop Actions */}
           <div className="hidden sm:flex flex-row items-center justify-between gap-3 shrink-0 border-t border-base-300 p-4 sm:px-8 sm:py-4 bg-base-100 z-20">
-             {!isPreview && !isLogMode ? (
+             {!isPreview ? (
                 <button type="button" onClick={handleDelete} className="flex items-center justify-center text-error hover:bg-error/10 border border-transparent hover:border-error/20 rounded-none appearance-none font-bold font-mono uppercase tracking-widest text-[10px] h-10 px-4 touch-manipulation transition-colors">
                   <Trash2 className="w-4 h-4 mr-2" /> <span>Delete</span>
                 </button>
@@ -646,8 +664,11 @@ export const GlobalDiaryModal = () => {
                <button type="button" onClick={handleClose} className="flex items-center justify-center border border-base-300 bg-base-100 hover:bg-base-200 hover:border-primary hover:text-primary rounded-none appearance-none font-bold font-mono uppercase tracking-widest text-[10px] h-10 px-4 touch-manipulation transition-colors">
                   Cancel
                </button>
-               <button type="button" onClick={handleSave} disabled={isSubmitting} className="flex items-center justify-center bg-primary hover:bg-primary/90 disabled:opacity-50 text-primary-content border-none rounded-none appearance-none font-black font-mono uppercase tracking-widest text-xs h-10 px-8 touch-manipulation transition-all">
-                 {primaryActionLabel}
+               <button type="button" onClick={(event) => handleSubmit('library', event)} disabled={isSubmitting} className="flex items-center justify-center border border-primary bg-base-100 text-primary hover:bg-primary hover:text-primary-content disabled:opacity-50 rounded-none appearance-none font-black font-mono uppercase tracking-widest text-[10px] h-10 px-5 touch-manipulation transition-all">
+                 Save Changes
+               </button>
+               <button type="button" onClick={(event) => handleSubmit('activity', event)} disabled={isSubmitting} className="flex items-center justify-center bg-primary hover:bg-primary/90 disabled:opacity-50 text-primary-content border border-primary rounded-none appearance-none font-black font-mono uppercase tracking-widest text-[10px] h-10 px-5 touch-manipulation transition-all">
+                 Log Activity
                </button>
              </div>
           </div>

@@ -41,7 +41,7 @@ export const mediaStatusActionLabel = (status, type) => {
   return status || '';
 };
 
-export const mediaCompletionDateLabel = (type) => `${mediaCompletionTerm(type)} On`;
+export const mediaCompletionDateLabel = (type) => type === 'movies' ? 'Watched On' : 'Completed On';
 
 const DIARY_ACTIONS = Object.freeze({
   movies: ['WATCHED', 'RE-WATCHED', 'LOGGED'],

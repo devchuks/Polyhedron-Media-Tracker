@@ -2,14 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-test('Library state saves and explicit Diary activity are separate interaction modes', async () => {
+test('one modal exposes state-only save and atomic state-plus-activity commands', async () => {
   const source = await readFile(new URL('../src/components/UI.jsx', import.meta.url), 'utf8');
-  assert.match(source, /activeDiaryModal\.mode === 'log'/);
-  assert.match(source, /It does not create Diary history/);
+  assert.match(source, /handleSubmit\('library'/);
+  assert.match(source, /handleSubmit\('activity'/);
+  assert.match(source, /Save Changes updates only the Library/);
   assert.match(source, /Log Activity/);
-  assert.match(source, /addMediaItem\(libraryPayload, type\)/);
-  assert.doesNotMatch(source, /saveMediaWithLog\(libraryPayload, type, diaryLog\)/);
-  assert.doesNotMatch(source, /addMediaItem\(libraryPayload, type\);\s*\n\s*addDiaryLog\(/);
+  assert.match(source, /persistStateOrActivity\(/);
+  assert.doesNotMatch(source, /addDiaryLog/);
 });
 
 test('admin backup replacement reloads an authoritative cloud snapshot', async () => {
@@ -73,7 +73,7 @@ test('TV modal routes state-only and explicit season actions through the TV work
   assert.match(source, /executeTvSeasonCompletion\(/);
   assert.match(source, /Complete & Log Season/);
   assert.match(source, /disabled=\{isSubmitting \|\| loadingModalEps \|\| maxEpisodesInSeason < 1\}/);
-  assert.match(source, /isLogMode && !isPreview/);
+  assert.match(source, /persistStateOrActivity\(/);
   assert.doesNotMatch(source, /setInputSeason\(nextSeason\)/);
 
   const importSource = await readFile(new URL('../src/pages/ImportTerminal.jsx', import.meta.url), 'utf8');

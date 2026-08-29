@@ -17,7 +17,9 @@ test('completed lifecycle values use media-appropriate display terminology', () 
   assert.equal(mediaStatusLabel('completed', 'comics'), 'Read');
   assert.equal(mediaStatusLabel('completed', 'games'), 'Played');
   assert.equal(mediaStatusActionLabel('completed', 'movies'), 'Mark as Watched');
-  assert.equal(mediaCompletionDateLabel('books'), 'Read On');
+  assert.equal(mediaCompletionDateLabel('movies'), 'Watched On');
+  assert.equal(mediaCompletionDateLabel('books'), 'Completed On');
+  assert.equal(mediaCompletionDateLabel('games'), 'Completed On');
   assert.equal(mediaStatusLabel('planned', 'movies', 'option'), 'Watchlist');
   assert.equal(mediaStatusLabel('planned', 'games', 'option'), 'Backlog');
   assert.equal(mediaStatusLabel('planned', 'books', 'option'), 'Reading List');

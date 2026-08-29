@@ -753,16 +753,15 @@ export const DetailView = () => {
                   targetStatus: isPreview ? 'planned' : storeItem?.status,
                   apiData,
                   titleToSave: titleText,
-                  mode: 'library',
+                  mode: 'unified',
                 })}
                 className={`flex items-center justify-between w-full h-12 px-4 rounded-none appearance-none font-bold font-mono uppercase tracking-widest text-[10px] sm:text-[11px] shadow-sm overflow-hidden transition-colors ${isPreview ? 'bg-primary hover:bg-primary/90 text-primary-content shadow-lg hover:shadow-primary/20' : 'border ' + getStatusBorderClass(storeItem?.status) + ' ' + getStatusColor(storeItem?.status) + ' bg-base-100 hover:bg-base-200'}`}
               >
                 <span className="truncate block flex-1 text-left">
-                  {isPreview ? (isDeepFetching ? <Loader2 className="w-4 h-4 animate-spin inline" /> : <><Plus className="w-4 h-4 mr-1 inline-block" /> Add to Library</>) : 'Edit Library State'}
+                  {isPreview ? (isDeepFetching ? <Loader2 className="w-4 h-4 animate-spin inline" /> : <><Plus className="w-4 h-4 mr-1 inline-block" /> Add to Library</>) : mediaStatusLabel(storeItem?.status, type, 'detail')}
                 </span>
                 {!isPreview && <Edit3 className="w-4 h-4 shrink-0 opacity-60" />}
               </button>
-              {!isPreview && <button type="button" onClick={() => openDiaryModal({ targetItem: storeItem, type, isPreview: false, targetStatus: storeItem?.status, apiData, titleToSave: titleText, mode: 'log' })} className="flex h-11 w-full items-center justify-center border border-primary bg-transparent px-4 font-mono text-[10px] font-bold uppercase tracking-widest text-primary transition-colors hover:bg-primary hover:text-primary-content"><CalendarDays className="mr-2 h-4 w-4" />Log Activity</button>}
 
               {/* Read-Only Progress & Rating */}
               {storeItem && (
