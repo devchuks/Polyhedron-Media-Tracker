@@ -10,9 +10,13 @@
 # Environment, credentials, and machine-local configuration
 .env
 .env.*
-!.env.example
-!.env.sample
 *.local
+
+# Local operational verification and cutover tooling
+/scripts/*.mjs
+/supabase/hosted-verification/
+/supabase/staging-verification/
+/supabase/production-cutover/
 
 # Local agent instructions and internal project documentation
 /AGENTS.md
