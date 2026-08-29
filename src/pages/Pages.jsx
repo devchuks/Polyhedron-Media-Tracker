@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
-import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, Link, useSearchParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { useMediaStore, useUIStore } from '../store/useMediaStore';
-import { MediaCard, MediaListRow, StarRating, getMediaTypeColors, SectionWrapper, TextBlockSkeleton, PillSkeleton, MetaItem, EpisodeCard, ImageWithFallback, getSubtype, CreativeTeamSection, UserActivitySection, GalleryAndLinks, ComicIssuesSection, formatFancyDate, formatProgressLabel, getDynamicStatusLabel, getStatusColor, stripHtml, resolveMediaImage, formatMarkdownLinks, MediaGridSkeleton, DetailSkeleton, UpdatingIndicator } from '../components/UI';
+import { MediaCard, MediaListRow, StarRating, getMediaTypeColors, SectionWrapper, TextBlockSkeleton, PillSkeleton, MetaItem, EpisodeCard, ImageWithFallback, getSubtype, CreativeTeamSection, UserActivitySection, GalleryAndLinks, ComicIssuesSection, formatFancyDate, formatProgressLabel, getStatusColor, stripHtml, resolveMediaImage, formatMarkdownLinks, MediaGridSkeleton, DetailSkeleton, UpdatingIndicator } from '../components/UI';
 import { Star, ArrowLeft, Loader2, Filter, PlayCircle, X, ExternalLink, ChevronLeft, ChevronRight, Edit3, Plus, ChevronDown, ChevronUp, Download, LayoutGrid, List, Compass, Search, CalendarDays } from 'lucide-react';
 import { apiRegistry } from '../services/apiRegistry';
 import { processDetailRaw } from '../utils/normalizers';
@@ -16,6 +16,7 @@ import { isDetailEnrichmentPending, previewItemForRoute, resolveDetailTitle, run
 import { firstUsableImageUrl } from '../domain/mediaImages';
 import { createLatestRequestGate } from '../utils/latestRequest';
 import { formatSeasonNumber, mediaStatusLabel } from '../domain/mediaTerminology';
+import { parseLibraryContext, readLibrarySort, updateLibraryContext, writeLibrarySort } from '../domain/libraryContext';
 
 const VALID_CATEGORIES = ['tv', 'movies', 'games', 'vn', 'anime', 'manga', 'books', 'comics'];
 
@@ -314,20 +315,22 @@ export const Dashboard = () => {
 
 export const MediaCategory = () => {
   const { category } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const isValidCategory = VALID_CATEGORIES.includes(category);
   const items = useMediaStore((state) => state.media[category]) || [];
   const isLoading = useMediaStore((state) => state.isLoading);
+  const isCloudSyncing = useMediaStore((state) => state.isCloudSyncing);
   const viewMode = useUIStore((state) => state.viewMode);
   const setViewMode = useUIStore((state) => state.setViewMode);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filter, setFilter] = useState('all');
-  const [sort, setSort] = useState('dateAdded');
-  
+  const savedSort = readLibrarySort(typeof window !== 'undefined' ? window.localStorage : null, category);
+  const { search: searchQuery, status: filter, sort, page: currentPage } = parseLibraryContext(searchParams, savedSort);
   const ITEMS_PER_PAGE = 40;
-  const [currentPage, setCurrentPage] = useState(1);
-  
+  const setContext = useCallback((patch, replace = true) => {
+    setSearchParams(updateLibraryContext(searchParams, patch), { replace });
+  }, [searchParams, setSearchParams]);
+
+  useEffect(() => { writeLibrarySort(window.localStorage, category, sort); }, [category, sort]);
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'smooth' }); }, [currentPage]);
-  useEffect(() => { setCurrentPage(1); }, [category, filter, sort, searchQuery]);
 
   const processedItems = React.useMemo(() => {
     let displayItems = items.filter(item => filter === 'all' || item.status === filter);
@@ -376,13 +379,17 @@ export const MediaCategory = () => {
   const totalPages = Math.ceil(processedItems.length / ITEMS_PER_PAGE) || 1;
   const paginatedItems = processedItems.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
+  useEffect(() => {
+    if (currentPage > totalPages) setContext({ page: totalPages });
+  }, [currentPage, totalPages, setContext]);
+
   if (!isValidCategory) return <NotFound />;
 
   return (
     <div className="flex flex-col gap-4 animate-in fade-in duration-300 pb-10 min-h-screen text-base-content">
       <header className="border-b border-base-300 pb-3 flex flex-col sm:flex-row sm:items-end justify-between gap-3 sm:gap-4">
         <div className="flex-1 min-w-0">
-          <h1 className="text-2xl font-black uppercase tracking-widest font-sans">{getSubtype(category)}</h1>
+          <h1 className="text-2xl font-black uppercase tracking-widest font-sans flex items-center gap-2">{getSubtype(category)}{shouldShowUpdatingIndicator(isCloudSyncing, items) && <UpdatingIndicator label="Syncing" />}</h1>
           <p className="text-[10px] font-mono text-base-content/50 uppercase tracking-widest mt-1">
             {searchQuery.trim() ? `${processedItems.length} results for "${searchQuery}"` : `${processedItems.length} entries`}
           </p>
@@ -395,12 +402,13 @@ export const MediaCategory = () => {
               type="text" 
               placeholder="Search..." 
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => setContext({ search: e.target.value, page: 1 })}
               className="w-full h-8 pl-9 pr-8 bg-base-100 border border-base-300 focus:border-primary focus:outline-none rounded-none text-xs font-mono placeholder:text-base-content/40 transition-colors appearance-none"
             />
             {searchQuery && (
               <button 
-                onClick={() => setSearchQuery('')} 
+                onClick={() => setContext({ search: '', page: 1 })}
+                aria-label="Clear library search"
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-base-content/50 hover:text-base-content appearance-none"
               >
                 <X className="w-3 h-3" />
@@ -410,25 +418,23 @@ export const MediaCategory = () => {
 
           <div className="flex items-center gap-2">
             <div className="flex bg-base-100 border border-base-300 rounded-none h-8">
-              <button onClick={() => setViewMode('grid')} className={`flex-1 px-3 ${viewMode === 'grid' ? 'bg-primary text-primary-content' : 'text-base-content/50 hover:bg-base-200'}`}><LayoutGrid className="w-4 h-4"/></button>
-              <button onClick={() => setViewMode('list')} className={`flex-1 px-3 ${viewMode === 'list' ? 'bg-primary text-primary-content' : 'text-base-content/50 hover:bg-base-200'}`}><List className="w-4 h-4"/></button>
+              <button type="button" aria-label="Grid view" aria-pressed={viewMode === 'grid'} onClick={() => setViewMode('grid')} className={`flex-1 px-3 ${viewMode === 'grid' ? 'bg-primary text-primary-content' : 'text-base-content/50 hover:bg-base-200'}`}><LayoutGrid className="w-4 h-4"/></button>
+              <button type="button" aria-label="List view" aria-pressed={viewMode === 'list'} onClick={() => setViewMode('list')} className={`flex-1 px-3 ${viewMode === 'list' ? 'bg-primary text-primary-content' : 'text-base-content/50 hover:bg-base-200'}`}><List className="w-4 h-4"/></button>
             </div>
-            <div className="dropdown dropdown-bottom sm:dropdown-end flex-1 sm:flex-none min-w-0">
-              <div role="button" tabIndex={0} className="w-full h-8 rounded-none border border-base-300 bg-base-100 hover:bg-base-200 hover:border-primary text-[10px] font-mono uppercase font-bold tracking-widest flex px-2 sm:px-3 justify-between items-center cursor-pointer appearance-none transition-colors"><div className="flex items-center min-w-0"><Filter className="w-3 h-3 mr-1 shrink-0" /> <span className="truncate">{filter === 'all' ? 'Filter' : 'Filtered'}</span></div></div>
-              <ul tabIndex={0} className="dropdown-content z-50 menu p-2 shadow-xl bg-base-100 border border-base-300 w-52 mt-1 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest"><li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setFilter('all'); document.activeElement.blur(); }}>All Entries</a></li>{['planned', 'in progress', 'completed', 'dropped'].map(s => (<li key={s}><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setFilter(s); document.activeElement.blur(); }}>{mediaStatusLabel(s, category)}</a></li>))}</ul>
-            </div>
-            <div className="dropdown dropdown-bottom sm:dropdown-end flex-1 sm:flex-none min-w-0">
-              <div role="button" tabIndex={0} className="w-full h-8 rounded-none border border-base-300 bg-base-100 hover:bg-base-200 hover:border-primary text-[10px] font-mono uppercase font-bold tracking-widest flex px-2 sm:px-3 justify-between items-center cursor-pointer appearance-none transition-colors"><span className="truncate">Sort: {sortLabels[sort] || 'Date Added'}</span></div>
-              <ul tabIndex={0} className="dropdown-content z-50 menu p-2 shadow-xl bg-base-100 border border-base-300 w-52 mt-1 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest">
-                <li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setSort('dateAdded'); document.activeElement.blur(); }}>Date Added</a></li>
-                <li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setSort('dateStarted'); document.activeElement.blur(); }}>Date Started</a></li>
-                <li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setSort('dateFinished'); document.activeElement.blur(); }}>Date Finished</a></li>
-                <li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setSort('releaseYear'); document.activeElement.blur(); }}>Release Year (Newest)</a></li>
-                <li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setSort('releaseYearAsc'); document.activeElement.blur(); }}>Release Year (Oldest)</a></li>
-                <li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setSort('rating'); document.activeElement.blur(); }}>Rating</a></li>
-                <li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setSort('title'); document.activeElement.blur(); }}>Title (A-Z)</a></li>
-              </ul>
-            </div>
+            <label className="relative flex-1 sm:flex-none min-w-0">
+              <Filter className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 pointer-events-none" />
+              <span className="sr-only">Status filter</span>
+              <select value={filter} onChange={event => setContext({ status: event.target.value, page: 1 })} className="w-full sm:w-36 h-8 pl-7 pr-7 rounded-none border border-base-300 bg-base-100 text-[10px] font-mono uppercase font-bold tracking-widest focus:border-primary focus:outline-none">
+                <option value="all">All entries</option>
+                {['planned', 'in progress', 'completed', 'dropped'].map(status => <option key={status} value={status}>{mediaStatusLabel(status, category, 'option')}</option>)}
+              </select>
+            </label>
+            <label className="flex-1 sm:flex-none min-w-0">
+              <span className="sr-only">Sort library</span>
+              <select value={sort} onChange={event => setContext({ sort: event.target.value, page: 1 })} className="w-full sm:w-44 h-8 px-2 rounded-none border border-base-300 bg-base-100 text-[10px] font-mono uppercase font-bold tracking-widest focus:border-primary focus:outline-none">
+                {Object.entries(sortLabels).map(([value, label]) => <option key={value} value={value}>Sort: {label}</option>)}
+              </select>
+            </label>
           </div>
         </div>
       </header>
@@ -449,9 +455,9 @@ export const MediaCategory = () => {
           
           {totalPages > 1 && (
             <div className="flex justify-between items-center mt-4 pt-4 border-t border-base-300">
-              <button disabled={currentPage === 1} onClick={() => { setCurrentPage(p => p - 1); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="flex items-center justify-center h-11 sm:h-8 px-3 bg-transparent hover:bg-base-300 text-base-content hover:text-base-content rounded-none appearance-none font-mono text-[10px] uppercase tracking-widest disabled:opacity-30 disabled:cursor-not-allowed transition-colors"><ChevronLeft className="w-4 h-4 mr-1" /> Prev</button>
+              <button disabled={currentPage === 1} onClick={() => setContext({ page: currentPage - 1 })} className="flex items-center justify-center h-11 sm:h-8 px-3 bg-transparent hover:bg-base-300 text-base-content hover:text-base-content rounded-none appearance-none font-mono text-[10px] uppercase tracking-widest disabled:opacity-30 disabled:cursor-not-allowed transition-colors"><ChevronLeft className="w-4 h-4 mr-1" /> Prev</button>
               <span className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest">Page {currentPage} of {totalPages}</span>
-              <button disabled={currentPage === totalPages} onClick={() => { setCurrentPage(p => p + 1); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="flex items-center justify-center h-11 sm:h-8 px-3 bg-transparent hover:bg-base-300 text-base-content hover:text-base-content rounded-none appearance-none font-mono text-[10px] uppercase tracking-widest disabled:opacity-30 disabled:cursor-not-allowed transition-colors">Next <ChevronRight className="w-4 h-4 ml-1" /></button>
+              <button disabled={currentPage === totalPages} onClick={() => setContext({ page: currentPage + 1 })} className="flex items-center justify-center h-11 sm:h-8 px-3 bg-transparent hover:bg-base-300 text-base-content hover:text-base-content rounded-none appearance-none font-mono text-[10px] uppercase tracking-widest disabled:opacity-30 disabled:cursor-not-allowed transition-colors">Next <ChevronRight className="w-4 h-4 ml-1" /></button>
             </div>
           )}
         </>
@@ -729,8 +735,8 @@ export const DetailView = () => {
 
       <div className={`flex flex-col lg:flex-row gap-0 items-stretch relative z-10 ${bannerSrc ? 'bg-gradient-to-b from-transparent via-base-100/70 to-base-100 mt-8 lg:mt-12 shadow-xl' : 'bg-base-100 border border-base-300 shadow-xl'}`}>
         <div className={`w-full lg:w-56 xl:w-64 shrink-0 ${bannerSrc ? 'bg-transparent' : 'bg-base-200/30 border-b lg:border-b-0 lg:border-r border-base-300'}`}>
-          <div className="p-3 lg:p-5 flex flex-col gap-3 lg:gap-5 lg:sticky lg:top-16 z-10">
-            <div className="w-48 sm:w-56 lg:w-full mx-auto lg:mx-0 flex flex-col gap-2">
+          <div className="p-3 lg:p-5 flex flex-row items-start gap-3 lg:flex-col lg:gap-5 lg:sticky lg:top-16 z-10">
+            <div className="w-24 sm:w-28 lg:w-full mx-0 flex flex-col gap-2 shrink-0">
               <figure className="aspect-[2/3] w-full bg-base-300 border border-base-300 overflow-hidden shadow-xl cursor-pointer" onClick={() => { if (originalPosterUrl) setGlobalLightbox(originalPosterUrl); }}>
                 <ImageWithFallback src={posterImage} alt={titleText} />
               </figure>
@@ -738,7 +744,7 @@ export const DetailView = () => {
             </div>
             
             {/* UNIFIED LOGGING AREA */}
-            <div className="w-full flex flex-col gap-3 lg:pt-2 lg:border-t border-base-300">
+            <div className="min-w-0 flex-1 flex flex-col gap-3 lg:w-full lg:pt-2 lg:border-t border-base-300">
               <button 
                 onClick={() => openDiaryModal({
                   targetItem: storeItem || previewItem,
@@ -747,14 +753,16 @@ export const DetailView = () => {
                   targetStatus: isPreview ? 'planned' : storeItem?.status,
                   apiData,
                   titleToSave: titleText,
+                  mode: 'library',
                 })}
                 className={`flex items-center justify-between w-full h-12 px-4 rounded-none appearance-none font-bold font-mono uppercase tracking-widest text-[10px] sm:text-[11px] shadow-sm overflow-hidden transition-colors ${isPreview ? 'bg-primary hover:bg-primary/90 text-primary-content shadow-lg hover:shadow-primary/20' : 'border ' + getStatusBorderClass(storeItem?.status) + ' ' + getStatusColor(storeItem?.status) + ' bg-base-100 hover:bg-base-200'}`}
               >
                 <span className="truncate block flex-1 text-left">
-                  {isPreview ? (isDeepFetching ? <Loader2 className="w-4 h-4 animate-spin inline" /> : <><Plus className="w-4 h-4 mr-1 inline-block" /> Add to Library</>) : `✓ ${getDynamicStatusLabel(storeItem.status, type, false)}`}
+                  {isPreview ? (isDeepFetching ? <Loader2 className="w-4 h-4 animate-spin inline" /> : <><Plus className="w-4 h-4 mr-1 inline-block" /> Add to Library</>) : 'Edit Library State'}
                 </span>
                 {!isPreview && <Edit3 className="w-4 h-4 shrink-0 opacity-60" />}
               </button>
+              {!isPreview && <button type="button" onClick={() => openDiaryModal({ targetItem: storeItem, type, isPreview: false, targetStatus: storeItem?.status, apiData, titleToSave: titleText, mode: 'log' })} className="flex h-11 w-full items-center justify-center border border-primary bg-transparent px-4 font-mono text-[10px] font-bold uppercase tracking-widest text-primary transition-colors hover:bg-primary hover:text-primary-content"><CalendarDays className="mr-2 h-4 w-4" />Log Activity</button>}
 
               {/* Read-Only Progress & Rating */}
               {storeItem && (

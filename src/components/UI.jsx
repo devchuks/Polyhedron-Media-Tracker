@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
-import { Star, StarHalf, X, Loader2, ChevronLeft, ChevronRight, ChevronDown, Trash2, PlayCircle, CheckCircle, EyeOff, AlertCircle, Info, ExternalLink, Save, Edit3, Calendar, Plus } from 'lucide-react';
+import { Star, StarHalf, X, Loader2, ChevronLeft, ChevronRight, ChevronDown, Trash2, PlayCircle, CheckCircle, EyeOff, AlertCircle, Info, ExternalLink, Save, Edit3, Calendar, Plus, MoreHorizontal } from 'lucide-react';
 import { useMediaStore, useUIStore } from '../store/useMediaStore';
 import { apiRegistry } from '../services/apiRegistry';
 import { extractMetronStaff } from '../utils/normalizers';
@@ -157,13 +157,14 @@ export const GlobalDiaryModal = () => {
   useEffect(() => {
     if (activeDiaryModal) {
       const { targetItem, newProgressOverride, explicitAction, isPreview } = activeDiaryModal;
+      const isLogIntent = activeDiaryModal.mode === 'log' || explicitAction === 'NOTE ADDED';
       
       let initialStatus = targetItem?.status || ''; 
       if (explicitAction === 'SEASON FINISHED') initialStatus = 'in progress';
       if (activeDiaryModal.targetStatus) initialStatus = activeDiaryModal.targetStatus;
       
       setStatus(initialStatus);
-      setRating(isPreview ? 0 : (targetItem?.rating || 0));
+      setRating(isPreview || isLogIntent ? 0 : (targetItem?.rating || 0));
 
       let initProgress = newProgressOverride || targetItem?.progress || '';
       setProgress(initProgress);
@@ -180,7 +181,7 @@ export const GlobalDiaryModal = () => {
       }
 
       setDateStarted(targetItem?.dateStarted ? dateInputFromTimestamp(targetItem.dateStarted) : '');
-      setActivityDate(targetItem?.status === 'completed' && targetItem?.dateCompleted
+      setActivityDate(!isLogIntent && targetItem?.status === 'completed' && targetItem?.dateCompleted
         ? dateInputFromTimestamp(targetItem.dateCompleted)
         : todayDateInput());
       setDateStartedDirty(false);
@@ -221,6 +222,7 @@ export const GlobalDiaryModal = () => {
   if (!activeDiaryModal) return null;
 
   const { targetItem, type, isPreview, seasonOverride, explicitAction, apiData, titleToSave } = activeDiaryModal;
+  const isLogMode = activeDiaryModal.mode === 'log' || explicitAction === 'NOTE ADDED';
   const raw = apiData?.raw || targetItem?.raw || targetItem?.apiData?.raw || {};
   const maxProgress = type === 'tv' ? raw.number_of_episodes : type === 'anime' ? raw.episodes : type === 'manga' || type === 'comics' ? (raw.chapters || raw.issuesCount) : null;
   const progressUnit = type === 'tv' || type === 'anime' ? 'Episodes' : type === 'manga' || type === 'comics' ? (type === 'comics' ? 'Issues' : 'Chapters') : '';
@@ -310,7 +312,7 @@ export const GlobalDiaryModal = () => {
       e.stopPropagation();
     }
     if (isSubmitting) return;
-    if (!status) return; // Prevent saving purely blank states
+    if (!status && !isLogMode) return; // Prevent saving purely blank library states
     const activityAt = selectedActivityTimestamp();
     const s = dateStartedDirty ? timestampFromDateInput(dateStarted) : (targetItem?.dateStarted ?? null);
     const c = status === 'completed' ? activityAt : null;
@@ -327,15 +329,16 @@ export const GlobalDiaryModal = () => {
         apiData: apiData || targetItem?.apiData,
       };
 
-      if (explicitAction === 'NOTE ADDED' && reviewText.trim()) {
+      if (isLogMode) {
         addDiaryLog({
           log_id: createLogId(),
           media_id: baseTvItem.id,
           media_type: 'tv',
-          action_type: 'LOGGED',
+          action_type: explicitAction === 'NOTE ADDED' ? 'LOGGED' : diaryActionForType(type, isRewatch),
           log_date: new Date(activityAt).toISOString(),
           review_text: reviewText.trim(),
           image: baseTvItem.image,
+          rating,
         });
       } else {
         const command = {
@@ -361,11 +364,25 @@ export const GlobalDiaryModal = () => {
       return;
     }
     
+    if (isLogMode) {
+      addDiaryLog({
+        log_id: createLogId(),
+        media_id: targetItem.id,
+        media_type: type,
+        action_type: explicitAction === 'NOTE ADDED' ? 'LOGGED' : diaryActionForType(type, isRewatch),
+        log_date: new Date(activityAt).toISOString(),
+        review_text: reviewText.trim(),
+        image: firstUsableImageUrl(targetItem?.image, apiData?.image),
+        rating,
+      });
+      setTimeout(() => closeDiaryModal(), 10);
+      return;
+    }
+
     let r = targetItem?.rewatchCount || 0;
     if (isRewatch) r += 1;
 
     let finalProgress = progress;
-    let finalActionType = status === 'completed' || isRewatch ? diaryActionForType(type, isRewatch) : 'LOGGED';
 
     if (status === 'completed' && maxProgress && !String(finalProgress).includes('S')) {
       finalProgress = `${maxProgress} ${progressUnit}`;
@@ -392,31 +409,7 @@ export const GlobalDiaryModal = () => {
       completesItem: status === 'completed' && (targetItem?.status !== 'completed' || isRewatch || isPreview || activityDateDirty),
     });
 
-    const noteExists = reviewText.trim() !== '';
-    
-    const isMilestone = status === 'completed';
-
-    let diaryLog = null;
-    if (isMilestone || noteExists || isRewatch || explicitAction === 'NOTE ADDED') {
-      diaryLog = {
-        log_id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).substring(2),
-        media_id: libraryPayload.id,
-        media_type: type,
-        action_type: finalActionType,
-        log_date: new Date(activityAt).toISOString(),
-        review_text: reviewText.trim(), // Empty string is fine, UI ignores it
-        image: firstUsableImageUrl(targetItem?.image, apiData?.image),
-      };
-    }
-
-    if (diaryLog) {
-      void saveMediaWithLog(libraryPayload, type, diaryLog).catch(error => {
-        console.error('Media and diary save failed:', error);
-        useUIStore.getState().addToast('Saved locally, but the media and diary transaction did not sync.', 'error');
-      });
-    } else {
-      addMediaItem(libraryPayload, type);
-    }
+    addMediaItem(libraryPayload, type);
 
     setTimeout(() => {
       closeDiaryModal();
@@ -439,14 +432,17 @@ export const GlobalDiaryModal = () => {
 
   const title = titleToSave || targetItem?.title || 'Unknown Title';
   const displayImage = firstUsableImageUrl(targetItem?.image, apiData?.image);
-  const showReviewSection = status !== 'planned' && status !== '';
-  const primaryActionLabel = type === 'tv'
-    ? explicitAction === 'NOTE ADDED'
-      ? 'Add Activity'
+  const showReviewSection = isLogMode || (status !== 'planned' && status !== '');
+  const showLibraryCompletionDate = !isLogMode && status === 'completed';
+  const primaryActionLabel = isLogMode
+    ? explicitAction === 'NOTE ADDED' ? 'Add Note' : 'Log Activity'
+    : type === 'tv'
+      ? explicitAction === 'NOTE ADDED'
+      ? 'Add Note'
       : status === 'completed'
         ? (isRewatch ? 'Complete Rewatch' : 'Complete Series')
         : 'Save Changes'
-    : 'Save Log';
+      : 'Save Changes';
 
   return createPortal(
     <div className="fixed inset-0 z-[100000] bg-black/80 backdrop-blur-sm flex flex-col justify-center items-center p-4 animate-in fade-in duration-200 touch-manipulation" style={{ overscrollBehavior: 'none' }} onClick={handleClose}>
@@ -489,8 +485,12 @@ export const GlobalDiaryModal = () => {
           <button type="button" onClick={handleClose} className="absolute top-4 right-4 btn btn-square btn-sm btn-ghost border border-base-300 hover:bg-base-200 rounded-none z-30 hidden sm:flex touch-manipulation"><X className="w-4 h-4" /></button>
 
           <div className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar p-4 sm:p-8 flex flex-col gap-5 sm:gap-6">
+          <div className="border-l-4 border-primary bg-base-200 px-3 py-2">
+            <p className="font-mono text-[10px] font-black uppercase tracking-widest">{isLogMode ? 'Diary Activity' : 'Library State'}</p>
+            <p className="mt-1 text-xs text-base-content/60">{isLogMode ? 'Creates one explicit history entry. It does not silently rewrite current library state.' : 'Updates current status, progress and overall rating. It does not create Diary history.'}</p>
+          </div>
           {/* Status Selection */}
-          <div className="flex flex-col gap-1.5">
+          {!isLogMode && <div className="flex flex-col gap-1.5">
             <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest">Status</label>
             <div className="grid grid-cols-2 gap-2">
               {['planned', 'in progress', 'completed', 'dropped'].map(s => (
@@ -499,13 +499,13 @@ export const GlobalDiaryModal = () => {
                 </button>
               ))}
             </div>
-          </div>
+          </div>}
 
           {/* Rating Engine */}
           <div className={`flex flex-col gap-1.5 ${type === 'tv' ? 'border-t border-base-200 pt-5 sm:border-0 sm:pt-0' : 'items-center justify-center pt-2 sm:items-start sm:justify-start sm:pt-0'}`}>
             {type === 'tv' && (
               <div className="flex justify-between items-center w-full sm:mb-1">
-                 <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest">Overall Rating</label>
+                 <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest">{isLogMode ? 'Activity Rating' : 'Overall Rating'}</label>
                  {rating > 0 && <button onClick={() => setRating(0)} className="hidden sm:block text-[9px] font-mono text-base-content/40 hover:text-error uppercase tracking-widest px-2 py-1 transition-colors">Clear</button>}
               </div>
             )}
@@ -564,7 +564,7 @@ export const GlobalDiaryModal = () => {
           </div>
 
           {/* Progress Tracker */}
-          {progressUnit && (
+          {progressUnit && (!isLogMode || type === 'tv') && (
              <div className="flex flex-col gap-1.5 border-t border-base-200 pt-5 sm:border-0 sm:pt-0">
                <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest">Progress</label>
                {type === 'tv' ? (
@@ -609,35 +609,35 @@ export const GlobalDiaryModal = () => {
           {/* Review & Dates Area */}
           {showReviewSection && (
             <div className="flex flex-col gap-4 border-t border-base-200 pt-5 sm:border-0 sm:pt-0">
-              <div className="grid grid-cols-2 gap-4">
-                 <div className="flex flex-col gap-1">
+              <div className={`grid ${isLogMode || !showLibraryCompletionDate ? 'grid-cols-1' : 'grid-cols-2'} gap-4`}>
+                 {!isLogMode && <div className="flex flex-col gap-1">
                    <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest flex items-center gap-1 pl-1"><Calendar className="w-3 h-3"/> Started</label>
                    <input type="date" value={dateStarted} onChange={e => { setDateStarted(e.target.value); setDateStartedDirty(true); }} className="w-full font-mono text-xs rounded-none border border-base-300 bg-base-100 h-10 min-h-[40px] focus:outline-none focus:border-primary px-2 cursor-pointer" />
-                 </div>
-                 <div className="flex flex-col gap-1">
+                 </div>}
+                 {(isLogMode || showLibraryCompletionDate) && <div className="flex flex-col gap-1">
                    <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest flex items-center gap-1 pl-1"><Calendar className="w-3 h-3"/> {status === 'completed' ? mediaCompletionDateLabel(type) : 'Activity Date'}</label>
                    <input type="date" value={activityDate} onChange={e => { setActivityDate(e.target.value); setActivityDateDirty(true); }} className="w-full font-mono text-xs rounded-none border border-base-300 bg-base-100 h-10 min-h-[40px] focus:outline-none focus:border-primary px-2 cursor-pointer" />
-                 </div>
+                 </div>}
               </div>
 
-              {!isPreview && (type === 'tv' || status === 'completed') && (
+              {isLogMode && !isPreview && (
                  <div className="flex items-center gap-3 bg-base-100 border border-base-300 p-3 rounded-none">
                    <input type="checkbox" id="rewatch-check" checked={isRewatch} onChange={e => setIsRewatch(e.target.checked)} className="appearance-none w-4 h-4 border border-base-300 bg-base-100 checked:bg-primary checked:border-primary rounded-none cursor-pointer flex items-center justify-center transition-colors relative checked:after:content-['✓'] checked:after:absolute checked:after:text-primary-content checked:after:text-[10px] checked:after:font-bold" />
                    <label htmlFor="rewatch-check" className="text-[10px] font-mono font-bold uppercase tracking-widest cursor-pointer select-none">{type === 'tv' ? 'This is rewatch activity' : `Mark as ${getRewatchTerm(type)}`}</label>
                  </div>
               )}
 
-              <div className="flex flex-col gap-1">
+              {isLogMode && <div className="flex flex-col gap-1">
                 <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest pl-1">{type === 'tv' ? 'Season / Activity Review (used when logging a season)' : 'Review / Notes'}</label>
                 <textarea placeholder="" className="w-full min-h-[100px] p-3 sm:p-4 bg-base-100 border border-base-300 focus:outline-none focus:border-primary rounded-none appearance-none font-sans text-[16px] sm:text-sm leading-relaxed transition-colors" value={reviewText} onChange={e => setReviewText(e.target.value)} />
-              </div>
+              </div>}
             </div>
           )}
           </div>
 
           {/* Desktop Actions */}
           <div className="hidden sm:flex flex-row items-center justify-between gap-3 shrink-0 border-t border-base-300 p-4 sm:px-8 sm:py-4 bg-base-100 z-20">
-             {!isPreview ? (
+             {!isPreview && !isLogMode ? (
                 <button type="button" onClick={handleDelete} className="flex items-center justify-center text-error hover:bg-error/10 border border-transparent hover:border-error/20 rounded-none appearance-none font-bold font-mono uppercase tracking-widest text-[10px] h-10 px-4 touch-manipulation transition-colors">
                   <Trash2 className="w-4 h-4 mr-2" /> <span>Delete</span>
                 </button>
@@ -748,15 +748,77 @@ export const StarRating = ({ rating = 0, onChange, readOnly = false }) => {
   );
 };
 
+const QUICK_PROGRESS_TYPES = new Set(['tv', 'anime', 'manga', 'books', 'games', 'vn', 'comics']);
+
+export const MediaQuickActions = ({ item, compact = false }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const menuRef = useRef(null);
+  const updateMediaStatus = useMediaStore(state => state.updateMediaStatus);
+  const updateMediaRating = useMediaStore(state => state.updateMediaRating);
+  const openDiaryModal = useMediaStore(state => state.openDiaryModal);
+  const addToast = useUIStore(state => state.addToast);
+
+  const stop = event => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  const applyStatus = status => {
+    updateMediaStatus(item, item.type, status);
+    addToast(`${item.title}: ${mediaStatusLabel(status, item.type)}`, 'success');
+    setIsOpen(false);
+  };
+  const openMode = mode => {
+    openDiaryModal({ targetItem: item, type: item.type, apiData: item.apiData, mode });
+    setIsOpen(false);
+  };
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const closeFromOutside = event => {
+      if (!menuRef.current?.contains(event.target)) setIsOpen(false);
+    };
+    document.addEventListener('pointerdown', closeFromOutside);
+    return () => document.removeEventListener('pointerdown', closeFromOutside);
+  }, [isOpen]);
+
+  return (
+    <div ref={menuRef} className={`absolute z-30 ${compact ? 'right-2 top-1/2 -translate-y-1/2' : 'left-2 top-2'}`} onClick={stop} onPointerDown={event => event.stopPropagation()} onKeyDown={event => { if (event.key === 'Escape') setIsOpen(false); }}>
+      <button type="button" aria-label={`Quick actions for ${item.title}`} aria-expanded={isOpen} onClick={event => { stop(event); setIsOpen(open => !open); }} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { stop(event); setIsOpen(open => !open); } }} className="flex h-9 w-9 items-center justify-center border border-base-300 bg-base-100/95 text-base-content shadow-md backdrop-blur transition-opacity touch-manipulation sm:opacity-70 sm:group-hover:opacity-100 focus:opacity-100">
+        <MoreHorizontal className="h-4 w-4" />
+      </button>
+      {isOpen && (
+        <div role="menu" aria-label={`Quick actions for ${item.title}`} className={`absolute z-50 mt-1 w-56 border border-base-300 bg-base-100 p-2 shadow-2xl ${compact ? 'right-0 top-full' : 'left-0 top-full'}`}>
+          <p className="px-2 pb-1 font-mono text-[9px] font-bold uppercase tracking-widest text-base-content/40">Set status</p>
+          {['planned', 'in progress', 'completed', 'dropped'].map(status => (
+            <button type="button" role="menuitem" key={status} onClick={() => applyStatus(status)} className={`block w-full px-2 py-2 text-left font-mono text-[10px] font-bold uppercase tracking-widest hover:bg-base-200 ${item.status === status ? 'text-primary' : ''}`}>{mediaStatusLabel(status, item.type, 'option')}</button>
+          ))}
+          <label className="mt-1 block border-t border-base-300 px-2 pt-2 font-mono text-[9px] font-bold uppercase tracking-widest text-base-content/50">
+            Overall rating
+            <select aria-label={`Rating for ${item.title}`} value={item.rating || 0} onChange={event => { updateMediaRating(item, item.type, event.target.value); addToast(`${item.title}: rating updated`, 'success'); }} className="mt-1 h-9 w-full border border-base-300 bg-base-100 px-2 text-xs text-base-content focus:border-primary focus:outline-none">
+              <option value="0">Unrated</option>
+              {Array.from({ length: 10 }, (_, index) => index + 1).map(value => <option key={value} value={value}>{value} / 10</option>)}
+            </select>
+          </label>
+          {QUICK_PROGRESS_TYPES.has(item.type) && <button type="button" role="menuitem" onClick={() => openMode('library')} className="mt-2 block w-full border-t border-base-300 px-2 py-2 text-left font-mono text-[10px] font-bold uppercase tracking-widest hover:bg-base-200">Update progress</button>}
+          <button type="button" role="menuitem" onClick={() => openMode('log')} className="block w-full px-2 py-2 text-left font-mono text-[10px] font-bold uppercase tracking-widest text-primary hover:bg-base-200">Log activity</button>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const MediaCard = ({ item, onClickOverride, onMouseEnterOverride }) => {
   const image = resolveMediaImage(item, item.type, 'md');
   const colors = getMediaTypeColors(item.type);
-
-  const Wrapper = onClickOverride ? 'div' : Link;
-  const props = onClickOverride ? { onClick: () => onClickOverride(item), onMouseEnter: onMouseEnterOverride, onFocus: onMouseEnterOverride } : { to: `/media/${item.type}/${item.id}`, state: { previewData: item }, onMouseEnter: onMouseEnterOverride, onFocus: onMouseEnterOverride };
+  const linkProps = onClickOverride
+    ? { type: 'button', onClick: () => onClickOverride(item) }
+    : { to: `/media/${item.type}/${item.id}`, state: { previewData: item } };
+  const Content = onClickOverride ? 'button' : Link;
 
   return (
-    <Wrapper {...props} className={`group relative bg-base-100 border-y border-r border-base-300 border-l-4 border-l-transparent ${colors.hoverBorder} transition-all duration-200 hover:shadow-md cursor-pointer flex flex-col h-full`}>
+    <article onMouseEnter={onMouseEnterOverride} onFocus={onMouseEnterOverride} className={`group relative bg-base-100 border-y border-r border-base-300 border-l-4 border-l-transparent ${colors.hoverBorder} transition-all duration-200 hover:shadow-md flex flex-col h-full`}>
+      <MediaQuickActions item={item} />
+      <Content {...linkProps} className="flex h-full w-full cursor-pointer flex-col text-left">
       <figure className="relative aspect-[2/3] w-full overflow-hidden bg-base-200 border-b border-base-300">
         <ImageWithFallback src={image} alt={item.title} className="grayscale-[15%] group-hover:grayscale-0" />
         <div className="absolute top-0 right-0 z-10"><div className={`px-2 py-1 text-[9px] font-mono font-bold tracking-[0.15em] uppercase border-b border-l border-base-300 ${colors.bg} ${colors.textContent}`}>{item.subtype}</div></div>
@@ -784,7 +846,8 @@ export const MediaCard = ({ item, onClickOverride, onMouseEnterOverride }) => {
           )}
         </div>
       </div>
-    </Wrapper>
+      </Content>
+    </article>
   );
 };
 
@@ -793,7 +856,9 @@ export const MediaListRow = ({ item }) => {
   const colors = getMediaTypeColors(item.type);
 
   return (
-    <Link to={`/media/${item.type}/${item.id}`} className={`group flex flex-row items-center gap-3 sm:gap-4 bg-base-100 border border-base-300 border-l-4 border-l-transparent ${colors.hoverBorder} transition-all duration-200 hover:shadow-md cursor-pointer p-2 sm:p-3`}>
+    <article className={`group relative bg-base-100 border border-base-300 border-l-4 border-l-transparent ${colors.hoverBorder} transition-all duration-200 hover:shadow-md`}>
+      <MediaQuickActions item={item} compact />
+      <Link to={`/media/${item.type}/${item.id}`} state={{ previewData: item }} className="flex flex-row items-center gap-3 sm:gap-4 cursor-pointer p-2 pr-12 sm:p-3 sm:pr-14">
       <div className="w-12 h-16 sm:w-16 sm:h-24 flex-shrink-0 bg-base-200 border border-base-300 overflow-hidden relative">
         <ImageWithFallback src={image} alt={item.title} className="grayscale-[15%] group-hover:grayscale-0 object-cover w-full h-full" />
       </div>
@@ -809,7 +874,8 @@ export const MediaListRow = ({ item }) => {
       <div className="hidden sm:flex px-4 items-center justify-center">
         <div className={`px-2 py-1 text-[9px] font-mono font-bold tracking-[0.15em] uppercase border border-base-300 ${colors.bg} ${colors.textContent}`}>{getSubtype(item.type)}</div>
       </div>
-    </Link>
+      </Link>
+    </article>
   );
 };
 
@@ -884,7 +950,7 @@ export const SearchModal = ({ isOpen, onClose, results, isLoading, error, onRetr
       } catch(err) { console.error(err); }
     }
 
-    openDiaryModal({ targetItem: item, type, isPreview: true, targetStatus: status, apiData: item, titleToSave: item.title });
+    openDiaryModal({ targetItem: item, type, isPreview: true, targetStatus: status, apiData: item, titleToSave: item.title, mode: 'library' });
   };
 
   return (
@@ -1155,7 +1221,7 @@ export const UserActivitySection = ({ logs }) => {
                 </div>
                 {/* Clicking Edit opens modal safely */}
                 <div className="flex opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => openDiaryModal({ targetItem: log.mediaItem, type: log.media_type, targetStatus: log.mediaItem?.status, isPreview: false, explicitAction: 'NOTE ADDED', apiData: log.mediaItem?.apiData })} title="Add New Note" className="btn btn-xs btn-square btn-ghost rounded-none shrink-0 text-base-content/50 hover:text-primary"><Plus className="w-4 h-4 sm:w-3 sm:h-3" /></button>
+                  <button onClick={() => openDiaryModal({ targetItem: log.mediaItem, type: log.media_type, targetStatus: log.mediaItem?.status, isPreview: false, explicitAction: 'NOTE ADDED', apiData: log.mediaItem?.apiData, mode: 'log' })} title="Add New Note" className="btn btn-xs btn-square btn-ghost rounded-none shrink-0 text-base-content/50 hover:text-primary"><Plus className="w-4 h-4 sm:w-3 sm:h-3" /></button>
                 </div>
               </div>
               <p className="text-xs font-sans leading-relaxed text-base-content/80 whitespace-pre-wrap border-l border-primary/20 pl-3">

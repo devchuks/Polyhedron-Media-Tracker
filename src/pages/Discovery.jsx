@@ -1,14 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Flame, CalendarClock, Star, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { ImageWithFallback, getMediaTypeColors, getSubtype, stripHtml } from '../components/UI';
+import { ImageWithFallback, getMediaTypeColors, stripHtml } from '../components/UI';
 import { supabase } from '../services/supabase';
 import { useMediaStore } from '../store/useMediaStore';
 import { FunctionsHttpError } from '@supabase/supabase-js';
 import { apiClient } from '../utils/apiClient';
 import { isIntentionalAbort } from '../utils/requestErrors';
+import { apiRegistry } from '../services/apiRegistry';
+import { DISCOVERY_CACHE_VERSION, DISCOVERY_SECTIONS, DISCOVERY_TYPES, tmdbDiscoveryRequest } from '../domain/discoveryCatalog';
 
-const TABS = ['movies', 'tv', 'games', 'anime', 'manga', 'comics'];
+const TABS = DISCOVERY_TYPES;
 
 const invokeDiscoveryFunction = async (name, body) => {
   const controller = new AbortController();
@@ -54,33 +56,36 @@ export const Discovery = () => {
   const [activeTab, setActiveTab] = useState(() => sessionStorage.getItem('discoveryTab') || 'movies');
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [isLoading, setIsLoading] = useState(!discoveryCache?.[activeTab]);
+  const [sectionErrors, setSectionErrors] = useState({});
 
   useEffect(() => {
     let isMounted = true;
     
     const loadData = async () => {
       const cached = useMediaStore.getState().discoveryCache?.[activeTab];
-      const isEmpty = !cached?.data?.trending || cached.data.trending.length === 0;
-      const isImplemented = ['movies', 'tv', 'anime', 'manga', 'games', 'comics'].includes(activeTab);
+      const isEmpty = !cached?.data || ['trending', 'upcoming', 'popular'].every(key => !(cached.data[key]?.length));
+      const isImplemented = DISCOVERY_TYPES.includes(activeTab);
       
       const cacheTTL = 43200000; // 12 hours
-      const isStale = !cached || (Date.now() - cached.timestamp >= cacheTTL) || cached.data?._version !== 1;
+      const isStale = !cached || (Date.now() - cached.timestamp >= cacheTTL) || cached.data?._version !== DISCOVERY_CACHE_VERSION;
       
       if (!isStale && !(isImplemented && isEmpty)) {
         if (isMounted) setIsLoading(false);
         return;
       }
       
-      if (isMounted) setIsLoading(true);
+      if (isMounted) {
+        setIsLoading(true);
+        setSectionErrors({});
+      }
       try {
         let data;
         if (activeTab === 'movies' || activeTab === 'tv') {
-          const tmdbType = activeTab === 'movies' ? 'movie' : 'tv';
-          const fetchTMDB = async (endpoint, page = 1) => {
+          const fetchTMDB = async (endpoint, query) => {
             try {
-              const res = await invokeDiscoveryFunction('tmdb', { path: endpoint, query: { page } });
+              const res = await invokeDiscoveryFunction('tmdb', { path: endpoint, query });
               if (res.error) throw res.error;
-              return { results: res.data?.results || [] };
+              return { results: res.data?.results || [], error: null };
             } catch (err) {
               if (err instanceof FunctionsHttpError) {
                 const text = await err.context.text().catch(() => 'Unable to read error text');
@@ -90,15 +95,14 @@ export const Discovery = () => {
               } else if (!isIntentionalAbort(err)) {
                 console.error("TMDB Fetch Error:", err);
               }
-              return { results: [] };
+              return { results: [], error: 'TMDB could not load this section.' };
             }
           };
 
-          const [trending, upcoming, popular] = await Promise.all([
-            fetchTMDB(`/trending/${tmdbType}/week`, 1),
-            fetchTMDB(activeTab === 'movies' ? `/movie/upcoming` : `/tv/on_the_air`, 1),
-            fetchTMDB(`/${tmdbType}/popular`, 1)
-          ]);
+          const [trending, upcoming, popular] = await Promise.all(['trending', 'upcoming', 'popular'].map(section => {
+            const request = tmdbDiscoveryRequest(activeTab, section, 1);
+            return fetchTMDB(request.path, request.query);
+          }));
 
           const normalize = (items) => (items || []).filter(i => i.poster_path).map(item => ({
             id: item.id,
@@ -114,6 +118,7 @@ export const Discovery = () => {
           }));
 
           data = { trending: normalize(trending.results), upcoming: normalize(upcoming.results), popular: normalize(popular.results) };
+          if (isMounted) setSectionErrors({ trending: trending.error, upcoming: upcoming.error, popular: popular.error });
         } else if (activeTab === 'anime' || activeTab === 'manga') {
           const typeArg = activeTab === 'anime' ? 'ANIME' : 'MANGA';
           const fetchAniList = async (sort, status, useSeason = false, isNext = false) => {
@@ -150,7 +155,7 @@ export const Discovery = () => {
               return json.data?.Page?.media || [];
             } catch (err) {
               if (!isIntentionalAbort(err)) console.error("AniList Fetch Error:", err);
-              return [];
+              throw err;
             }
           };
 
@@ -175,6 +180,26 @@ export const Discovery = () => {
           }));
 
           data = { trending: normalize(trending), upcoming: normalize(upcoming), popular: normalize(popular) };
+        } else if (activeTab === 'books' || activeTab === 'vn') {
+          const fetchSection = async (section) => {
+            try {
+              const items = activeTab === 'books'
+                ? await apiRegistry.discoverBooks(section)
+                : await apiRegistry.discoverVNs(section);
+              return { items, error: null };
+            } catch (error) {
+              if (!isIntentionalAbort(error)) console.error(`${activeTab} Discovery error:`, error);
+              return { items: [], error: `${activeTab === 'books' ? 'Open Library' : 'VNDB'} could not load this section.` };
+            }
+          };
+          const [trending, upcoming, popular] = await Promise.all(['trending', 'upcoming', 'popular'].map(fetchSection));
+          const normalize = items => (items || []).filter(item => item.image).map(item => ({
+            ...item,
+            apiRating: item.score ? Number(item.score).toFixed(1) : '0.0',
+            apiData: item.apiData || { raw: item.raw || {} },
+          }));
+          data = { trending: normalize(trending.items), upcoming: normalize(upcoming.items), popular: normalize(popular.items) };
+          if (isMounted) setSectionErrors({ trending: trending.error, upcoming: upcoming.error, popular: popular.error });
         } else if (activeTab === 'games') {
           const fetchIGDB = async (section) => {
             try {
@@ -193,7 +218,7 @@ export const Discovery = () => {
               } else if (!isIntentionalAbort(err)) {
                 console.error(`[IGDB Debug] CRITICAL FAILURE:`, err);
               }
-              return [];
+              throw err;
             }
           };
 
@@ -233,7 +258,7 @@ export const Discovery = () => {
               } else if (!isIntentionalAbort(err)) {
                 console.error("[Metron Debug] CRITICAL FAILURE:", err);
               }
-              return [];
+              throw err;
             }
           };
 
@@ -271,7 +296,7 @@ export const Discovery = () => {
 
           const normalizeIssues = (items) => {
             const valid = (items || []).filter(item => item.image && item.series);
-            valid.sort((a, b) => (b.series?.issue_count || 0) - (a.series?.issue_count || 0)); // Sort by popularity
+            valid.sort((a, b) => String(a.store_date || '').localeCompare(String(b.store_date || '')));
             return valid.map(item => {
             const seriesObj = {
               id: `series_${item.series.id}`,
@@ -305,9 +330,12 @@ export const Discovery = () => {
           data = { trending: [], upcoming: [], popular: [] };
         }
         
-        if (isMounted) setDiscoveryCache(activeTab, { ...data, _version: 1 });
+        if (isMounted) setDiscoveryCache(activeTab, { ...data, _version: DISCOVERY_CACHE_VERSION });
       } catch (err) {
-        if (!isIntentionalAbort(err)) console.error('Discovery fetch error:', err);
+        if (!isIntentionalAbort(err)) {
+          console.error('Discovery fetch error:', err);
+          if (isMounted) setSectionErrors(Object.fromEntries(DISCOVERY_SECTIONS[activeTab].map(section => [section.key, 'The provider could not load this section.'])));
+        }
       } finally {
         if (isMounted) setIsLoading(false);
       }
@@ -320,14 +348,10 @@ export const Discovery = () => {
   const handleLoadMoreItems = async (categoryKey, page) => {
     if (activeTab !== 'movies' && activeTab !== 'tv') return;
 
-    const tmdbType = activeTab === 'movies' ? 'movie' : 'tv';
-    let endpoint = '';
-    if (categoryKey === 'trending') endpoint = `/trending/${tmdbType}/week`;
-    else if (categoryKey === 'upcoming') endpoint = activeTab === 'movies' ? `/movie/upcoming` : `/tv/on_the_air`;
-    else if (categoryKey === 'popular') endpoint = `/${tmdbType}/popular`;
+    const request = tmdbDiscoveryRequest(activeTab, categoryKey, page);
 
     try {
-      const res = await invokeDiscoveryFunction('tmdb', { path: endpoint, query: { page } });
+      const res = await invokeDiscoveryFunction('tmdb', { path: request.path, query: request.query });
       if (res.error) throw res.error;
       const results = res.data?.results || [];
 
@@ -351,19 +375,25 @@ export const Discovery = () => {
         const existingIds = new Set(currentCache.data[categoryKey].map(i => i.id));
         const uniqueNewItems = newItems.filter(i => !existingIds.has(i.id));
 
-        setDiscoveryCache(activeTab, { ...currentCache.data, [categoryKey]: [...currentCache.data[categoryKey], ...uniqueNewItems], _version: 1 });
+        setDiscoveryCache(activeTab, { ...currentCache.data, [categoryKey]: [...currentCache.data[categoryKey], ...uniqueNewItems], _version: DISCOVERY_CACHE_VERSION });
       }
-    } catch (err) { if (!isIntentionalAbort(err)) console.error("TMDB Load More Error:", err); }
+      return true;
+    } catch (err) {
+      if (!isIntentionalAbort(err)) console.error("TMDB Load More Error:", err);
+      setSectionErrors(errors => ({ ...errors, [categoryKey]: 'More results could not be loaded. Please retry.' }));
+      return false;
+    }
   };
 
   const currentData = discoveryCache?.[activeTab]?.data || { trending: [], upcoming: [], popular: [] };
+  const hasCurrentContent = ['trending', 'upcoming', 'popular'].some(key => currentData[key]?.length > 0);
 
   const handleTabChange = (tab) => {
     const cached = discoveryCache?.[tab];
-    const isEmpty = !cached?.data?.trending || cached.data.trending.length === 0;
-    const isImplemented = ['movies', 'tv', 'anime', 'manga', 'games', 'comics'].includes(tab);
+    const isEmpty = !cached?.data || ['trending', 'upcoming', 'popular'].every(key => !(cached.data[key]?.length));
+    const isImplemented = DISCOVERY_TYPES.includes(tab);
     
-    const isStale = !cached || cached.data?._version !== 1;
+    const isStale = !cached || cached.data?._version !== DISCOVERY_CACHE_VERSION;
     
     if (isStale || (isImplemented && isEmpty)) setIsLoading(true);
     setActiveTab(tab);
@@ -372,28 +402,17 @@ export const Discovery = () => {
 
   const handleForceRefresh = () => {
     useMediaStore.setState(state => {
-      const newCache = { ...state.discoveryCache };
-      delete newCache[activeTab];
-      return { discoveryCache: newCache };
+      const cached = state.discoveryCache?.[activeTab];
+      return cached ? {
+        discoveryCache: { ...state.discoveryCache, [activeTab]: { ...cached, timestamp: 0 } },
+      } : state;
     });
     setIsLoading(true);
     setRefreshTrigger(prev => prev + 1);
   };
 
-  const getTitles = (tab) => {
-    switch (tab) {
-      case 'movies': return ['Trending this Week', 'Upcoming', 'Popular'];
-      case 'tv': return ['Trending this Week', 'On The Air', 'Popular'];
-      case 'anime': return ['Trending', 'Upcoming Next Season', 'All Time Popular'];
-      case 'manga': return ['Trending', 'Upcoming', 'All Time Popular'];
-      case 'games': return ['Recently Released', 'Most Anticipated', 'Top Rated'];
-      case 'comics': return ['This Week', 'Next Week', 'Future'];
-      default: return ['Trending', 'Upcoming', 'Popular'];
-    }
-  };
-  
   const isComics = activeTab === 'comics';
-  const [section1Title, section2Title, section3Title] = getTitles(activeTab);
+  const [section1, section2, section3] = DISCOVERY_SECTIONS[activeTab];
 
   return (
     <div className="flex flex-col gap-6 animate-in fade-in duration-300 pb-10 min-h-screen text-base-content overflow-x-hidden">
@@ -416,29 +435,28 @@ export const Discovery = () => {
         <button onClick={handleForceRefresh} disabled={isLoading} className="btn btn-ghost btn-square btn-sm ml-auto" title="Force Refresh">
           <RefreshCw className={`w-4 h-4 text-base-content/50 ${isLoading ? 'animate-spin text-primary' : ''}`} />
         </button>
+        {isLoading && hasCurrentContent && <span role="status" className="font-mono text-[9px] uppercase tracking-widest text-base-content/50">Updating</span>}
       </div>
 
-      {isLoading && currentData.trending.length === 0 ? <DiscoverySkeleton /> : (
-      <div className={`flex flex-col gap-6 sm:gap-8 animate-in fade-in duration-500 ${isLoading ? 'pointer-events-none' : ''}`}>
-        <CarouselSection key={`${activeTab}-trending`} title={section1Title} icon={<Flame className="w-4 h-4 text-warning" />} items={currentData.trending} type={activeTab} showRank={!isComics} categoryKey="trending" onLoadMore={handleLoadMoreItems} />
-        <CarouselSection key={`${activeTab}-upcoming`} title={section2Title} icon={<CalendarClock className="w-4 h-4 text-info" />} items={currentData.upcoming} type={activeTab} categoryKey="upcoming" onLoadMore={handleLoadMoreItems} />
-        <CarouselSection key={`${activeTab}-popular`} title={section3Title} icon={<Star className="w-4 h-4 text-success" />} items={currentData.popular} type={activeTab} showRank={!isComics} categoryKey="popular" onLoadMore={handleLoadMoreItems} />
+      {isLoading && !hasCurrentContent ? <DiscoverySkeleton /> : (
+      <div className="flex flex-col gap-6 sm:gap-8 animate-in fade-in duration-500">
+        <CarouselSection key={`${activeTab}-trending`} title={section1.name} provider={section1.provider} error={sectionErrors.trending} onRetry={handleForceRefresh} icon={<Flame className="w-4 h-4 text-warning" />} items={currentData.trending} type={activeTab} showRank={!isComics} categoryKey="trending" onLoadMore={handleLoadMoreItems} />
+        <CarouselSection key={`${activeTab}-upcoming`} title={section2.name} provider={section2.provider} error={sectionErrors.upcoming} onRetry={handleForceRefresh} icon={<CalendarClock className="w-4 h-4 text-info" />} items={currentData.upcoming} type={activeTab} categoryKey="upcoming" onLoadMore={handleLoadMoreItems} />
+        <CarouselSection key={`${activeTab}-popular`} title={section3.name} provider={section3.provider} error={sectionErrors.popular} onRetry={handleForceRefresh} icon={<Star className="w-4 h-4 text-success" />} items={currentData.popular} type={activeTab} showRank={!isComics} categoryKey="popular" onLoadMore={handleLoadMoreItems} />
       </div>
       )}
     </div>
   );
 };
 
-const CarouselSection = ({ title, icon, items, type, showRank = false, categoryKey, onLoadMore }) => {
+const CarouselSection = ({ title, provider, icon, items, error, onRetry, type, showRank = false, categoryKey, onLoadMore }) => {
   const scrollRef = useRef(null);
   const [limit, setLimit] = useState(15);
   const [apiPage, setApiPage] = useState(1);
   const [isFetching, setIsFetching] = useState(false);
 
-  if (!items || items.length === 0) return null;
-
-  const visibleItems = items.slice(0, limit);
-  const hasMoreLocal = limit < items.length;
+  const visibleItems = (items || []).slice(0, limit);
+  const hasMoreLocal = limit < (items?.length || 0);
   const canFetchMore = (type === 'movies' || type === 'tv') && apiPage < 5 && onLoadMore;
   const hasMore = hasMoreLocal || canFetchMore;
 
@@ -458,11 +476,16 @@ const CarouselSection = ({ title, icon, items, type, showRank = false, categoryK
     } else if (canFetchMore) {
       setIsFetching(true);
       const nextApiPage = apiPage + 1;
-      await onLoadMore(categoryKey, nextApiPage);
-      setApiPage(nextApiPage);
-      setLimit(l => l + 15);
-      setIsFetching(false);
-      setTimeout(() => scroll('right'), 100);
+      try {
+        const succeeded = await onLoadMore(categoryKey, nextApiPage);
+        if (succeeded) {
+          setApiPage(nextApiPage);
+          setLimit(l => l + 15);
+          setTimeout(() => scroll('right'), 100);
+        }
+      } finally {
+        setIsFetching(false);
+      }
     }
   };
 
@@ -474,6 +497,16 @@ const CarouselSection = ({ title, icon, items, type, showRank = false, categoryK
         </h2>
       </div>
 
+      {error && visibleItems.length === 0 ? (
+        <div role="alert" className="min-h-32 border border-error/40 bg-error/5 p-5 flex flex-col items-center justify-center gap-3 text-center">
+          <p className="font-mono text-[10px] uppercase tracking-widest text-error">{error}</p>
+          <button type="button" onClick={onRetry} className="h-9 px-4 border border-error text-error hover:bg-error hover:text-error-content font-mono text-[10px] font-bold uppercase tracking-widest">Retry {provider}</button>
+        </div>
+      ) : visibleItems.length === 0 ? (
+        <div className="min-h-32 border border-base-300 bg-base-100 p-5 flex items-center justify-center text-center font-mono text-[10px] uppercase tracking-widest text-base-content/50">No titles are currently available in this section.</div>
+      ) : (
+      <>
+      {error && <div role="alert" className="flex items-center justify-between gap-3 border border-error/40 bg-error/5 px-3 py-2"><span className="font-mono text-[9px] uppercase tracking-widest text-error">{error}</span><button type="button" onClick={onRetry} className="shrink-0 font-mono text-[9px] font-bold uppercase tracking-widest text-error underline">Retry</button></div>}
       <div className="relative group/carousel">
         <button onClick={() => scroll('left')} className="absolute left-2 top-1/2 -translate-y-[calc(50%+8px)] z-40 bg-base-100/90 hover:bg-primary text-base-content hover:text-primary-content w-10 h-10 items-center justify-center hidden md:group-hover/carousel:flex backdrop-blur-md transition-all border border-base-300 shadow-2xl rounded-full">
           <ChevronLeft className="w-6 h-6" />
@@ -483,7 +516,7 @@ const CarouselSection = ({ title, icon, items, type, showRank = false, categoryK
           {visibleItems.map((item, i) => <CarouselCard key={item.uniqueKey || item.id || i} item={item} type={type} rank={showRank ? i + 1 : null} />)}
           
           {hasMore && (
-            <div 
+            <button type="button"
               onClick={handleLoadMore}
               className="group flex-shrink-0 w-[calc(33.333%-0.34rem)] sm:w-36 md:w-44 flex flex-col cursor-pointer snap-start relative bg-base-200/50 hover:bg-base-200 border-y border-r border-base-300 border-l-4 border-l-transparent hover:border-l-primary transition-all duration-200"
             >
@@ -493,7 +526,7 @@ const CarouselSection = ({ title, icon, items, type, showRank = false, categoryK
                 </div>
                 <span className="font-mono font-bold text-[10px] uppercase tracking-widest">{isFetching ? 'Loading...' : 'Load More'}</span>
               </div>
-            </div>
+            </button>
           )}
         </div>
 
@@ -501,6 +534,8 @@ const CarouselSection = ({ title, icon, items, type, showRank = false, categoryK
           <ChevronRight className="w-6 h-6" />
         </button>
       </div>
+      </>
+      )}
     </section>
   );
 };

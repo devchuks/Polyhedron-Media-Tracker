@@ -100,11 +100,11 @@ export const buildIgdbRequest = (operation, params = {}) => {
   if (operation === 'discoverySection') {
     const section = String(params.section || '');
     const now = Math.floor(Date.now() / 1_000);
-    const sixMonthsAgo = now - 15_552_000;
+    const ninetyDaysAgo = now - 7_776_000;
     const clauses = {
-      trending: `where first_release_date >= ${sixMonthsAgo} & first_release_date <= ${now} & parent_game = null & total_rating_count > 0; sort total_rating_count desc;`,
+      trending: `where first_release_date >= ${ninetyDaysAgo} & first_release_date <= ${now} & parent_game = null; sort first_release_date desc;`,
       upcoming: `where first_release_date > ${now} & parent_game = null & hypes > 0; sort hypes desc;`,
-      popular: 'where total_rating_count > 500 & parent_game = null; sort total_rating desc;',
+      popular: 'where total_rating_count >= 500 & total_rating != null & parent_game = null; sort total_rating desc;',
     };
     if (!clauses[section]) throw new TypeError('Invalid IGDB discovery section');
     return { endpoint: 'games', query: `fields ${GAME_FIELDS}; ${clauses[section]} limit 40;` };

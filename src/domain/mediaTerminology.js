@@ -25,7 +25,7 @@ export const mediaPlanTerm = (type) => {
 
 export const mediaStatusLabel = (status, type, context = 'badge') => {
   const normalized = String(status || '').toLowerCase();
-  if (normalized === 'planned') return context === 'detail' ? `In ${mediaPlanTerm(type)}` : 'Planned';
+  if (normalized === 'planned') return context === 'detail' ? `In ${mediaPlanTerm(type)}` : context === 'option' ? mediaPlanTerm(type) : 'Planned';
   if (normalized === 'in progress') return context === 'detail' ? `Currently ${mediaActiveTerm(type)}` : mediaActiveTerm(type);
   if (normalized === 'completed') return mediaCompletionTerm(type);
   if (normalized === 'dropped') return 'Dropped';

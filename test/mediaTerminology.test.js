@@ -18,6 +18,9 @@ test('completed lifecycle values use media-appropriate display terminology', () 
   assert.equal(mediaStatusLabel('completed', 'games'), 'Played');
   assert.equal(mediaStatusActionLabel('completed', 'movies'), 'Mark as Watched');
   assert.equal(mediaCompletionDateLabel('books'), 'Read On');
+  assert.equal(mediaStatusLabel('planned', 'movies', 'option'), 'Watchlist');
+  assert.equal(mediaStatusLabel('planned', 'games', 'option'), 'Backlog');
+  assert.equal(mediaStatusLabel('planned', 'books', 'option'), 'Reading List');
 });
 
 test('Diary action options are scoped to the media activity domain', () => {

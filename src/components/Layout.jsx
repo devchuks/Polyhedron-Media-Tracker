@@ -228,8 +228,8 @@ export const AppLayout = () => {
   }, [theme]);
 
   useEffect(() => {
-    initAuthSubscription();
-  }, [initAuthSubscription]);
+    if (_hasHydrated) initAuthSubscription();
+  }, [_hasHydrated, initAuthSubscription]);
 
   // Prevent native pull-to-refresh on mobile browsers
   useEffect(() => {

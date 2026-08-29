@@ -11,6 +11,7 @@ import { createKeyedQueue } from '../utils/keyedQueue';
 import { fetchPaginatedRows } from '../services/cloudPagination';
 import { retryAfterJwtRefresh } from '../utils/requestErrors';
 import { createSingleFlight } from '../utils/singleFlight';
+import { readLibraryViewMode, writeLibraryViewMode } from '../domain/libraryContext';
 import {
   GUEST_SHOWCASE_VERSION,
   createIsolatedAuthenticatedSnapshot,
@@ -1121,8 +1122,10 @@ export const useUIStore = create((set) => ({
   removeToast: (id) => set((state) => ({
     toasts: state.toasts.filter((t) => t.id !== id)
   })),
-  viewMode: 'grid',
-  setViewMode: (mode) => set({ viewMode: mode }),
+  viewMode: readLibraryViewMode(browserLocalStorage()),
+  setViewMode: (mode) => {
+    if (writeLibraryViewMode(browserLocalStorage(), mode)) set({ viewMode: mode });
+  },
 }));
 
 if (typeof window !== 'undefined') {

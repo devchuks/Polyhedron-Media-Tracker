@@ -391,6 +391,55 @@ export const apiRegistry = {
     } catch (err) { return failedSearchResult(err, 'OpenLibrary'); }
   },
 
+  discoverBooks: async (section) => {
+    if (section === 'trending') {
+      const data = await safeApiClient(getOpenLibraryUrl('/trending/weekly.json?limit=40'));
+      return (data.works || []).map(work => normalizeOpenLibrary({
+        ...work,
+        cover_i: work.cover_i || work.cover_id,
+        author_name: Array.isArray(work.author_name)
+          ? work.author_name
+          : work.author_name
+            ? [work.author_name]
+            : work.author?.map(author => author.name).filter(Boolean),
+      }));
+    }
+    const sort = section === 'upcoming' ? 'new' : 'readinglog';
+    const data = await safeApiClient(getOpenLibraryUrl(`/search.json?q=language%3Aeng&sort=${sort}&limit=40&page=1`));
+    return (data.docs || []).map(normalizeOpenLibrary);
+  },
+
+  discoverVNs: async (section) => {
+    const today = new Date().toISOString().slice(0, 10);
+    const since = new Date(Date.now() - (365 * 24 * 60 * 60 * 1000)).toISOString().slice(0, 10);
+    let filters;
+    let sort;
+    let reverse = true;
+    if (section === 'trending') {
+      filters = ['and', ['released', '>=', since], ['released', '<=', today]];
+      sort = 'released';
+    } else if (section === 'upcoming') {
+      filters = ['released', '>', today];
+      sort = 'released';
+      reverse = false;
+    } else {
+      filters = ['votecount', '>=', 100];
+      sort = 'rating';
+    }
+    const data = await safeApiClient('https://api.vndb.org/kana/vn', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filters,
+        fields: 'id, title, titles.lang, titles.title, titles.latin, released, image.url, image.thumbnail, developers.id, developers.name, description, rating, votecount',
+        sort,
+        reverse,
+        results: 40,
+      }),
+    });
+    return (data.results || []).map(normalizeVNDB);
+  },
+
   getPersonDetails: async (personId) => {
     const cacheKey = `person_${personId}`;
     const cached = getSessionCache(sessionCache.people, cacheKey);
