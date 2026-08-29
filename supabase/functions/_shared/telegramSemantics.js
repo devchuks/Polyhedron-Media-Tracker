@@ -38,6 +38,36 @@ export const providerForMediaType = type => ({
   manga: 'anilist', vn: 'vndb', books: 'openlibrary',
 }[type] || null);
 
+export const telegramMediaTypeLabel = type => ({
+  movies: 'Movie',
+  tv: 'TV show',
+  comics: 'Comic',
+  games: 'Game',
+  anime: 'Anime',
+  manga: 'Manga',
+  vn: 'Visual novel',
+  books: 'Book',
+}[type] || 'Media');
+
+const decisiveRankedCandidate = (candidates, allRows) => {
+  if (candidates.length < 2) return candidates[0] || null;
+  const withPopularity = candidates
+    .map(row => ({ row, popularity: finiteNumber(row.popularity) }))
+    .filter(entry => entry.popularity !== null)
+    .sort((left, right) => right.popularity - left.popularity);
+  if (withPopularity.length > 0) {
+    const [first, second] = withPopularity;
+    const runnerUp = second?.popularity || 0;
+    if (first.popularity >= Math.max(runnerUp * 1.75, runnerUp + 10)) return first.row;
+  }
+
+  const providerOrdered = candidates
+    .map(row => ({ row, index: allRows.indexOf(row) }))
+    .sort((left, right) => left.index - right.index);
+  if (providerOrdered[0]?.index === 0 && providerOrdered[1]?.index >= 3) return providerOrdered[0].row;
+  return null;
+};
+
 export const selectDeterministicProviderMatch = (candidates, requestedTitle, requestedYear, requestedId = null) => {
   const rows = (Array.isArray(candidates) ? candidates : []).filter(row => row?.id != null && row?.title);
   if (!rows.length) return { match: null, ambiguous: false, options: [] };
@@ -49,14 +79,18 @@ export const selectDeterministicProviderMatch = (candidates, requestedTitle, req
   const titleKey = normalizedText(requestedTitle);
   const exactTitle = rows.filter(row => normalizedText(row.title) === titleKey);
   const year = finiteNumber(requestedYear);
-  const exactYear = year === null ? exactTitle : exactTitle.filter(row => Number(row.year) === year);
-  if (exactYear.length === 1) return { match: exactYear[0], ambiguous: false, options: [] };
-  if (exactYear.length > 1) return { match: null, ambiguous: true, options: exactYear.slice(0, 5) };
-  if (year !== null && exactTitle.length > 0) {
-    return { match: null, ambiguous: true, options: exactTitle.slice(0, 5) };
+  if (year !== null) {
+    const exactYear = exactTitle.filter(row => Number(row.year) === year);
+    if (exactYear.length === 1) return { match: exactYear[0], ambiguous: false, options: [] };
+    if (exactYear.length > 1) return { match: null, ambiguous: true, options: exactYear.slice(0, 5) };
+    if (exactTitle.length > 0) return { match: null, ambiguous: true, options: exactTitle.slice(0, 5) };
   }
   if (exactTitle.length === 1) return { match: exactTitle[0], ambiguous: false, options: [] };
-  if (exactTitle.length > 1) return { match: null, ambiguous: true, options: exactTitle.slice(0, 5) };
+  if (exactTitle.length > 1) {
+    const decisive = decisiveRankedCandidate(exactTitle, rows);
+    if (decisive) return { match: decisive, ambiguous: false, options: [] };
+    return { match: null, ambiguous: true, options: exactTitle.slice(0, 5) };
+  }
   const requestedTokens = new Set(titleKey.split(' ').filter(Boolean));
   const scored = rows.map(row => {
     const candidateTokens = new Set(normalizedText(row.title).split(' ').filter(Boolean));
@@ -67,7 +101,8 @@ export const selectDeterministicProviderMatch = (candidates, requestedTitle, req
   if (scored[0]?.score >= 0.8 && scored[0].score - (scored[1]?.score || 0) >= 0.25) {
     return { match: scored[0].row, ambiguous: false, options: [] };
   }
-  return { match: null, ambiguous: true, options: scored.slice(0, 5).map(entry => entry.row) };
+  const plausible = scored.filter(entry => entry.score >= 0.45).slice(0, 5).map(entry => entry.row);
+  return { match: null, ambiguous: plausible.length > 0, options: plausible };
 };
 
 export const progressForTelegramIntent = ({ type, intent, season, progressNumber, episodeCount, total }) => {
@@ -164,12 +199,20 @@ export const telegramConfirmation = ({ title, intent, lifecycle, activityAt }) =
     RATE: 'Rated', NOTE: 'Logged',
   })[intent] || 'Updated';
   const date = new Date(activityAt).toISOString().slice(0, 10);
+  const activity = lifecycle.actionType
+    ? lifecycle.actionType.toLowerCase().replace(/(^|-)\w/gu, value => value.toUpperCase())
+    : null;
+  const stateEvent = ({ ADD_PLANNED: 'Added', START: 'Started', UPDATE_PROGRESS: 'Updated', RATE: 'Rated' })[intent] || null;
+  const event = lifecycle.shouldLog
+    ? `${activity} · ${date}`
+    : stateEvent
+      ? `${stateEvent} · ${date}`
+      : null;
   return {
     headline: `${verb} ${title}${lifecycle.seasonLabel ? ` — ${lifecycle.seasonLabel}` : ''}`,
     lines: [
-      lifecycle.progress ? `Progress: ${lifecycle.progress}` : null,
-      `Activity date: ${date}`,
-      `Diary: ${lifecycle.shouldLog ? lifecycle.actionType : 'none'}`,
+      event,
+      lifecycle.progress ? `Progress · ${lifecycle.progress}` : null,
     ].filter(Boolean),
   };
 };

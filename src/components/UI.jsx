@@ -6,11 +6,12 @@ import { useMediaStore, useUIStore } from '../store/useMediaStore';
 import { apiRegistry } from '../services/apiRegistry';
 import { extractMetronStaff } from '../utils/normalizers';
 import { formatSafeMarkup } from '../utils/safeMarkup';
+import { plainTextFromMarkup } from '../utils/plainText';
 import { safeExternalUrl } from '../utils/urlSafety';
 import { shouldShowMetadataSkeleton } from '../domain/detailEnrichment';
 import { dateInputFromTimestamp, timestampForCalendarDateWithCurrentTime, timestampFromDateInput, todayDateInput } from '../utils/calendarDate';
 import { preferredMediaImage } from '../domain/mediaState';
-import { firstUsableImageUrl, normalizeImageUrl } from '../domain/mediaImages';
+import { firstUsableImageUrl, normalizeImageUrl, selectVnBannerImage } from '../domain/mediaImages';
 import { completeTvSeries, executeTvSeasonCompletion, saveTvLibraryState, startTvRewatch } from '../domain/tvWorkflow';
 import { applyActivityLifecycle, diaryActionForType, isMeaningfulProgress } from '../domain/activityLifecycle';
 import { mediaStatusActionLabel, mediaStatusLabel, ratingForInteraction } from '../domain/mediaTerminology';
@@ -73,24 +74,12 @@ export const formatProgressLabel = (prog, type) => {
 
 export const stripHtml = (html) => {
   if (!html) return '';
-  
-  let text = String(html);
-  // Silently extract text from BBCode tags before HTML parsing
-  text = text.replace(/\[url=(?:.*?)\](.*?)\[\/url\]/gi, '$1');
-  text = text.replace(/\[url\](.*?)\[\/url\]/gi, '$1');
-  text = text.replace(/\[b\](.*?)\[\/b\]/gi, '$1');
-  text = text.replace(/\[i\](.*?)\[\/i\]/gi, '$1');
-  text = text.replace(/\[u\](.*?)\[\/u\]/gi, '$1');
-  text = text.replace(/\[s\](.*?)\[\/s\]/gi, '$1');
-  text = text.replace(/\[spoiler\](.*?)\[\/spoiler\]/gi, '$1');
-  text = text.replace(/\[quote\](.*?)\[\/quote\]/gi, '"$1"');
-
-  try {
-    const doc = new DOMParser().parseFromString(text, 'text/html');
-    return doc.body.textContent || '';
-  } catch (e) {
-    return text.replace(/<[^>]*>?/gm, '');
-  }
+  let text = String(html)
+    .replace(/\[url=(?:.*?)\](.*?)\[\/url\]/giu, '$1')
+    .replace(/\[url\](.*?)\[\/url\]/giu, '$1')
+    .replace(/\[(?:b|i|u|s|spoiler)\](.*?)\[\/(?:b|i|u|s|spoiler)\]/giu, '$1')
+    .replace(/\[quote\](.*?)\[\/quote\]/giu, '"$1"');
+  return plainTextFromMarkup(text);
 };
 
 export const formatMarkdownLinks = formatSafeMarkup;
@@ -116,7 +105,7 @@ export const resolveMediaImage = (item, type, size = 'md') => {
     if (size === 'banner') return raw.artworks?.[0]?.image_id ? `https://images.igdb.com/igdb/image/upload/t_1080p/${raw.artworks[0].image_id}.jpg` : (raw.screenshots?.[0]?.image_id ? `https://images.igdb.com/igdb/image/upload/t_1080p/${raw.screenshots[0].image_id}.jpg` : null);
     if (imgId) return `https://images.igdb.com/igdb/image/upload/${size === 'thumb' ? 't_cover_small' : size === 'original' ? 't_original' : 't_720p'}/${imgId}.jpg`;
   } else if (type === 'vn') {
-    if (size === 'banner') return raw.screenshots?.[0]?.url || null;
+    if (size === 'banner') return selectVnBannerImage(raw.screenshots);
     // Uses fallback image below
   } else if (type === 'anime' || type === 'manga') {
     if (size === 'banner') return raw.bannerImage || null;
@@ -221,7 +210,6 @@ export const GlobalDiaryModal = () => {
   if (!activeDiaryModal) return null;
 
   const { targetItem, type, isPreview, seasonOverride, explicitAction, apiData, titleToSave } = activeDiaryModal;
-  const openedForActivity = activeDiaryModal.mode === 'log' || explicitAction === 'NOTE ADDED';
   const raw = apiData?.raw || targetItem?.raw || targetItem?.apiData?.raw || {};
   const maxProgress = type === 'tv' ? raw.number_of_episodes : type === 'anime' ? raw.episodes : type === 'manga' || type === 'comics' ? (raw.chapters || raw.issuesCount) : null;
   const progressUnit = type === 'tv' || type === 'anime' ? 'Episodes' : type === 'manga' || type === 'comics' ? (type === 'comics' ? 'Issues' : 'Chapters') : '';
@@ -503,14 +491,6 @@ export const GlobalDiaryModal = () => {
           <button type="button" onClick={handleClose} className="absolute top-4 right-4 btn btn-square btn-sm btn-ghost border border-base-300 hover:bg-base-200 rounded-none z-30 hidden sm:flex touch-manipulation"><X className="w-4 h-4" /></button>
 
           <div className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar p-4 sm:p-8 flex flex-col gap-5 sm:gap-6">
-          <div className="border-l-4 border-primary bg-base-200 px-3 py-2">
-            <p className="font-mono text-[10px] font-black uppercase tracking-widest">Library State & Diary</p>
-            <p className="mt-1 text-xs text-base-content/60">{type === 'tv'
-              ? 'Save Changes updates only the Library. Log Activity creates one Diary entry and preserves the selected TV state; whole-series completion stays explicit.'
-              : openedForActivity
-                ? 'Activity fields are ready. Save Changes updates only the Library; Log Activity marks this item completed and creates one Diary entry.'
-                : 'Save Changes updates only the Library. Log Activity applies these values, marks the item completed, and creates one Diary entry.'}</p>
-          </div>
           {/* Status Selection */}
           <div className="flex flex-col gap-1.5">
             <label className="text-[10px] font-mono font-bold text-base-content/50 uppercase tracking-widest">Status</label>

@@ -25,6 +25,19 @@ test('Telegram persistence failure cannot send a success confirmation', () => {
   assert.match(telegramSource, /if \(transactionError\) throw new Error[\s\S]*if \(!applied\)[\s\S]*telegramConfirmation/iu);
 });
 
+test('Telegram uses provider confidence and labels only genuinely ambiguous alternatives', () => {
+  assert.doesNotMatch(telegramSource, /preferredProviderId|\.ilike\('title', cleanTitle\)/u);
+  assert.match(telegramSource, /telegramMediaTypeLabel\(option\.mediaType \|\| type\)/u);
+  assert.match(telegramSource, /I found a few genuinely close matches/);
+  assert.doesNotMatch(telegramSource, /Choose a more specific title\/year/);
+});
+
+test('Telegram success feedback omits empty fields, duplicate title metadata, and the unreliable deep link', () => {
+  assert.match(telegramSource, /detailLines = \[[\s\S]*lifecycle\.rating \? `Rating/iu);
+  assert.doesNotMatch(telegramSource, /Diary: none|Rating:<\/b>.*None|View in Polyhedron|project-polyhedron\.netlify\.app\/media/iu);
+  assert.doesNotMatch(telegramSource, /<b>Title:<\/b>|<b>Type:<\/b>|<b>Status:<\/b>/u);
+});
+
 test('Casino Royale, Quantum of Solace, and The Odyssey direct-completion archetypes remain coherent', () => {
   for (const title of ['Casino Royale', 'Quantum of Solace', 'The Odyssey']) {
     const eventTime = Date.parse('2026-08-24T12:34:56.000Z');

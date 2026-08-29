@@ -32,7 +32,8 @@ test('Discovery includes all supported media and constructs defensible date/rati
   const request = tmdbDiscoveryRequest('movies', 'upcoming', 2, new Date('2026-08-28T12:00:00Z'));
   assert.equal(request.path, '/discover/movie');
   assert.equal(request.query['primary_release_date.gte'], '2026-08-28');
-  assert.equal(request.query.sort_by, 'primary_release_date.asc');
+  assert.equal(request.query['primary_release_date.lte'], '2028-02-28');
+  assert.equal(request.query.sort_by, 'popularity.desc');
   assert.match(buildIgdbRequest('discoverySection', { section: 'trending' }).query, /first_release_date <= \d+.*sort first_release_date desc/);
   assert.match(buildIgdbRequest('discoverySection', { section: 'upcoming' }).query, /first_release_date > \d+.*hypes > 0.*sort hypes desc/);
   assert.match(buildIgdbRequest('discoverySection', { section: 'popular' }).query, /total_rating_count >= 500.*sort total_rating desc/);
@@ -56,6 +57,7 @@ test('Library card actions are independent, keyboard-accessible commands', async
   assert.match(source, /mode: 'library'/);
   assert.match(source, /mode: 'log'/);
   assert.match(source, /event\.preventDefault\(\)[\s\S]*event\.stopPropagation\(\)/);
+  assert.doesNotMatch(source, /Library State & Diary/);
 });
 
 test('TV quick progress retains state-only semantics and explicit season logging', async () => {

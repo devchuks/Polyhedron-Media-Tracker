@@ -10,6 +10,7 @@ import {
   providerForMediaType,
   selectDeterministicProviderMatch,
   telegramConfirmation,
+  telegramMediaTypeLabel,
 } from "../_shared/telegramSemantics.js"
 
 const fetchProvider = (url: string, init: RequestInit = {}) => fetch(url, {
@@ -149,6 +150,7 @@ Rules:
 - Do not invent missing information.
 - If uncertain, return null for the field.
 - CRITICAL: If the media is a Japanese Anime (whether a series or a movie), ALWAYS classify the type as 'anime'. Do NOT classify anime as 'tv' or 'movies'.
+- Infer the media type from the title and the user's consumption language when reasonably clear. Leave it null only when the title genuinely spans multiple media categories and context does not resolve it.
 - Confidence must be a number between 0 and 1.
 - Preserve the user's intent accurately.
 - Classify intent explicitly. "started" is START, an episode/chapter/percentage update is UPDATE_PROGRESS,
@@ -458,9 +460,10 @@ for (let i = 0; i < items.length; i++) {
           id: candidate.id,
           title: candidate.name || candidate.title,
           year: parseInt((candidate.first_air_date || candidate.release_date || '').split('-')[0], 10) || null,
+          popularity: candidate.popularity,
           raw: candidate,
         })), cleanTitle, year, explicitProviderId);
-        ambiguityOptions = resolution.options;
+        ambiguityOptions = resolution.options.map((option: any) => ({ ...option, mediaType: type }));
         const match = resolution.match?.raw;
         if (!match) {
           externalId = null;
@@ -510,9 +513,10 @@ for (let i = 0; i < items.length; i++) {
           id: candidate.id,
           title: candidate.name,
           year: candidate.first_release_date ? new Date(candidate.first_release_date * 1000).getFullYear() : null,
+          popularity: candidate.total_rating_count ?? candidate.total_rating,
           raw: candidate,
         })), cleanTitle, year, explicitProviderId);
-        ambiguityOptions = resolution.options;
+        ambiguityOptions = resolution.options.map((option: any) => ({ ...option, mediaType: type }));
         const match = resolution.match?.raw;
         if (!match) externalId = null;
         else {
@@ -575,7 +579,7 @@ for (let i = 0; i < items.length; i++) {
           year: candidate.cover_date ? parseInt(candidate.cover_date.substring(0, 4), 10) : null,
           raw: candidate,
         })), cleanTitle, year, explicitProviderId);
-        ambiguityOptions = resolution.options;
+        ambiguityOptions = resolution.options.map((option: any) => ({ ...option, mediaType: type }));
         const match = resolution.match?.raw;
         if (match) {
         
@@ -630,6 +634,7 @@ for (let i = 0; i < items.length; i++) {
             volumes
             status
             averageScore
+            popularity
             siteUrl
             genres
           }
@@ -651,9 +656,10 @@ for (let i = 0; i < items.length; i++) {
             id: candidate.id,
             title: candidate.title?.english || candidate.title?.romaji,
             year: candidate.startDate?.year || null,
+            popularity: candidate.popularity,
             raw: candidate,
           })), cleanTitle, year, explicitProviderId);
-          ambiguityOptions = resolution.options;
+          ambiguityOptions = resolution.options.map((option: any) => ({ ...option, mediaType: type }));
           const match = resolution.match?.raw;
           if (!match) externalId = null;
           else {
@@ -690,7 +696,7 @@ for (let i = 0; i < items.length; i++) {
             year: candidate.released ? parseInt(candidate.released.split('-')[0], 10) : null,
             raw: candidate,
           })), cleanTitle, year, explicitProviderId);
-          ambiguityOptions = resolution.options;
+          ambiguityOptions = resolution.options.map((option: any) => ({ ...option, mediaType: type }));
           const match = resolution.match?.raw;
           if (!match) externalId = null;
           else {
@@ -720,9 +726,10 @@ for (let i = 0; i < items.length; i++) {
           id: String(candidate.key || '').replace(/^\/works\//, ''),
           title: candidate.title,
           year: candidate.first_publish_year || null,
+          popularity: candidate.ratings_count ?? candidate.edition_count,
           raw: candidate,
         })), cleanTitle, year, explicitProviderId);
-        ambiguityOptions = resolution.options;
+        ambiguityOptions = resolution.options.map((option: any) => ({ ...option, mediaType: type }));
         const match = resolution.match?.raw;
         if (match) {
         const workKey = String(match.key || '').replace(/^\/works\//, '');
@@ -741,14 +748,14 @@ for (let i = 0; i < items.length; i++) {
 
     if (!externalId && ambiguityOptions.length > 0) {
       const optionText = ambiguityOptions.slice(0, 5)
-        .map((option: any) => `• ${escapeTelegramHtml(option.title)}${option.year ? ` (${escapeTelegramHtml(option.year)})` : ''}`)
+        .map((option: any) => `• ${escapeTelegramHtml(option.title)}${option.year ? ` (${escapeTelegramHtml(option.year)})` : ''} — ${escapeTelegramHtml(telegramMediaTypeLabel(option.mediaType || type))}`)
         .join('\n');
       await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chat_id: chatId,
-          text: `<b>Choose a more specific title/year:</b>\n${optionText}`,
+          text: `<b>I found a few genuinely close matches:</b>\n${optionText}\n\nReply with the matching title, year, or provider ID.`,
           parse_mode: 'HTML',
         }),
       });
@@ -756,12 +763,6 @@ for (let i = 0; i < items.length; i++) {
     }
 
     // --- Phase 4 - Database Execution and Upsert Logic ---
-
-    const userId = Deno.env.get('ADMIN_USER_ID');
-    if (!userId) {
-      console.error('[Phase 4] CRITICAL ERROR: ADMIN_USER_ID is missing from environment variables.');
-      return new Response('Configuration Error', { status: 500, headers: corsHeaders });
-    }
 
     if (externalId) {
       // Match the exact ID formatting expected by your frontend
@@ -912,26 +913,24 @@ for (let i = 0; i < items.length; i++) {
         continue;
       }
 
-      // --- Phase 5 - Feedback Loop & Deep Linking ---
+      // --- Phase 5 - Compact feedback ---
       const telegramUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
       
       // Invisible link trick to force Telegram to show the high-res poster as a preview
       const safePosterUrl = safeHttpUrl(posterUrl);
       const posterLink = safePosterUrl ? `<a href="${escapeTelegramHtml(safePosterUrl)}">&#8203;</a>` : '';
-      const typeLabel = type === 'movies' ? 'Movie' : type === 'tv' ? 'TV' : type === 'comics' ? 'Comic' : type === 'games' ? 'Game' : type === 'anime' ? 'Anime' : type === 'manga' ? 'Manga' : type === 'vn' ? 'VN' : 'Book';
-      const escapedTitle = escapeTelegramHtml(safeTitle);
-      const escapedType = escapeTelegramHtml(typeLabel);
-      const escapedYear = escapeTelegramHtml(canonicalYear || '?');
-      const deepLink = `https://project-polyhedron.netlify.app/media/${encodeURIComponent(type)}/${encodeURIComponent(mediaId)}`;
+      const typeLabel = telegramMediaTypeLabel(type);
+      const statusLabel = safeStatus.replace(/\b\w/gu, (letter: string) => letter.toUpperCase());
+      const resolvedYear = canonicalYear ? ` <code>${escapeTelegramHtml(canonicalYear)}</code>` : '';
       const confirmation = telegramConfirmation({ title: safeTitle, intent, lifecycle, activityAt: timestampMs });
+      const detailLines = [
+        `${typeLabel} · ${statusLabel}`,
+        ...confirmation.lines,
+        lifecycle.rating ? `Rating · ${lifecycle.rating}/10` : null,
+      ].filter(Boolean);
       const messageHtml = `
-<b>✅ ${escapeTelegramHtml(confirmation.headline)}</b>${posterLink}
-<b>Title:</b> ${escapedTitle} (${escapedYear})
-<b>Type:</b> ${escapedType}
-${confirmation.lines.map((line: string) => `<b>${escapeTelegramHtml(line)}</b>`).join('\n')}
-<b>Status:</b> ${escapeTelegramHtml(safeStatus.toUpperCase())}
-<b>Rating:</b> ${lifecycle.rating ? lifecycle.rating + '/10' : 'None'}
-<b>Link:</b> <a href="${deepLink}">View in Polyhedron</a>
+<b>✅ ${escapeTelegramHtml(confirmation.headline)}</b>${resolvedYear}${posterLink}
+${detailLines.map((line: string) => escapeTelegramHtml(line)).join('\n')}
       `.trim();
 
       try {

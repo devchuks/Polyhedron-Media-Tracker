@@ -4,7 +4,7 @@ export const DISCOVERY_CACHE_VERSION = 2;
 export const DISCOVERY_SECTIONS = Object.freeze({
   movies: [
     { key: 'trending', name: 'Trending This Week', provider: 'TMDB', semantics: 'Weekly movie attention' },
-    { key: 'upcoming', name: 'Upcoming Movies', provider: 'TMDB', semantics: 'Movies with a future primary release date, ordered by release date' },
+    { key: 'upcoming', name: 'Upcoming Movies', provider: 'TMDB', semantics: 'Highly anticipated movies releasing within the next 18 months, ordered by popularity' },
     { key: 'popular', name: 'Popular Movies', provider: 'TMDB', semantics: 'Current TMDB popularity ranking' },
   ],
   tv: [
@@ -50,13 +50,16 @@ export const tmdbDiscoveryRequest = (type, section, page = 1, today = new Date()
   if (section === 'popular') return { path: `/${mediaType}/popular`, query: { page } };
   if (type === 'tv') return { path: '/tv/on_the_air', query: { page } };
   const date = new Date(today);
+  const horizon = new Date(date);
+  horizon.setUTCMonth(horizon.getUTCMonth() + 18);
   return {
     path: '/discover/movie',
     query: {
       page,
       include_adult: false,
       'primary_release_date.gte': date.toISOString().slice(0, 10),
-      sort_by: 'primary_release_date.asc',
+      'primary_release_date.lte': horizon.toISOString().slice(0, 10),
+      sort_by: 'popularity.desc',
     },
   };
 };

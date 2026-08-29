@@ -6,8 +6,9 @@ test('one modal exposes state-only save and atomic state-plus-activity commands'
   const source = await readFile(new URL('../src/components/UI.jsx', import.meta.url), 'utf8');
   assert.match(source, /handleSubmit\('library'/);
   assert.match(source, /handleSubmit\('activity'/);
-  assert.match(source, /Save Changes updates only the Library/);
+  assert.match(source, />\s*Save Changes\s*</);
   assert.match(source, /Log Activity/);
+  assert.doesNotMatch(source, /Library State & Diary/);
   assert.match(source, /persistStateOrActivity\(/);
   assert.doesNotMatch(source, /addDiaryLog/);
 });

@@ -824,7 +824,7 @@ export const DetailView = () => {
           <div className="flex flex-col gap-1">
             <span className="text-[10px] font-mono font-bold text-base-content/40 uppercase tracking-widest">Description</span>
             {isDeepFetching && (!overviewText || overviewText.startsWith('First published in') || overviewText === 'No description available.') ? <TextBlockSkeleton /> : (
-               <div className="text-sm leading-relaxed text-base-content/80 font-sans whitespace-pre-wrap [&_a]:text-primary [&_a]:hover:text-primary/70 [&_a]:underline [&_a]:transition-colors" dangerouslySetInnerHTML={{ __html: overviewText?.startsWith('First published in') || !overviewText ? 'No descriptive data logged.' : formatMarkdownLinks(rawDesc) }} />
+               <div className="text-sm leading-relaxed text-base-content/80 font-sans whitespace-pre-wrap [&_a]:text-primary [&_a]:hover:text-primary/70 [&_a]:underline [&_a]:transition-colors" dangerouslySetInnerHTML={{ __html: overviewText?.startsWith('First published in') || !overviewText ? 'No descriptive data logged.' : formatMarkdownLinks(overviewText) }} />
             )}
           </div>
 

@@ -13,6 +13,7 @@ import { FunctionsHttpError } from '@supabase/supabase-js';
 import { parseRetryAfter, withRetry } from '../utils/retry.js';
 import { getCachedValue, mapWithConcurrency, setCachedValue } from '../utils/boundedAsync.js';
 import { isIntentionalAbort, providerErrorMessage } from '../utils/requestErrors.js';
+import { plainTextFromMarkup } from '../utils/plainText.js';
 
 const invokeFunction = async (name, body) => {
   return withRetry(async () => {
@@ -481,7 +482,7 @@ export const apiRegistry = {
         name: staff.name?.full,
         profile_path_custom: staff.image?.large,
         known_for_department: staff.primaryOccupations?.[0] || 'Staff',
-        biography: staff.description,
+        biography: plainTextFromMarkup(staff.description),
         birthday: formatAnidbDate(staff.dateOfBirth),
         deathday: formatAnidbDate(staff.dateOfDeath),
         combined_credits: {
@@ -639,7 +640,7 @@ export const apiRegistry = {
       }
       else if (type === 'anime') result = (await fetchAniListGraphQL(`query ($id: Int) { Media(id: $id, type: ANIME) { id title { romaji english native } description(asHtml: true) trailer { id site } coverImage { extraLarge large medium } bannerImage startDate { year month day } episodes status averageScore siteUrl genres studios(isMain: true) { nodes { id name } } staff(perPage: 50, sort: RELEVANCE) { edges { role node { id name { full } } } } relations { edges { relationType node { id type title { romaji english } coverImage { large } } } } externalLinks { url site } } }`, { id: parseInt(cleanId) }))?.Media;
       else if (type === 'manga') result = (await fetchAniListGraphQL(`query ($id: Int) { Media(id: $id, type: MANGA) { id title { romaji english native } description(asHtml: true) coverImage { extraLarge large medium } bannerImage startDate { year month day } chapters volumes status averageScore siteUrl genres staff(perPage: 50) { edges { role node { id name { full } } } } relations { edges { relationType node { id type title { romaji english } coverImage { large } } } } externalLinks { url site } } }`, { id: parseInt(cleanId) }))?.Media;
-      else if (type === 'vn') result = (await safeApiClient('https://api.vndb.org/kana/vn', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filters: ['id', '=', cleanId], fields: 'id, title, titles.lang, titles.title, titles.latin, released, image.url, image.thumbnail, developers.id, developers.name, description, length, tags.name, relations.relation, relations.id, relations.title, relations.image.url, screenshots.url, extlinks.url, extlinks.label, staff.id, staff.name, staff.role' }) })).results?.[0];
+      else if (type === 'vn') result = (await safeApiClient('https://api.vndb.org/kana/vn', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filters: ['id', '=', cleanId], fields: 'id, title, titles.lang, titles.title, titles.latin, released, image.url, image.thumbnail, developers.id, developers.name, description, length, tags.name, relations.relation, relations.id, relations.title, relations.image.url, screenshots.url, screenshots.dims, screenshots.sexual, screenshots.violence, extlinks.url, extlinks.label, staff.id, staff.name, staff.role' }) })).results?.[0];
       else if (type === 'books') {
         const workPath = String(cleanId).includes('/works/') ? cleanId : `/works/${cleanId}`;
         const [work, editions] = await Promise.all([

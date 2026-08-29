@@ -1,5 +1,6 @@
 import { canonicalizeMediaItem } from '../domain/mediaIdentity.js';
 import { normalizeImageUrl } from '../domain/mediaImages.js';
+import { plainTextFromMarkup } from './plainText.js';
 
 const TMDB_GENRES = {
   28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy", 80: "Crime", 99: "Documentary", 
@@ -69,7 +70,7 @@ export const normalizeAniList = (item, type) => {
     type: type,
     subtype: type === 'anime' ? 'Anime' : 'Manga',
     year: item.startDate?.year ? String(item.startDate.year) : "----",
-    description: item.description ? item.description.replace(/<[^>]*>?/gm, '') : "No data available.",
+    description: plainTextFromMarkup(item.description) || "No data available.",
     image: item.coverImage?.extraLarge || item.coverImage?.large || null,
     subtitle: dynamicSubtitle,
     score: item.averageScore || 0,

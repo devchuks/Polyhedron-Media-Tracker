@@ -7,6 +7,7 @@ import {
   providerForMediaType,
   selectDeterministicProviderMatch,
   telegramConfirmation,
+  telegramMediaTypeLabel,
 } from '../supabase/functions/_shared/telegramSemantics.js';
 
 test('Telegram intent classification distinguishes start, progress, completion, season, rewatch, and rating-only', () => {
@@ -85,8 +86,47 @@ test('provider identity remains type-scoped and ambiguous remakes refuse unsafe 
   assert.equal(selectDeterministicProviderMatch(ambiguous.options, 'ignored', null, 1).match.id, 1);
 });
 
-test('Telegram confirmations describe actual persistence and never claim a diary row for progress', () => {
+test('Telegram resolves a dominant exact title without demanding a year', () => {
+  const dominant = selectDeterministicProviderMatch([
+    { id: 10, title: 'Dune', year: 2021, popularity: 160 },
+    { id: 11, title: 'Dune', year: 1984, popularity: 35 },
+  ], 'Dune', null);
+  assert.equal(dominant.match.id, 10);
+  assert.equal(dominant.ambiguous, false);
+
+  const close = selectDeterministicProviderMatch([
+    { id: 30, title: 'The Thing', year: 1982, popularity: 50 },
+    { id: 31, title: 'The Thing', year: 2011, popularity: 45 },
+  ], 'The Thing', null);
+  assert.equal(close.match, null);
+  assert.equal(close.ambiguous, true);
+});
+
+test('Telegram does not let Library preference override a genuinely ambiguous title', () => {
+  const ambiguous = selectDeterministicProviderMatch([
+    { id: 20, title: 'Suspiria', year: 1977, popularity: 40, preferred: true },
+    { id: 21, title: 'Suspiria', year: 2018, popularity: 42 },
+  ], 'Suspiria', null);
+  assert.equal(ambiguous.match, null);
+  assert.equal(ambiguous.ambiguous, true);
+});
+
+test('Telegram ambiguity labels use clear media categories', () => {
+  assert.equal(telegramMediaTypeLabel('movies'), 'Movie');
+  assert.equal(telegramMediaTypeLabel('tv'), 'TV show');
+  assert.equal(telegramMediaTypeLabel('comics'), 'Comic');
+  assert.equal(telegramMediaTypeLabel('vn'), 'Visual novel');
+});
+
+test('Telegram confirmations stay compact and omit empty Diary metadata', () => {
   const lifecycle = buildTelegramLifecycle({ intent: 'UPDATE_PROGRESS', type: 'tv', activityAt: 600, progress: 'S02 E04' });
   const confirmation = telegramConfirmation({ title: 'Foundation', intent: 'UPDATE_PROGRESS', lifecycle, activityAt: 600 });
-  assert.ok(confirmation.lines.includes('Diary: none'));
+  assert.deepEqual(confirmation.lines, ['Updated · 1970-01-01', 'Progress · S02 E04']);
+  assert.doesNotMatch(confirmation.lines.join('\n'), /Diary|none/iu);
+});
+
+test('Telegram confirmations show a real activity only when one was persisted', () => {
+  const lifecycle = buildTelegramLifecycle({ intent: 'COMPLETE_ITEM', type: 'movies', activityAt: 100, rating: 8 });
+  const confirmation = telegramConfirmation({ title: 'The Matrix', intent: 'COMPLETE_ITEM', lifecycle, activityAt: 100 });
+  assert.deepEqual(confirmation.lines, ['Watched · 1970-01-01']);
 });
