@@ -2,6 +2,16 @@ import { mediaCompletionDateLabel } from './mediaTerminology.js';
 
 const LONG_FORM_TYPES = new Set(['tv', 'anime', 'manga', 'books', 'comics', 'games', 'vn']);
 
+export const statusForStateActivityIntent = ({
+  intent,
+  type,
+  selectedStatus,
+  currentStatus,
+}) => {
+  if (intent === 'activity' && type !== 'tv') return 'completed';
+  return String(selectedStatus || currentStatus || '').trim().toLowerCase();
+};
+
 export const lifecycleDateFields = (type, status) => {
   const normalizedStatus = String(status || '').toLowerCase();
   if (normalizedStatus === 'planned' || !normalizedStatus) return [];

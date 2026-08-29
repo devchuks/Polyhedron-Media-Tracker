@@ -14,7 +14,7 @@ import { firstUsableImageUrl, normalizeImageUrl } from '../domain/mediaImages';
 import { completeTvSeries, executeTvSeasonCompletion, saveTvLibraryState, startTvRewatch } from '../domain/tvWorkflow';
 import { applyActivityLifecycle, diaryActionForType, isMeaningfulProgress } from '../domain/activityLifecycle';
 import { mediaStatusActionLabel, mediaStatusLabel, ratingForInteraction } from '../domain/mediaTerminology';
-import { lifecycleDateFields, persistStateOrActivity } from '../domain/stateActivityModal';
+import { lifecycleDateFields, persistStateOrActivity, statusForStateActivityIntent } from '../domain/stateActivityModal';
 
 // --- Restored Helpers ---
 export const formatFancyDate = (dateInput) => {
@@ -326,11 +326,17 @@ export const GlobalDiaryModal = () => {
       e.stopPropagation();
     }
     if (isSubmitting) return;
-    if (!status) return;
+    const isActivityIntent = intent === 'activity';
+    const effectiveStatus = statusForStateActivityIntent({
+      intent,
+      type,
+      selectedStatus: status,
+      currentStatus: targetItem?.status,
+    });
+    if (!effectiveStatus) return;
     const activityAt = selectedActivityTimestamp();
     const s = dateStartedDirty ? timestampFromDateInput(dateStarted) : (targetItem?.dateStarted ?? null);
-    const c = status === 'completed' ? selectedCompletionTimestamp() : null;
-    const isActivityIntent = intent === 'activity';
+    const c = effectiveStatus === 'completed' ? selectedCompletionTimestamp() : null;
 
     const buildDiaryLog = (mediaItem) => ({
       log_id: createLogId(),
@@ -358,7 +364,7 @@ export const GlobalDiaryModal = () => {
       };
 
       const command = {
-        status,
+        status: effectiveStatus,
         season: inputSeason,
         episode: inputEpisode,
         dateStarted: s,
@@ -367,8 +373,8 @@ export const GlobalDiaryModal = () => {
         allowStartedEdit: dateStartedDirty,
         rating,
       };
-      const isStartingRewatch = isActivityIntent && isRewatch && targetItem?.status === 'completed' && status === 'in progress';
-      const libraryPayload = status === 'completed'
+      const isStartingRewatch = isActivityIntent && isRewatch && targetItem?.status === 'completed' && effectiveStatus === 'in progress';
+      const libraryPayload = effectiveStatus === 'completed'
         ? completeTvSeries(baseTvItem, { ...command, isRewatch: isActivityIntent && isRewatch })
         : isStartingRewatch
           ? startTvRewatch(baseTvItem, command)
@@ -384,7 +390,7 @@ export const GlobalDiaryModal = () => {
       });
     } else {
       let finalProgress = progress;
-      if (status === 'completed' && maxProgress && !String(finalProgress).includes('S')) {
+      if (effectiveStatus === 'completed' && maxProgress && !String(finalProgress).includes('S')) {
         finalProgress = `${maxProgress} ${progressUnit}`;
       }
 
@@ -395,18 +401,18 @@ export const GlobalDiaryModal = () => {
         type,
         subtype: getSubtype(type),
         progress: finalProgress,
-        status,
+        status: effectiveStatus,
         rating,
         addedAt: targetItem?.addedAt || Date.now(),
         rewatchCount: (targetItem?.rewatchCount || 0) + (isActivityIntent && isRewatch ? 1 : 0),
         apiData: apiData || targetItem?.apiData,
       }, {
-        status,
+        status: effectiveStatus,
         activityAt: c ?? activityAt,
         explicitStartedAt: s,
         allowStartedEdit: dateStartedDirty,
-        provesConsumption: status === 'in progress' || isMeaningfulProgress(finalProgress),
-        completesItem: status === 'completed' && (
+        provesConsumption: effectiveStatus === 'in progress' || isMeaningfulProgress(finalProgress),
+        completesItem: effectiveStatus === 'completed' && (
           targetItem?.status !== 'completed'
           || (isActivityIntent && isRewatch)
           || isPreview
@@ -499,7 +505,11 @@ export const GlobalDiaryModal = () => {
           <div className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar p-4 sm:p-8 flex flex-col gap-5 sm:gap-6">
           <div className="border-l-4 border-primary bg-base-200 px-3 py-2">
             <p className="font-mono text-[10px] font-black uppercase tracking-widest">Library State & Diary</p>
-            <p className="mt-1 text-xs text-base-content/60">{openedForActivity ? 'Activity fields are ready. Save Changes updates only the Library; Log Activity updates the Library and creates one Diary entry.' : 'Save Changes updates only the Library. Log Activity applies these changes and creates one Diary entry.'}</p>
+            <p className="mt-1 text-xs text-base-content/60">{type === 'tv'
+              ? 'Save Changes updates only the Library. Log Activity creates one Diary entry and preserves the selected TV state; whole-series completion stays explicit.'
+              : openedForActivity
+                ? 'Activity fields are ready. Save Changes updates only the Library; Log Activity marks this item completed and creates one Diary entry.'
+                : 'Save Changes updates only the Library. Log Activity applies these values, marks the item completed, and creates one Diary entry.'}</p>
           </div>
           {/* Status Selection */}
           <div className="flex flex-col gap-1.5">
