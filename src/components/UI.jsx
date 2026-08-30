@@ -11,7 +11,7 @@ import { safeExternalUrl } from '../utils/urlSafety';
 import { shouldShowMetadataSkeleton } from '../domain/detailEnrichment';
 import { dateInputFromTimestamp, timestampForCalendarDateWithCurrentTime, timestampFromDateInput, todayDateInput } from '../utils/calendarDate';
 import { preferredMediaImage } from '../domain/mediaState';
-import { firstUsableImageUrl, normalizeImageUrl } from '../domain/mediaImages';
+import { firstUsableImageUrl, normalizeImageUrl, selectIgdbBannerImage } from '../domain/mediaImages';
 import { completeTvSeries, executeTvSeasonCompletion, saveTvLibraryState, startTvRewatch } from '../domain/tvWorkflow';
 import { applyActivityLifecycle, diaryActionForType, isMeaningfulProgress } from '../domain/activityLifecycle';
 import { mediaStatusActionLabel, mediaStatusLabel, ratingForInteraction } from '../domain/mediaTerminology';
@@ -102,7 +102,7 @@ export const resolveMediaImage = (item, type, size = 'md') => {
     if (path) return `https://image.tmdb.org/t/p/${size === 'thumb' ? 'w154' : size === 'lg' ? 'w500' : size === 'original' ? 'original' : 'w342'}${path}`;
   } else if (type === 'games') {
     const imgId = raw.cover?.image_id;
-    if (size === 'banner') return raw.artworks?.[0]?.image_id ? `https://images.igdb.com/igdb/image/upload/t_1080p/${raw.artworks[0].image_id}.jpg` : (raw.screenshots?.[0]?.image_id ? `https://images.igdb.com/igdb/image/upload/t_1080p/${raw.screenshots[0].image_id}.jpg` : null);
+    if (size === 'banner') return selectIgdbBannerImage(raw);
     if (imgId) return `https://images.igdb.com/igdb/image/upload/${size === 'thumb' ? 't_cover_small' : size === 'original' ? 't_original' : 't_720p'}/${imgId}.jpg`;
   } else if (type === 'vn') {
     if (size === 'banner') return raw.screenshots?.[0]?.url || null;
@@ -821,6 +821,7 @@ export const MediaQuickActions = ({ item, compact = false }) => {
 export const MediaCard = ({ item, onClickOverride, onMouseEnterOverride }) => {
   const image = resolveMediaImage(item, item.type, 'md');
   const colors = getMediaTypeColors(item.type);
+  const userRating = Number(item.rating) > 0 ? Number(item.rating) : 0;
   const linkProps = onClickOverride
     ? { type: 'button', onClick: () => onClickOverride(item) }
     : { to: `/media/${item.type}/${item.id}`, state: { previewData: item } };
@@ -850,9 +851,9 @@ export const MediaCard = ({ item, onClickOverride, onMouseEnterOverride }) => {
             ) : formatProgressLabel(item.progress, item.type) ? <span className="text-[8px] font-bold text-base-content/60 uppercase tracking-widest truncate mt-0.5">{formatProgressLabel(item.progress, item.type)}</span> : null}
           </div>
           
-          {(item.rating > 0 || item.apiRating > 0) && (
+          {userRating > 0 && (
             <div className="flex items-center gap-1 text-[10px] font-bold text-base-content shrink-0 ml-2 bg-base-200 px-1.5 py-0.5">
-              <Star className="w-3 h-3 text-info fill-info" /><span>{item.rating ? `${item.rating}.0` : item.apiRating}</span>
+              <Star className="w-3 h-3 text-info fill-info" /><span>{userRating}.0</span>
             </div>
           )}
         </div>

@@ -179,5 +179,9 @@ test('Import Terminal routes Library-only external entries through the awaited c
   assert.match(storeSource, /await queueMediaMutation\(canonicalItem\.media_key/);
   assert.match(terminalSource, /authMode !== 'admin' && authMode !== 'guest'/);
   assert.match(terminalSource, /Guest import sandbox/);
+  assert.match(terminalSource, /isComicGeeks \? \(/);
+  assert.match(terminalSource, /source_read_count \|\| 0/);
+  assert.match(terminalSource, /!isExternalImport && <div className="flex flex-wrap gap-2 items-center/);
+  assert.match(terminalSource, /Find match/);
   assert.match(layoutSource, /authMode === 'admin' \|\| authMode === 'guest'/);
 });

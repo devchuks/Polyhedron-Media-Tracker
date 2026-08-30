@@ -12,7 +12,7 @@ import { filterDashboardItems, findMediaForLog, normalizeProviderScore, preferre
 import { canonicalizeMediaItem, mediaKeyFor } from '../domain/mediaIdentity';
 import { safeExternalUrl } from '../utils/urlSafety';
 import { shouldShowBlockingSkeleton, shouldShowUpdatingIndicator } from '../domain/loadingState';
-import { isDetailEnrichmentPending, previewItemForRoute, resolveDetailTitle, runSettlingDetailRequest } from '../domain/detailEnrichment';
+import { isDetailEnrichmentPending, previewItemForRoute, resolveDetailTitle, runSettlingDetailRequest, shouldReserveDetailBannerSpace } from '../domain/detailEnrichment';
 import { firstUsableImageUrl } from '../domain/mediaImages';
 import { createLatestRequestGate } from '../utils/latestRequest';
 import { formatSeasonNumber, mediaStatusLabel } from '../domain/mediaTerminology';
@@ -538,6 +538,12 @@ export const DetailView = () => {
   const originalPosterUrl = resolveMediaImage(storeItem || previewItem, type, 'original');
   const bannerSrc = resolveMediaImage(storeItem || previewItem, type, 'banner');
   const posterImage = resolveMediaImage(storeItem || previewItem, type, 'lg');
+  const hasBannerSurface = shouldReserveDetailBannerSpace({
+    type,
+    banner: bannerSrc,
+    raw,
+    enrichmentPhase: detailEnrichment.phase,
+  });
 
   const mediaAssets = (() => {
     if (type === 'comics') return { thumbnails: [], originals: [] };
@@ -723,18 +729,24 @@ export const DetailView = () => {
 
   return (
     <div className="flex flex-col animate-in fade-in duration-300 pb-4 lg:pb-6 relative">
-      {bannerSrc && (
-        <div className="absolute z-0 -top-4 lg:-top-6 -left-4 lg:-left-6 -right-4 lg:-right-6 h-56 lg:h-72 overflow-hidden pointer-events-none" style={{ WebkitMaskImage: 'linear-gradient(to bottom, black 50%, transparent 100%)', maskImage: 'linear-gradient(to bottom, black 50%, transparent 100%)' }}>
-          <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-black/10 to-transparent z-10" />
-          <img key={bannerSrc} src={bannerSrc} className="absolute inset-0 w-full h-full object-cover opacity-75" alt="" />
+      {hasBannerSurface && (
+        <div data-testid="detail-banner-surface" className="absolute z-0 -top-4 lg:-top-6 -left-4 lg:-left-6 -right-4 lg:-right-6 h-56 lg:h-72 overflow-hidden pointer-events-none bg-base-200" style={{ WebkitMaskImage: 'linear-gradient(to bottom, black 50%, transparent 100%)', maskImage: 'linear-gradient(to bottom, black 50%, transparent 100%)' }}>
+          {bannerSrc ? (
+            <>
+              <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-black/10 to-transparent z-10" />
+              <img key={bannerSrc} src={bannerSrc} className="absolute inset-0 w-full h-full object-cover opacity-75" alt="" />
+            </>
+          ) : (
+            <div aria-label="Loading background image" className="absolute inset-0 animate-pulse bg-gradient-to-b from-base-300/80 via-base-200 to-transparent" />
+          )}
         </div>
       )}
       <div className="relative z-10 mb-3 lg:mb-4">
         <button onClick={() => navigate(-1)} className={`flex items-center justify-center h-11 sm:h-8 px-3 -ml-2 rounded-none appearance-none font-mono text-[10px] uppercase tracking-widest transition-colors ${bannerSrc ? 'bg-transparent text-white hover:bg-white/10' : 'bg-transparent hover:bg-base-200 text-base-content/60 hover:text-base-content'}`}><ArrowLeft className="w-4 h-4 mr-2" /> Back</button>
       </div>
 
-      <div className={`flex flex-col lg:flex-row gap-0 items-stretch relative z-10 ${bannerSrc ? 'bg-gradient-to-b from-transparent via-base-100/70 to-base-100 mt-8 lg:mt-12 shadow-xl' : 'bg-base-100 border border-base-300 shadow-xl'}`}>
-        <div className={`w-full lg:w-56 xl:w-64 shrink-0 ${bannerSrc ? 'bg-transparent' : 'bg-base-200/30 border-b lg:border-b-0 lg:border-r border-base-300'}`}>
+      <div className={`flex flex-col lg:flex-row gap-0 items-stretch relative z-10 ${hasBannerSurface ? 'bg-gradient-to-b from-transparent via-base-100/70 to-base-100 mt-8 lg:mt-12 shadow-xl' : 'bg-base-100 border border-base-300 shadow-xl'}`}>
+        <div className={`w-full lg:w-56 xl:w-64 shrink-0 ${hasBannerSurface ? 'bg-transparent' : 'bg-base-200/30 border-b lg:border-b-0 lg:border-r border-base-300'}`}>
           <div className="p-3 lg:p-5 flex flex-col gap-3 lg:gap-5 lg:sticky lg:top-16 z-10">
             <div className="w-48 sm:w-56 lg:w-full mx-auto lg:mx-0 flex flex-col gap-2">
               <figure className="aspect-[2/3] w-full bg-base-300 border border-base-300 overflow-hidden shadow-xl cursor-pointer" onClick={() => { if (originalPosterUrl) setGlobalLightbox(originalPosterUrl); }}>
@@ -785,7 +797,7 @@ export const DetailView = () => {
           </div>
         </div>
 
-        <div className={`flex-1 flex flex-col gap-4 lg:gap-5 min-w-0 w-full p-3 lg:p-5 ${bannerSrc ? 'bg-transparent' : 'bg-base-100'}`}>
+        <div className={`flex-1 flex flex-col gap-4 lg:gap-5 min-w-0 w-full p-3 lg:p-5 ${hasBannerSurface ? 'bg-transparent' : 'bg-base-100'}`}>
           <div>
             <div className="flex flex-row items-start justify-between gap-3 w-full">
               <h1 className="text-3xl lg:text-4xl xl:text-5xl font-black uppercase tracking-tight font-sans leading-none flex items-baseline gap-2 flex-wrap">

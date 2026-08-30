@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { firstUsableImageUrl, normalizeImageUrl, normalizeMediaImageFields, preserveUsableMediaImage } from '../src/domain/mediaImages.js';
+import { firstUsableImageUrl, normalizeImageUrl, normalizeMediaImageFields, preserveUsableMediaImage, selectIgdbBannerImage } from '../src/domain/mediaImages.js';
 import { canonicalizeLog, canonicalizeMediaItem } from '../src/domain/mediaIdentity.js';
 
 test('provider image objects normalize to one scalar URL', () => {
@@ -43,6 +43,15 @@ test('unsafe and non-URL image values never reach the scalar boundary', () => {
   for (const value of [null, undefined, '', {}, 'javascript:alert(1)', 'data:text/html,test']) {
     assert.equal(normalizeImageUrl(value), null);
   }
+});
+
+test('IGDB detail banners use gameplay screenshots rather than artwork or logos', () => {
+  assert.equal(selectIgdbBannerImage({
+    screenshots: [{ image_id: 'gameplay-shot' }],
+    artworks: [{ image_id: 'logo-like-art' }],
+    logo: { image_id: 'logo' },
+  }), 'https://images.igdb.com/igdb/image/upload/t_1080p/gameplay-shot.jpg');
+  assert.equal(selectIgdbBannerImage({ artworks: [{ image_id: 'logo-like-art' }], logo: { image_id: 'logo' } }), null);
 });
 
 test('the canonical image boundary applies to every supported media type', () => {

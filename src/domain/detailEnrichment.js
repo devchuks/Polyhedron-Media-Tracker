@@ -14,6 +14,13 @@ export const isDetailEnrichmentPending = (state, routeKey) => (
   state?.routeKey === routeKey && state?.phase === 'pending'
 );
 
+const BACKDROP_MEDIA_TYPES = new Set(['movies', 'tv', 'anime', 'manga', 'games', 'vn']);
+
+export const shouldReserveDetailBannerSpace = ({ type, banner, raw, enrichmentPhase }) => (
+  Boolean(banner)
+  || (BACKDROP_MEDIA_TYPES.has(type) && !raw?.deepFetched && enrichmentPhase !== 'settled')
+);
+
 export const previewItemForRoute = (previewItem, type, id) => {
   if (!previewItem || String(previewItem.id) !== String(id) || String(previewItem.type || type) !== String(type)) return null;
   return previewItem;

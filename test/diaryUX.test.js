@@ -128,6 +128,10 @@ test('Diary UI wires canonical season display, filters, history-only editing, an
   assert.match(diarySource, /aria-label="Search Diary titles"/);
   assert.match(diarySource, /aria-label="Filter Diary"/);
   assert.match(diarySource, /aria-label="Jump to Diary month"/);
+  assert.match(diarySource, /Actions for Diary entry/);
+  assert.match(diarySource, /<MoreHorizontal/);
+  assert.match(diarySource, /role="menuitem"[\s\S]*Edit entry/);
+  assert.match(diarySource, /role="menuitem"[\s\S]*Delete entry/);
   assert.match(diarySource, /formatDiaryRating\(rating\)/);
   assert.match(diarySource, /log\.mediaItem\.apiData\?\.year \|\| log\.mediaItem\.year/);
   assert.match(modalSource, /statusForStateActivityIntent\(/);

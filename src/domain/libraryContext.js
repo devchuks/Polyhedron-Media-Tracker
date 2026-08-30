@@ -55,7 +55,8 @@ export const updateLibraryContext = (searchParams, patch) => {
   const values = { q: patch.search, status: patch.status, sort: patch.sort, page: patch.page };
   for (const [key, value] of Object.entries(values)) {
     if (value === undefined) continue;
-    const shouldOmit = value === '' || value === null || (key === 'status' && value === 'all') || (key === 'sort' && value === 'dateAdded') || (key === 'page' && Number(value) === 1);
+    const replacingSavedSort = key === 'sort' && value === 'dateAdded' && next.has('sort');
+    const shouldOmit = value === '' || value === null || (key === 'status' && value === 'all') || (key === 'sort' && value === 'dateAdded' && !replacingSavedSort) || (key === 'page' && Number(value) === 1);
     if (shouldOmit) next.delete(key);
     else next.set(key, String(value));
   }

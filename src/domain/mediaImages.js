@@ -42,6 +42,13 @@ export const firstUsableImageUrl = (...values) => {
   return null;
 };
 
+export const selectIgdbBannerImage = raw => {
+  const screenshotId = raw?.screenshots?.find(screenshot => screenshot?.image_id)?.image_id;
+  return screenshotId
+    ? `https://images.igdb.com/igdb/image/upload/t_1080p/${screenshotId}.jpg`
+    : null;
+};
+
 export const normalizeMediaImageFields = (item) => {
   if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
   const hasTopLevelImage = Object.prototype.hasOwnProperty.call(item, 'image');

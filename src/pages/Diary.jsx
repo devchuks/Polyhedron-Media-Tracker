@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CalendarDays, ChevronLeft, ChevronRight, Edit3, ListFilter, Save, Search, Trash2, X } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, Edit3, ListFilter, MoreHorizontal, Save, Search, Trash2, X } from 'lucide-react';
 import { ImageWithFallback, UpdatingIndicator, getMediaTypeColors, resolveMediaImage } from '../components/UI';
 import {
   DIARY_MEDIA_TYPES,
@@ -48,6 +48,41 @@ const ExpandableReview = ({ text }) => {
         >
           {expanded ? 'Show less' : 'Read more'}
         </button>
+      )}
+    </div>
+  );
+};
+
+const DiaryEntryActions = ({ log, onEdit, onDelete }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const menuRef = React.useRef(null);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const closeFromOutside = event => {
+      if (!menuRef.current?.contains(event.target)) setIsOpen(false);
+    };
+    document.addEventListener('pointerdown', closeFromOutside);
+    return () => document.removeEventListener('pointerdown', closeFromOutside);
+  }, [isOpen]);
+
+  return (
+    <div ref={menuRef} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setIsOpen(open => !open)}
+        onKeyDown={event => { if (event.key === 'Escape') setIsOpen(false); }}
+        aria-label={`Actions for Diary entry ${log.mediaItem.title}`}
+        aria-expanded={isOpen}
+        className="flex h-9 w-9 items-center justify-center text-base-content/40 transition-colors hover:bg-base-200 hover:text-primary focus:bg-base-200 focus:text-primary"
+      >
+        <MoreHorizontal className="h-4 w-4" />
+      </button>
+      {isOpen && (
+        <div role="menu" className="absolute right-0 top-full z-30 mt-1 w-36 border border-base-300 bg-base-100 p-1 shadow-xl">
+          <button type="button" role="menuitem" onClick={() => { setIsOpen(false); onEdit(log); }} className="flex h-9 w-full items-center gap-2 px-2 font-mono text-[9px] font-bold uppercase tracking-widest hover:bg-base-200 hover:text-primary"><Edit3 className="h-3.5 w-3.5" /> Edit entry</button>
+          <button type="button" role="menuitem" onClick={() => { setIsOpen(false); onDelete(log); }} className="flex h-9 w-full items-center gap-2 px-2 font-mono text-[9px] font-bold uppercase tracking-widest text-error hover:bg-error/10"><Trash2 className="h-3.5 w-3.5" /> Delete entry</button>
+        </div>
       )}
     </div>
   );
@@ -319,10 +354,7 @@ export const Diary = () => {
                                       </div>
                                     </div>
 
-                                    <div className="flex shrink-0 items-center gap-1 sm:-my-1 sm:border-l sm:border-base-300 sm:bg-base-200/35 sm:px-1">
-                                      <button type="button" onClick={() => startEdit(log)} aria-label={`Edit Diary entry for ${log.mediaItem.title}`} title="Edit Diary entry" className="flex h-9 w-9 items-center justify-center text-base-content/45 transition-colors hover:bg-base-200 hover:text-primary focus:bg-base-200 focus:text-primary"><Edit3 className="h-3.5 w-3.5" /></button>
-                                      <button type="button" onClick={() => handleDeleteLog(log)} aria-label={`Delete Diary entry for ${log.mediaItem.title}`} title="Delete Diary entry" className="flex h-9 w-9 items-center justify-center text-base-content/35 transition-colors hover:bg-error/10 hover:text-error focus:bg-error/10 focus:text-error"><Trash2 className="h-3.5 w-3.5" /></button>
-                                    </div>
+                                    <DiaryEntryActions log={log} onEdit={startEdit} onDelete={handleDeleteLog} />
                                   </div>
                                   <ExpandableReview text={log.review_text} />
                                 </>

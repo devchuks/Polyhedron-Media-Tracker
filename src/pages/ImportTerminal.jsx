@@ -230,6 +230,11 @@ const QueueItem = ({ item, globalIndex, totalCount }) => {
 
   const selectedType = item.selected_type || ''; 
   const searchResults = item.candidates || [];
+  const isExternalImport = Boolean(item.import_source);
+  const isComicGeeks = item.import_source === 'comicgeeks';
+  const showParsedYear = Boolean(item.parsed_year)
+    && !String(item.extracted_title || '').includes(String(item.parsed_year));
+  const externalSourceLabel = ({ letterboxd: 'Letterboxd film', vndb: 'VNDB title', comicgeeks: 'ComicGeeks series' })[item.import_source] || 'Imported title';
 
   const handleSearch = async (typeOverride = selectedType, customQuery = item.search_query || editQuery) => {
     if (!typeOverride) return;
@@ -311,18 +316,21 @@ const QueueItem = ({ item, globalIndex, totalCount }) => {
               {item.selected_candidate.title}
               {item.selected_season && <span className="badge badge-outline badge-sm text-[10px] font-mono">{item.selected_season.name}</span>}
             </h3>
-          <p className="text-[10px] font-mono opacity-50 mt-1">Source: {item.extracted_title}{item.parsed_year ? ` (${item.parsed_year})` : ''}{item.parsed_modifier ? ` ${item.parsed_modifier}` : ''}</p>
-          {item.import_intent && (
+          <p className="text-[10px] font-mono opacity-50 mt-1">Source: {item.extracted_title}{showParsedYear ? ` (${item.parsed_year})` : ''}{item.parsed_modifier ? ` · ${item.parsed_modifier}` : ''}</p>
+          {isComicGeeks ? (
+            <p className="text-[10px] font-mono text-base-content/65 mt-1 uppercase tracking-wide">
+              {[item.source_publisher, item.import_match ? `${item.import_match.readIssueIds.length} issues matched${item.import_match.unmatchedRead ? ` · ${item.import_match.unmatchedRead} unmatched` : ''}` : `${item.source_read_count || 0} of ${item.source_issue_count || 0} read`].filter(Boolean).join(' · ')}
+            </p>
+          ) : item.import_intent && (
             <p className="text-[10px] font-mono text-base-content/65 mt-1 uppercase tracking-wide">
               {item.import_intent.library_status} · {item.import_intent.create_diary ? 'Library + Diary' : 'Library only'}
               {item.import_intent.rating > 0 ? ` · ${item.import_intent.rating}/10` : ''}
-              {item.import_match ? ` · ${item.import_match.readIssueIds.length} issues matched${item.import_match.unmatchedRead ? ` · ${item.import_match.unmatchedRead} unmatched` : ''}` : ''}
             </p>
           )}
           </div>
         </div>
           <div className="flex gap-2 shrink-0 flex-wrap sm:flex-nowrap items-center">
-             <div className="flex items-center gap-1 bg-base-100 px-2 py-1 border border-base-300 h-8 shrink-0 tooltip tooltip-top" data-tip="Queue Position">
+             {!isExternalImport && <div className="flex items-center gap-1 bg-base-100 px-2 py-1 border border-base-300 h-8 shrink-0 tooltip tooltip-top" data-tip="Queue Position">
                <span className="text-[9px] font-mono text-base-content/50 uppercase">Pos</span>
                <input
                  type="number"
@@ -334,7 +342,7 @@ const QueueItem = ({ item, globalIndex, totalCount }) => {
                  min="1"
                  max={totalCount}
                />
-             </div>
+             </div>}
            <button onClick={() => void processCommit(item, { saveMediaWithLog, saveMediaItem, removeImportItem }).catch(error => useUIStore.getState().addToast(`Could not save “${item.extracted_title}”: ${error.message}`, 'error'))} className="btn btn-sm btn-success rounded-none font-mono uppercase tracking-widest text-[10px] shadow-md shadow-success/20">
              Add Now
            </button>
@@ -348,12 +356,12 @@ const QueueItem = ({ item, globalIndex, totalCount }) => {
   }
 
   return (
-    <div className="bg-base-200/50 border border-base-300 p-4 flex flex-col gap-4">
-      <div className="flex justify-between items-start gap-4">
+    <div className={`${isExternalImport ? 'bg-base-100 px-3 py-2.5' : 'bg-base-200/50 p-4'} border border-base-300 flex flex-col gap-3`}>
+      <div className="flex justify-between items-center gap-3">
         <div className="w-full">
           <div className="text-xs font-mono text-base-content/50 uppercase tracking-widest mb-1 flex justify-between items-center w-full">
-            <span className="flex items-center gap-2">Extracted Payload {item.import_source && <span className="border border-base-content/20 px-1.5 py-0.5 text-[8px] text-primary">{item.import_source}</span>}</span>
-            <div className="flex items-center gap-1 bg-base-100 px-2 py-0.5 border border-base-300 tooltip tooltip-left" data-tip="Queue Position">
+            <span className="flex items-center gap-2">{isExternalImport ? externalSourceLabel : 'Extracted Payload'} {item.import_source && <span className="border border-base-content/20 px-1.5 py-0.5 text-[8px] text-primary">{item.import_source}</span>}</span>
+            {!isExternalImport && <div className="flex items-center gap-1 bg-base-100 px-2 py-0.5 border border-base-300 tooltip tooltip-left" data-tip="Queue Position">
                <span className="text-[9px] font-mono text-base-content/50 uppercase">Pos</span>
                <input
                  type="number"
@@ -365,7 +373,7 @@ const QueueItem = ({ item, globalIndex, totalCount }) => {
                  min="1"
                  max={totalCount}
                />
-            </div>
+            </div>}
           </div>
           {isEditingQuery ? (
             <div className="flex items-center gap-2 my-1">
@@ -373,20 +381,27 @@ const QueueItem = ({ item, globalIndex, totalCount }) => {
               <button onClick={() => { setIsEditingQuery(false); handleSearch(selectedType, editQuery); }} className="btn btn-sm btn-primary rounded-none uppercase text-[10px] tracking-widest">Search</button>
             </div>
           ) : (
-            <h3 className="text-xl font-bold font-sans group flex items-center flex-wrap gap-2">
-            <span>{item.extracted_title}{item.parsed_year ? <span className="text-primary opacity-80 ml-1">({item.parsed_year})</span> : null}{item.parsed_modifier && <span className="badge badge-outline badge-sm ml-1">{item.parsed_modifier}</span>}</span>
-              <button onClick={() => setIsEditingQuery(true)} className="opacity-0 group-hover:opacity-100 transition-opacity btn btn-xs btn-ghost btn-square rounded-none"><Edit3 className="w-3 h-3 text-base-content/50" /></button>
+            <h3 className={`${isExternalImport ? 'text-base sm:text-lg' : 'text-xl'} font-bold font-sans group flex items-center flex-wrap gap-2`}>
+            <span>{item.extracted_title}{showParsedYear ? <span className="text-primary opacity-80 ml-1">({item.parsed_year})</span> : null}{item.parsed_modifier && <span className="badge badge-outline badge-sm ml-1">{item.parsed_modifier}</span>}</span>
+              <button onClick={() => setIsEditingQuery(true)} aria-label={`Edit search for ${item.extracted_title}`} className="btn btn-xs btn-ghost btn-square rounded-none sm:opacity-60 sm:group-hover:opacity-100"><Edit3 className="w-3 h-3 text-base-content/50" /></button>
             </h3>
           )}
-          <p className="text-[10px] font-mono opacity-50 mt-1">{new Date(item.tweet_timestamp).toLocaleString()}</p>
-          {item.import_intent && (
+          {!isExternalImport && <p className="text-[10px] font-mono opacity-50 mt-1">{new Date(item.tweet_timestamp).toLocaleString()}</p>}
+          {isComicGeeks ? (
+            <p className="text-[10px] font-mono text-base-content/55 mt-1 uppercase tracking-wide">
+              {[item.source_publisher, `${item.source_read_count || 0} of ${item.source_issue_count || 0} read`].filter(Boolean).join(' · ')}
+            </p>
+          ) : item.import_intent && (
             <p className="text-[10px] font-mono text-base-content/65 mt-1 uppercase tracking-wide">
               Intended: {item.import_intent.library_status} · {item.import_intent.create_diary ? 'Library + Diary' : 'Library only'}
               {item.import_intent.rating > 0 ? ` · ${item.import_intent.rating}/10` : ''}
             </p>
           )}
         </div>
-        <button onClick={() => removeImportItem(item.id)} className="btn btn-sm btn-square btn-ghost text-error"><X className="w-4 h-4" /></button>
+        <div className="flex shrink-0 items-center gap-1">
+          {isExternalImport && !item.has_searched && !isSearching && <button type="button" onClick={() => handleSearch(selectedType)} className="btn btn-xs btn-outline border-base-300 rounded-none font-mono uppercase tracking-widest text-[9px]">Find match</button>}
+          <button onClick={() => removeImportItem(item.id)} aria-label={`Remove ${item.extracted_title} from queue`} className="btn btn-sm btn-square btn-ghost text-error"><X className="w-4 h-4" /></button>
+        </div>
       </div>
 
       {item.extracted_note && (
@@ -412,7 +427,7 @@ const QueueItem = ({ item, globalIndex, totalCount }) => {
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2 items-center bg-base-300/50 p-2 border border-base-300">
+      {!isExternalImport && <div className="flex flex-wrap gap-2 items-center bg-base-300/50 p-2 border border-base-300">
         <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-base-content/50 mr-2">Identify As:</span>
         {['movies', 'tv', 'anime', 'manga', 'games', 'vn', 'books', 'comics'].map(t => (
           <button key={t} onClick={() => {
@@ -422,7 +437,7 @@ const QueueItem = ({ item, globalIndex, totalCount }) => {
             {t}
           </button>
         ))}
-      </div>
+      </div>}
 
       {(isSearching || (isDeepFetching && !selectedParent)) && <div className="p-4 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>}
       

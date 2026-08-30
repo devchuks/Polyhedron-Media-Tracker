@@ -24,6 +24,7 @@ test('Library URL context is validated and default values stay out of the URL', 
   const parsed = parseLibraryContext('q=alien&status=in%20progress&sort=title&page=3');
   assert.deepEqual(parsed, { search: 'alien', status: 'in progress', sort: 'title', page: 3 });
   assert.equal(updateLibraryContext(new URLSearchParams('q=alien&page=2'), { search: '', status: 'all', sort: 'dateAdded', page: 1 }).toString(), '');
+  assert.equal(updateLibraryContext(new URLSearchParams('sort=rating'), { sort: 'dateAdded', page: 1 }).toString(), 'sort=dateAdded');
   assert.deepEqual(parseLibraryContext('status=watched&sort=bad&page=-4'), { search: '', status: 'all', sort: 'dateAdded', page: 1 });
 });
 
@@ -52,12 +53,15 @@ test('Auth observation starts only after persisted owner state is hydrated', asy
 
 test('Library card actions are independent, keyboard-accessible commands', async () => {
   const source = await readFile(new URL('../src/components/UI.jsx', import.meta.url), 'utf8');
+  const mediaCardSource = source.match(/export const MediaCard[\s\S]*?export const MediaListRow/)?.[0] || '';
   assert.match(source, /aria-label=\{`Quick actions for \$\{item\.title\}`\}/);
   assert.match(source, /updateMediaStatus\(item, item\.type, status\)/);
   assert.match(source, /mode: 'library'/);
   assert.match(source, /mode: 'log'/);
   assert.match(source, /event\.preventDefault\(\)[\s\S]*event\.stopPropagation\(\)/);
   assert.doesNotMatch(source, /Library State & Diary/);
+  assert.match(mediaCardSource, /const userRating = Number\(item\.rating\)/);
+  assert.doesNotMatch(mediaCardSource, /item\.apiRating/);
 });
 
 test('TV quick progress retains state-only semantics and explicit season logging', async () => {
