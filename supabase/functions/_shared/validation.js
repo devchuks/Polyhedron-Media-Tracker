@@ -65,7 +65,7 @@ export const assertAllowedMetronPath = endpoint => {
   return `${parsed.pathname}${parsed.search}`;
 };
 
-const GAME_FIELDS = 'name, slug, cover.image_id, artworks.image_id, genres.id, genres.name, themes.id, themes.name, first_release_date, summary, rating, total_rating, url, websites.type, websites.url';
+const GAME_FIELDS = 'name, slug, cover.image_id, artworks.image_id, artworks.image_type.name, artworks.width, artworks.height, genres.id, genres.name, themes.id, themes.name, first_release_date, summary, rating, total_rating, url, websites.type, websites.url';
 
 export const buildIgdbRequest = (operation, params = {}) => {
   if (operation === 'searchGames') {
@@ -76,7 +76,7 @@ export const buildIgdbRequest = (operation, params = {}) => {
   }
   if (operation === 'gameDetails') {
     const id = clampInt(params.id, { name: 'identifier' });
-    return { endpoint: 'games', query: `fields ${GAME_FIELDS}, storyline, platforms.name, artworks.image_id, screenshots.image_id, videos.video_id, involved_companies.company.id, involved_companies.company.name, involved_companies.developer, involved_companies.publisher, collections.name, collections.games.name, collections.games.cover.image_id, collections.games.first_release_date, game_status; where id = ${id};` };
+    return { endpoint: 'games', query: `fields ${GAME_FIELDS}, storyline, platforms.name, screenshots.image_id, videos.video_id, involved_companies.company.id, involved_companies.company.name, involved_companies.developer, involved_companies.publisher, collections.name, collections.games.name, collections.games.cover.image_id, collections.games.first_release_date, game_status; where id = ${id};` };
   }
   if (operation === 'gameRecommendations') {
     const id = clampInt(params.id, { name: 'identifier' });

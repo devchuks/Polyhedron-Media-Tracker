@@ -21,6 +21,10 @@ test('provider boundary allowlists reject arbitrary operations and oversized pag
 test('IGDB structured requests escape search text and validate identifiers', () => {
   const request = buildIgdbRequest('searchGames', { query: 'quote"; fields *;', page: 1 });
   assert.match(request.query, /search "quote\\"; fields \*;"/);
+  const details = buildIgdbRequest('gameDetails', { id: 1942 });
+  assert.match(details.query, /artworks\.image_type\.name/);
+  assert.match(details.query, /artworks\.width/);
+  assert.match(details.query, /screenshots\.image_id/);
   assert.throws(() => buildIgdbRequest('gameDetails', { id: '1; delete' }), /identifier/i);
   assert.throws(() => buildIgdbRequest('arbitrary', {}), /operation/i);
 });

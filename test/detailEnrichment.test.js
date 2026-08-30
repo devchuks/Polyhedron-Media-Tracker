@@ -8,6 +8,7 @@ import {
   shouldReserveDetailBannerSpace,
   shouldShowMetadataSkeleton,
 } from '../src/domain/detailEnrichment.js';
+import { normalizeProviderDetail } from '../src/utils/normalizers.js';
 
 test('detail metadata skeleton appears only while pending without usable current values', () => {
   assert.equal(shouldShowMetadataSkeleton(true, []), true);
@@ -35,6 +36,15 @@ test('detail previews and provider titles are bound to the selected route identi
   assert.equal(previewItemForRoute({ ...preview, id: 1 }, 'movies', '2'), null);
   assert.equal(resolveDetailTitle({ title: 'Provider Second' }, 'movies', 'Stale First'), 'Provider Second');
   assert.equal(resolveDetailTitle({ name: 'Provider TV' }, 'tv', 'Stale First'), 'Provider TV');
+});
+
+test('provider detail responses can bootstrap a direct media route without navigation state', () => {
+  const movie = normalizeProviderDetail({ id: 550, title: 'Fight Club', release_date: '1999-10-15' }, 'movies');
+  const game = normalizeProviderDetail({ id: 1942, name: 'The Witcher 3', first_release_date: 1431993600 }, 'games');
+  assert.equal(movie.media_key, 'tmdb:movies:550');
+  assert.equal(movie.title, 'Fight Club');
+  assert.equal(game.media_key, 'igdb:games:1942');
+  assert.equal(game.id, 'igdb_1942');
 });
 
 test('late metadata for route A cannot replace route B', async () => {

@@ -43,9 +43,21 @@ export const firstUsableImageUrl = (...values) => {
 };
 
 export const selectIgdbBannerImage = raw => {
-  const screenshotId = raw?.screenshots?.find(screenshot => screenshot?.image_id)?.image_id;
-  return screenshotId
-    ? `https://images.igdb.com/igdb/image/upload/t_1080p/${screenshotId}.jpg`
+  const artworks = Array.isArray(raw?.artworks) ? raw.artworks : [];
+  const typedArtwork = artworks.find(artwork => {
+    if (!artwork?.image_id) return false;
+    const imageType = String(artwork.image_type?.name || artwork.image_type_name || '').trim().toLowerCase();
+    if (!imageType || /(logo|cover|icon)/u.test(imageType)) return false;
+    return !artwork.width || !artwork.height || artwork.width >= artwork.height;
+  }) || artworks.find(artwork => {
+    if (!artwork?.image_id) return false;
+    const imageType = String(artwork.image_type?.name || artwork.image_type_name || '').trim().toLowerCase();
+    return Boolean(imageType) && !/(logo|cover|icon)/u.test(imageType);
+  });
+  const imageId = typedArtwork?.image_id
+    || raw?.screenshots?.find(screenshot => screenshot?.image_id)?.image_id;
+  return imageId
+    ? `https://images.igdb.com/igdb/image/upload/t_1080p/${imageId}.jpg`
     : null;
 };
 

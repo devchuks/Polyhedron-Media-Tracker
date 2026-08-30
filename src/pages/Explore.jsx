@@ -3,8 +3,18 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { apiRegistry } from '../services/apiRegistry';
 import { MediaCard, ComicIssueModal, formatMarkdownLinks, DetailSkeleton, MediaGridSkeleton, UpdatingIndicator } from '../components/UI';
 import { useMediaStore } from '../store/useMediaStore';
-import { ArrowLeft, User, Clapperboard, Gamepad2, ChevronLeft, ChevronDown, ChevronRight, Tv, Image as ImageIcon, X, Eye } from 'lucide-react';
+import { ArrowLeft, User, Clapperboard, Gamepad2, ChevronLeft, ChevronDown, ChevronRight, Tv, Image as ImageIcon, X, Eye, AlertTriangle, RefreshCw } from 'lucide-react';
 import { safeExternalUrl } from '../utils/urlSafety';
+
+const ExploreErrorNotice = ({ message, onRetry, compact = false }) => (
+  <div role="alert" className={`border border-error/40 bg-error/5 flex items-center gap-3 ${compact ? 'px-3 py-2' : 'p-5 justify-center text-center flex-col'}`}>
+    <AlertTriangle className={`${compact ? 'w-4 h-4' : 'w-7 h-7'} text-error shrink-0`} />
+    <p className="text-xs text-base-content/70 flex-1">{message}</p>
+    <button type="button" onClick={onRetry} className="btn btn-xs btn-outline rounded-none font-mono uppercase tracking-widest shrink-0">
+      <RefreshCw className="w-3 h-3" /> Retry
+    </button>
+  </div>
+);
 
 export const Explore = () => {
   const { api, type, id } = useParams();
@@ -21,6 +31,8 @@ export const Explore = () => {
   const [data, setData] = useState(() => exploreCache[entityCacheKey]?.data?.personData || null);
   const [entityData, setEntityData] = useState(() => exploreCache[entityCacheKey]?.data?.companyData || null);
   const [isLoading, setIsLoading] = useState(() => !exploreCache[entityCacheKey]);
+  const [entityError, setEntityError] = useState('');
+  const [entityRetryKey, setEntityRetryKey] = useState(0);
 
   const [mediaFilter, setMediaFilter] = useState(() => {
     if (type === 'person' || type === 'creator' || type === 'staff') return 'all';
@@ -48,6 +60,9 @@ export const Explore = () => {
   const [totalPages, setTotalPages] = useState(() => exploreCache[activeGridCacheKey]?.data?.totalPages || 1);
   const [isGridLoading, setIsGridLoading] = useState(() => type !== 'person' && !exploreCache[activeGridCacheKey]);
   const [isFetchingMore, setIsFetchingMore] = useState(false);
+  const [gridError, setGridError] = useState('');
+  const [failedGridPage, setFailedGridPage] = useState(null);
+  const [gridRetryKey, setGridRetryKey] = useState(0);
 
   // Person specific pagination
   const ITEMS_PER_PAGE = 24;
@@ -63,6 +78,7 @@ export const Explore = () => {
 
   useEffect(() => {
     window.scrollTo(0, 0);
+    setEntityError('');
     
     const entityCache = exploreCache[entityCacheKey];
     const entityCacheIsFresh = entityCache && Date.now() - entityCache.timestamp < 30 * 60_000;
@@ -93,6 +109,7 @@ export const Explore = () => {
     const settleEntityError = (error) => {
       if (!isMounted) return;
       console.error('Explore entity request failed:', error);
+      setEntityError('The provider could not load these details.');
       setIsLoading(false);
     };
 
@@ -190,7 +207,7 @@ export const Explore = () => {
       setIsLoading(false);
     }
     return () => { isMounted = false; };
-  }, [api, type, id, entityCacheKey, exploreCache, setExploreCache]);
+  }, [api, type, id, entityCacheKey, entityRetryKey, exploreCache, setExploreCache]);
 
   useEffect(() => {
     if (type === 'person') return;
@@ -207,9 +224,12 @@ export const Explore = () => {
     }
 
     let isMounted = true;
+    setGridError('');
+    setFailedGridPage(null);
     const settleGridError = (error) => {
       if (!isMounted) return;
       console.error('Explore grid request failed:', error);
+      setGridError('The provider could not load these titles.');
       setIsGridLoading(false);
     };
     setIsGridLoading(true);
@@ -270,7 +290,7 @@ export const Explore = () => {
       setIsGridLoading(false);
     }
     return () => { isMounted = false; };
-  }, [api, type, id, mediaFilter, sortOrder, roleFilter, exploreCache, setExploreCache]);
+  }, [api, type, id, mediaFilter, sortOrder, roleFilter, gridRetryKey, exploreCache, setExploreCache]);
 
   const handleDiscoverPageChange = async (newPage) => {
     if (isFetchingMore || newPage < 1 || newPage > totalPages) return;
@@ -288,6 +308,8 @@ export const Explore = () => {
     }
 
     try {
+      setGridError('');
+      setFailedGridPage(null);
       let res = null;
       if (api === 'tmdb') res = await apiRegistry.discoverTMDB(type, id, mediaFilter, newPage, sortOrder);
       else if (api === 'igdb') res = await apiRegistry.discoverIGDB(type, id, newPage, sortOrder);
@@ -302,6 +324,8 @@ export const Explore = () => {
       }
     } catch (error) {
       console.error('Explore pagination failed:', error);
+      setGridError('That page could not be loaded. Your current results are still available.');
+      setFailedGridPage(newPage);
     } finally {
       setIsFetchingMore(false);
     }
@@ -397,6 +421,7 @@ export const Explore = () => {
   const handleModalNavigate = async (issue) => {
     const requestId = ++modalRequestRef.current;
     setSelectedIssue(issue);
+    setModalDetails(null);
     setIsModalLoading(true);
     try {
       const details = await apiRegistry.getComicIssueDetails(issue.id);
@@ -444,7 +469,7 @@ export const Explore = () => {
   }, [discoverResults, api, type, id]);
 
   if (isLoading && !data && !entityData) return <DetailSkeleton />;
-  if ((type === 'person' || type === 'creator' || type === 'publisher' || type === 'staff') && !data) return <div className="p-8 text-center font-mono uppercase tracking-widest text-xs opacity-50">Entity not found.</div>;
+  if ((type === 'person' || type === 'creator' || type === 'publisher' || type === 'staff') && !data && !entityError) return <div className="p-8 text-center font-mono uppercase tracking-widest text-xs opacity-50">Entity not found.</div>;
 
   const profileUrl = data?.profile_path ? `https://image.tmdb.org/t/p/h632${data.profile_path}` : data?.profile_path_custom || null;
   const isPersonLayout = type === 'person' || type === 'creator' || type === 'publisher' || type === 'staff';
@@ -464,6 +489,14 @@ export const Explore = () => {
 
   return (
     <div className="flex flex-col gap-6 animate-in fade-in duration-300 pb-10 min-h-screen text-base-content">
+
+      {entityError && (
+        <ExploreErrorNotice
+          message={entityError}
+          compact={Boolean(data || entityData)}
+          onRetry={() => setEntityRetryKey(key => key + 1)}
+        />
+      )}
 
       {isPersonLayout ? (
         <div className="flex flex-row gap-4 sm:gap-6 bg-base-100 border border-base-300 p-4 sm:p-6 pt-12 sm:pt-14 shadow-xl items-start relative">
@@ -617,6 +650,14 @@ export const Explore = () => {
         </div>
       </div>
 
+      {gridError && renderItems.length > 0 && (
+        <ExploreErrorNotice
+          message={gridError}
+          compact
+          onRetry={() => failedGridPage ? void handleDiscoverPageChange(failedGridPage) : setGridRetryKey(key => key + 1)}
+        />
+      )}
+
       {isGridLoading && renderItems.length === 0 ? (
         <MediaGridSkeleton />
       ) : renderItems.length > 0 ? (
@@ -639,6 +680,11 @@ export const Explore = () => {
             </div>
           )}
         </>
+      ) : gridError ? (
+        <ExploreErrorNotice
+          message={gridError}
+          onRetry={() => failedGridPage ? void handleDiscoverPageChange(failedGridPage) : setGridRetryKey(key => key + 1)}
+        />
       ) : (
         <div className="w-full py-16 bg-base-200/50 border border-base-300 flex items-center justify-center text-[10px] font-mono text-base-content/40 uppercase tracking-widest">No credits found for these filters.</div>
       )}

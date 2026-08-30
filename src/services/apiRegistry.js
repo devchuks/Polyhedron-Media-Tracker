@@ -282,13 +282,13 @@ export const apiRegistry = {
   getMetronPublisherDetails: async (publisherId) => {
     try {
       return await fetchMetron(`/api/publisher/${publisherId}/`);
-    } catch (err) { reportApiError(err, 'Metron (Publisher)'); return null; }
+    } catch (err) { reportApiError(err, 'Metron (Publisher)'); throw err; }
   },
 
   getMetronCreatorDetails: async (creatorId) => {
     try {
       return await fetchMetron(`/api/creator/${creatorId}/`);
-    } catch (err) { reportApiError(err, 'Metron (Creator)'); return null; }
+    } catch (err) { reportApiError(err, 'Metron (Creator)'); throw err; }
   },
 
   discoverMetron: async (filterType, filterId, page = 1) => {
@@ -388,7 +388,7 @@ export const apiRegistry = {
         return { results: paginated, totalPages };
       }
       return { results: [], totalPages: 1 };
-    } catch (err) { reportApiError(err, 'Metron Discover'); return { results: [], totalPages: 1 }; }
+    } catch (err) { reportApiError(err, 'Metron Discover'); throw err; }
   },
 
   searchVNs: async (query, page = 1) => {
@@ -465,23 +465,23 @@ export const apiRegistry = {
         setSessionCache(sessionCache.people, cacheKey, result);
       }
       return result;
-    } catch (err) { reportApiError(err, 'TMDB (Person)'); return null; }
+    } catch (err) { reportApiError(err, 'TMDB (Person)'); throw err; }
   },
 
   getCompanyDetails: async (companyId) => {
     try { return await invokeFunction('tmdb', { path: `/company/${companyId}` }); }
-    catch (err) { return null; }
+    catch (err) { reportApiError(err, 'TMDB (Company)'); throw err; }
   },
   getNetworkDetails: async (networkId) => {
     try { return await invokeFunction('tmdb', { path: `/network/${networkId}` }); }
-    catch (err) { return null; }
+    catch (err) { reportApiError(err, 'TMDB (Network)'); throw err; }
   },
 
   getIGDBCompanyDetails: async (companyId) => {
     try {
       const data = await invokeFunction('igdb', { operation: 'companyDetails', params: { id: companyId } });
       return data?.[0] || null;
-    } catch (err) { return null; }
+    } catch (err) { reportApiError(err, 'IGDB (Company)'); throw err; }
   },
 
   getAniListPersonDetails: async (personId) => {
@@ -503,7 +503,7 @@ export const apiRegistry = {
           crew: staff.staffMedia?.edges?.map(e => ({ id: e.node.id, title: e.node.title?.english || e.node.title?.romaji || 'Unknown', custom_type: e.node.type === 'ANIME' ? 'anime' : 'manga', custom_subtype: e.node.type === 'ANIME' ? 'Anime' : 'Manga', poster_path_custom: e.node.coverImage?.large, release_date: e.node.startDate?.year ? `${e.node.startDate.year}-01-01` : null, vote_average: e.node.averageScore ? e.node.averageScore / 10 : 0, popularity: e.node.popularity, job: e.staffRole })) || []
         }
       };
-    } catch(e) { reportApiError(e, 'AniList Person'); return null; }
+    } catch(e) { reportApiError(e, 'AniList Person'); throw e; }
   },
 
   discoverAniList: async (filterType, filterId, mediaType, page = 1, sortOrder = 'popularity') => {
@@ -529,7 +529,7 @@ export const apiRegistry = {
         };
       }
       return { results: [], totalPages: 1 };
-    } catch(e) { reportApiError(e, 'AniList Discover'); return { results: [], totalPages: 1 }; }
+    } catch(e) { reportApiError(e, 'AniList Discover'); throw e; }
   },
 
   discoverIGDB: async (filterType, filterId, page = 1, sortOrder = 'popularity') => {
@@ -538,7 +538,7 @@ export const apiRegistry = {
       const data = await invokeFunction('igdb', { operation: 'discoverGames', params: { filterType, filterId, page, sortOrder } });
       const results = (data || []).map(normalizeIGDB);
       return { results, totalPages: results.length === limit ? page + 1 : page };
-    } catch (err) { reportApiError(err, 'IGDB Discover'); return { results: [], totalPages: 1 }; }
+    } catch (err) { reportApiError(err, 'IGDB Discover'); throw err; }
   },
 
   discoverTMDB: async (filterType, filterId, mediaType, page = 1, sortOrder = 'popularity') => {
@@ -561,7 +561,7 @@ export const apiRegistry = {
         results: (data.results || []).map(item => normalizeTMDB(item, mediaType)),
         totalPages: data.total_pages || 1
       };
-    } catch (err) { reportApiError(err, 'TMDB Discover'); return { results: [], totalPages: 1 }; }
+    } catch (err) { reportApiError(err, 'TMDB Discover'); throw err; }
   },
 
   getVNDBStaffDetails: async (staffId) => {
@@ -575,7 +575,7 @@ export const apiRegistry = {
         })
       });
       return data.results?.[0] || null;
-    } catch (err) { reportApiError(err, 'VNDB (Staff)'); return null; }
+    } catch (err) { reportApiError(err, 'VNDB (Staff)'); throw err; }
   },
 
   getVNDBDeveloperDetails: async (developerId) => {
@@ -589,7 +589,7 @@ export const apiRegistry = {
         })
       });
       return data.results?.[0] || null;
-    } catch (err) { reportApiError(err, 'VNDB (Developer)'); return null; }
+    } catch (err) { reportApiError(err, 'VNDB (Developer)'); throw err; }
   },
 
   discoverVNDB: async (filterType, filterId, page = 1, sortOrder = 'popularity', roleFilter = 'all') => {
@@ -619,7 +619,7 @@ export const apiRegistry = {
       const data = await safeApiClient('https://api.vndb.org/kana/vn', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filters, fields: 'id, title, titles.lang, titles.title, titles.latin, released, image.url, image.thumbnail, developers.id, developers.name, description, rating, staff.id, staff.name, staff.role', sort, reverse, results: limit, page, count: true }) });
       const results = (data.results || []).map(normalizeVNDB);
       return { results, totalPages: Math.ceil(data.count / limit) || 1 };
-    } catch (err) { reportApiError(err, 'VNDB Discover'); return { results: [], totalPages: 1 }; }
+    } catch (err) { reportApiError(err, 'VNDB Discover'); throw err; }
   },
 
   getTVSeason: async (tvId, seasonNumber) => {

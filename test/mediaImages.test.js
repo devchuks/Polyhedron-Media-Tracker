@@ -45,11 +45,18 @@ test('unsafe and non-URL image values never reach the scalar boundary', () => {
   }
 });
 
-test('IGDB detail banners use gameplay screenshots rather than artwork or logos', () => {
+test('IGDB detail banners prefer classified artwork, reject logos, and fall back to screenshots', () => {
   assert.equal(selectIgdbBannerImage({
     screenshots: [{ image_id: 'gameplay-shot' }],
-    artworks: [{ image_id: 'logo-like-art' }],
+    artworks: [
+      { image_id: 'logo-like-art', image_type: { name: 'Logo' }, width: 1600, height: 900 },
+      { image_id: 'landscape-art', image_type: { name: 'Artwork' }, width: 1920, height: 1080 },
+    ],
     logo: { image_id: 'logo' },
+  }), 'https://images.igdb.com/igdb/image/upload/t_1080p/landscape-art.jpg');
+  assert.equal(selectIgdbBannerImage({
+    screenshots: [{ image_id: 'gameplay-shot' }],
+    artworks: [{ image_id: 'logo-like-art', image_type: { name: 'Logo' } }],
   }), 'https://images.igdb.com/igdb/image/upload/t_1080p/gameplay-shot.jpg');
   assert.equal(selectIgdbBannerImage({ artworks: [{ image_id: 'logo-like-art' }], logo: { image_id: 'logo' } }), null);
 });

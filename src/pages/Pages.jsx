@@ -3,9 +3,9 @@ import { useParams, useNavigate, useLocation, Link, useSearchParams } from 'reac
 import { createPortal } from 'react-dom';
 import { useMediaStore, useUIStore } from '../store/useMediaStore';
 import { MediaCard, MediaListRow, StarRating, getMediaTypeColors, SectionWrapper, TextBlockSkeleton, PillSkeleton, MetaItem, EpisodeCard, ImageWithFallback, getSubtype, CreativeTeamSection, UserActivitySection, GalleryAndLinks, ComicIssuesSection, formatFancyDate, formatProgressLabel, getStatusColor, stripHtml, resolveMediaImage, formatMarkdownLinks, MediaGridSkeleton, DetailSkeleton, UpdatingIndicator } from '../components/UI';
-import { Star, ArrowLeft, Loader2, Filter, PlayCircle, X, ExternalLink, ChevronLeft, ChevronRight, Edit3, Plus, ChevronDown, ChevronUp, Download, LayoutGrid, List, Compass, Search, CalendarDays } from 'lucide-react';
+import { Star, ArrowLeft, Loader2, Filter, PlayCircle, X, ExternalLink, ChevronLeft, ChevronRight, Edit3, Plus, ChevronDown, ChevronUp, Download, LayoutGrid, List, Compass, Search, CalendarDays, AlertTriangle, RefreshCw } from 'lucide-react';
 import { apiRegistry } from '../services/apiRegistry';
-import { processDetailRaw } from '../utils/normalizers';
+import { normalizeProviderDetail, processDetailRaw } from '../utils/normalizers';
 import { NotFound } from './NotFound';
 import { populateDemoData } from './Settings';
 import { filterDashboardItems, findMediaForLog, normalizeProviderScore, preferredMediaImage } from '../domain/mediaState';
@@ -488,6 +488,7 @@ export const DetailView = () => {
 
   const [previewItem, setPreviewItem] = useState(() => previewItemForRoute(location.state?.previewData, type, id));
   const [detailEnrichment, setDetailEnrichment] = useState({ routeKey: null, phase: 'idle' });
+  const [detailRetryKey, setDetailRetryKey] = useState(0);
   const [recs, setRecs] = useState([]);
   const [loadingRecs, setLoadingRecs] = useState(true);
   const [season, setSeason] = useState(1);
@@ -602,7 +603,7 @@ export const DetailView = () => {
       return;
     }
     const targetItem = storeItem ? storeItem.apiData : previewItem;
-    if (!targetItem || targetItem.raw?.deepFetched) {
+    if (targetItem?.raw?.deepFetched) {
       setDetailEnrichment({ routeKey, phase: 'settled' });
       return;
     }
@@ -620,10 +621,11 @@ export const DetailView = () => {
       load: () => apiRegistry.getMediaDetails(id, type),
       isCurrent,
       onResolved: async (rawDetails) => {
+        const normalizedDetail = targetItem || normalizeProviderDetail(rawDetails, type);
         const processed = processDetailRaw(rawDetails, type);
-        const updatedRaw = { ...targetItem.raw, ...rawDetails, ...processed, deepFetched: true };
-        const updatedYear = rawDetails.release_date?.substring(0, 4) || rawDetails.first_air_date?.substring(0, 4) || rawDetails.released?.substring(0, 4) || rawDetails.startDate?.year || rawDetails.year_began || (rawDetails.first_release_date ? new Date(rawDetails.first_release_date * 1000).getFullYear().toString() : targetItem?.year);
-        const updatedTitle = resolveDetailTitle(rawDetails, type, targetItem.title || previewItem?.title);
+        const updatedRaw = { ...(normalizedDetail.raw || {}), ...rawDetails, ...processed, deepFetched: true };
+        const updatedYear = rawDetails.release_date?.substring(0, 4) || rawDetails.first_air_date?.substring(0, 4) || rawDetails.released?.substring(0, 4) || rawDetails.startDate?.year || rawDetails.year_began || (rawDetails.first_release_date ? new Date(rawDetails.first_release_date * 1000).getFullYear().toString() : normalizedDetail.year);
+        const updatedTitle = resolveDetailTitle(rawDetails, type, normalizedDetail.title || previewItem?.title);
         
         let updatedUrl = null;
         if (type === 'movies' && rawDetails.id) updatedUrl = `https://www.themoviedb.org/movie/${rawDetails.id}`;
@@ -638,22 +640,23 @@ export const DetailView = () => {
         // A hydrated library row may legitimately have a complete top-level image
         // while older/sparse apiData has no nested image. Provider enrichment must
         // never replace that usable source with null during the first detail open.
-        const updatedImage = firstUsableImageUrl(rawDetails.image, preferredMediaImage(storeItem || previewItem));
+        const updatedImage = firstUsableImageUrl(rawDetails.image, preferredMediaImage(storeItem || previewItem || normalizedDetail));
 
-        if (isPreview) setPreviewItem(prev => ({ ...prev, title: updatedTitle, image: updatedImage, raw: updatedRaw, year: updatedYear, url: updatedUrl || prev?.url }));
+        if (isPreview) setPreviewItem(prev => ({ ...normalizedDetail, ...prev, title: updatedTitle, image: updatedImage, raw: updatedRaw, year: updatedYear, url: updatedUrl || prev?.url || normalizedDetail.url }));
         else patchProviderMetadata(storeItem, type, { title: updatedTitle, image: updatedImage, apiData: { ...storeItem.apiData, image: updatedImage, raw: updatedRaw, year: updatedYear, url: updatedUrl || storeItem.apiData.url } });
       },
-    }).finally(() => {
+    }).then(result => {
       if (!isCurrent()) return;
       activeFetchIdRef.current = null;
-      setDetailEnrichment({ routeKey, phase: 'settled' });
+      const failedWithoutPreview = !targetItem && ['empty', 'rejected'].includes(result.outcome);
+      setDetailEnrichment({ routeKey, phase: failedWithoutPreview ? 'error' : 'settled' });
     });
     return () => {
       if (currentRouteRef.current !== routeKey && activeFetchIdRef.current?.requestId === requestId) {
         activeFetchIdRef.current = null;
       }
     };
-  }, [id, isPreview, isValidType, patchProviderMetadata, previewItem, routeKey, storeItem, type]);
+  }, [detailRetryKey, id, isPreview, isValidType, patchProviderMetadata, previewItem, routeKey, storeItem, type]);
 
   useEffect(() => {
     if (!cleanId || !isValidType) return;
@@ -671,7 +674,19 @@ export const DetailView = () => {
   const titleText = storeItem ? storeItem.title : previewItem?.title || apiData?.title || "Unknown Title";
 
   if (!isValidType) return <NotFound />;
-  if (!apiData) return <DetailSkeleton />;
+  if (!apiData && detailEnrichment.phase !== 'error') return <DetailSkeleton />;
+  if (!apiData) return (
+    <div role="alert" className="min-h-[60vh] flex items-center justify-center p-4">
+      <div className="w-full max-w-lg border border-error/40 bg-error/5 p-6 text-center flex flex-col items-center gap-3">
+        <AlertTriangle className="w-8 h-8 text-error" />
+        <h1 className="text-lg font-black uppercase tracking-widest">Could not load this title</h1>
+        <p className="text-sm text-base-content/65">The media provider could not load this detail page. The link is valid, so you can retry without returning through Discovery.</p>
+        <button type="button" onClick={() => { setDetailEnrichment({ routeKey, phase: 'idle' }); setDetailRetryKey(key => key + 1); }} className="btn btn-sm btn-outline rounded-none font-mono uppercase tracking-widest">
+          <RefreshCw className="w-4 h-4" /> Retry
+        </button>
+      </div>
+    </div>
+  );
 
   const trailerUrl = (() => {
     if (type === 'movies' || type === 'tv') { const vid = raw.videos?.results?.find(v => v.site === 'YouTube' && v.type === 'Trailer') || raw.videos?.results?.[0]; return vid ? `https://www.youtube.com/embed/${vid.key}?autoplay=1` : null; }

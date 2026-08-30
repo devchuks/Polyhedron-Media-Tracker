@@ -231,6 +231,27 @@ export const normalizeOpenLibrary = (item) => {
   }, 'books');
 };
 
+export const normalizeProviderDetail = (item, type) => {
+  switch (type) {
+    case 'movies':
+    case 'tv':
+      return normalizeTMDB(item, type);
+    case 'games':
+      return normalizeIGDB(item);
+    case 'anime':
+    case 'manga':
+      return normalizeAniList(item, type);
+    case 'comics':
+      return normalizeMetron(item);
+    case 'vn':
+      return normalizeVNDB(item);
+    case 'books':
+      return normalizeOpenLibrary(item);
+    default:
+      throw new TypeError(`Unsupported media type: ${type}`);
+  }
+};
+
 export const processDetailRaw = (rawDetails, type) => {
   if (!rawDetails) return {};
 

@@ -88,7 +88,7 @@ test('detail view resolves images from the complete stored row', async () => {
 
   const sourcePages = await readFile(new URL('../src/pages/Pages.jsx', import.meta.url), 'utf8');
   assert.match(sourcePages, /resolveMediaImage\(storeItem \|\| previewItem/);
-  assert.match(sourcePages, /firstUsableImageUrl\(rawDetails\.image, preferredMediaImage\(storeItem \|\| previewItem\)\)/);
+  assert.match(sourcePages, /firstUsableImageUrl\(rawDetails\.image, preferredMediaImage\(storeItem \|\| previewItem \|\| normalizedDetail\)\)/);
   assert.doesNotMatch(sourcePages, /rawDetails\.image \|\| targetItem\.image \|\| previewItem\?\.image/);
 });
 
@@ -170,4 +170,20 @@ test('provider search failures have a persistent retry state distinct from empty
   assert.match(sourceLayout, /error: response\.error \|\| null/);
   assert.match(sourceUI, /role="alert"/);
   assert.match(sourceUI, /Retry Search/);
+});
+
+test('direct details and Explore failures settle into retryable states without stale comic details', async () => {
+  const sourcePages = await readFile(new URL('../src/pages/Pages.jsx', import.meta.url), 'utf8');
+  const sourceExplore = await readFile(new URL('../src/pages/Explore.jsx', import.meta.url), 'utf8');
+  const sourceApi = await readFile(new URL('../src/services/apiRegistry.js', import.meta.url), 'utf8');
+
+  assert.match(sourcePages, /normalizeProviderDetail\(rawDetails, type\)/);
+  assert.match(sourcePages, /detailEnrichment\.phase !== 'error'/);
+  assert.match(sourcePages, /setDetailRetryKey\(key => key \+ 1\)/);
+  assert.match(sourceExplore, /setModalDetails\(null\);\s*setIsModalLoading\(true\)/);
+  assert.match(sourceExplore, /setEntityError\('The provider could not load these details\.'\)/);
+  assert.match(sourceExplore, /setGridError\('The provider could not load these titles\.'\)/);
+  assert.match(sourceExplore, /<ExploreErrorNotice[\s\S]*onRetry=/);
+  assert.match(sourceApi, /reportApiError\(err, 'IGDB Discover'\); throw err/);
+  assert.match(sourceApi, /reportApiError\(err, 'TMDB \(Person\)'\); throw err/);
 });
