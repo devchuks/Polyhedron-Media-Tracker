@@ -11,7 +11,7 @@ import {
 import { supabase } from './supabase';
 import { FunctionsHttpError } from '@supabase/supabase-js';
 import { parseRetryAfter, withRetry } from '../utils/retry.js';
-import { getCachedValue, mapWithConcurrency, setCachedValue } from '../utils/boundedAsync.js';
+import { collectPaginatedResults, getCachedValue, mapWithConcurrency, setCachedValue } from '../utils/boundedAsync.js';
 import { isIntentionalAbort, providerErrorMessage } from '../utils/requestErrors.js';
 import { plainTextFromMarkup } from '../utils/plainText.js';
 
@@ -49,6 +49,19 @@ const invokeFunction = async (name, body) => {
 
 const fetchMetron = async (endpoint) => {
   return await invokeFunction('metron', { endpoint });
+};
+
+const fetchMetronSeriesIssues = async (seriesId, expectedCount = null) => {
+  const pageSize = 100;
+  return collectPaginatedResults(
+    page => fetchMetron(`/api/series/${seriesId}/issue_list/?page_size=${pageSize}&page=${page}`),
+    {
+      expectedCount,
+      pageSize,
+      maxPages: 50,
+      keyFor: issue => issue?.id ?? `${issue?.number ?? ''}:${issue?.cover_date ?? ''}`,
+    },
+  );
 };
 
 const safeApiClient = async (...args) => {
@@ -681,10 +694,10 @@ export const apiRegistry = {
         }
         if (seriesData && seriesData.id) {
           try {
-            const issuesRes = await fetchMetron(`/api/series/${seriesData.id}/issue_list/`);
-            if (issuesRes.results && issuesRes.results.length > 0) {
-              seriesData.issue_details = issuesRes.results;
-              const firstIssue = await fetchMetron(`/api/issue/${issuesRes.results[0].id}/`);
+            const issues = await fetchMetronSeriesIssues(seriesData.id, seriesData.issue_count);
+            if (issues.length > 0) {
+              seriesData.issue_details = issues;
+              const firstIssue = await fetchMetron(`/api/issue/${issues[0].id}/`);
               if (firstIssue) {
                 if (firstIssue.image) seriesData.image = firstIssue.image;
                 if (firstIssue.credits) seriesData.credits = firstIssue.credits;

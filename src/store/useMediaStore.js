@@ -244,7 +244,7 @@ export const useMediaStore = create(
           const { data, error } = authResult;
           if (error || !data?.user || generation !== authGeneration) {
             if (get().clearRealtimeSubscription) get().clearRealtimeSubscription();
-            set({ authMode: null, ownerId: null, guestSnapshot, storageEpoch: nextStorageEpoch(get().storageEpoch), isCloudSyncing: false, isLoading: false, media: freshMediaState(), mediaLogs: [], deletedMediaKeys: {}, deletedLogIds: {} });
+            set({ authMode: null, ownerId: null, guestSnapshot, storageEpoch: nextStorageEpoch(get().storageEpoch), isCloudSyncing: false, isLoading: false, media: freshMediaState(), mediaLogs: [], deletedMediaKeys: {}, deletedLogIds: {}, importQueue: [] });
             return false;
           }
           const ownerChanged = get().ownerId !== data.user.id;
@@ -290,6 +290,7 @@ export const useMediaStore = create(
             mediaLogs: mode === 'guest' ? guestResolution.snapshot.mediaLogs : [],
             deletedMediaKeys: mode === 'guest' ? guestResolution.snapshot.deletedMediaKeys : {},
             deletedLogIds: mode === 'guest' ? guestResolution.snapshot.deletedLogIds : {},
+            importQueue: mode === 'guest' ? guestResolution.snapshot.importQueue : [],
             isCloudSyncing: false,
             isLoading: false,
           });
@@ -635,7 +636,7 @@ export const useMediaStore = create(
       clearImportQueue: () => set({ importQueue: [] }),
       clearPendingImportQueue: () => set((state) => ({ importQueue: state.importQueue.filter(item => item.ready_to_commit) })),
 
-      addMediaItem: (item, category) => {
+      saveMediaItem: async (item, category) => {
         const baseItem = canonicalizeMediaItem(item, category);
         const existingItem = get().media[category]?.find(mediaItem => mediaKeyFor(mediaItem, category) === baseItem.media_key);
         const revision = nextRecordRevision(baseItem.updatedAt, existingItem?.updatedAt, get().deletedMediaKeys[baseItem.media_key]);
@@ -648,9 +649,14 @@ export const useMediaStore = create(
           return { deletedMediaKeys, media: { ...state.media, [category]: [canonicalItem, ...state.media[category]] } };
         });
         const updated = get().media[category].find(mediaItem => mediaKeyFor(mediaItem, category) === canonicalItem.media_key);
-        void queueMediaMutation(canonicalItem.media_key, () => get().syncItemToCloud(updated, category)).catch(error => {
+        await queueMediaMutation(canonicalItem.media_key, () => get().syncItemToCloud(updated, category));
+        return updated;
+      },
+
+      addMediaItem: (item, category) => {
+        void get().saveMediaItem(item, category).catch(error => {
           console.error('Supabase item sync error:', error);
-          useUIStore.getState().addToast(`Saved locally, but cloud sync failed for “${canonicalItem.title}”.`, 'error');
+          useUIStore.getState().addToast(`Saved locally, but cloud sync failed for “${item?.title || 'this item'}”.`, 'error');
         });
       },
 

@@ -1,12 +1,19 @@
 import React, { useState, useRef } from 'react';
 import { useMediaStore, useUIStore } from '../store/useMediaStore';
 import { apiRegistry } from '../services/apiRegistry';
-import { Loader2, Check, X, Edit3, Save, Terminal, Play, Upload, FileJson, ChevronUp, ChevronDown, Plus, ShieldAlert } from 'lucide-react';
+import { Loader2, Check, X, Edit3, Save, Terminal, Play, Upload, FileJson, ChevronUp, ChevronDown, Plus, ShieldAlert, Archive, FileSpreadsheet, FileCode2, AlertTriangle } from 'lucide-react';
 import { ImageWithFallback, getSubtype } from '../components/UI';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
 import { createBackup } from '../domain/backup';
 import { executeTvSeasonCompletion } from '../domain/tvWorkflow';
 import { diaryActionForType } from '../domain/activityLifecycle';
+import { mediaKeyFor } from '../domain/mediaIdentity';
+import { normalizeMetron, normalizeVNDB } from '../utils/normalizers';
+import {
+  matchComicGeeksIssues,
+  matchExternalItemsToLibrary,
+  parseExternalImportFile,
+} from '../domain/externalImports';
 
 const YOINKER_SCRIPT = `(async () => {
   console.log("🚀 Starting Twitter Yoinker...");
@@ -64,18 +71,84 @@ const YOINKER_SCRIPT = `(async () => {
   document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 })();`;
 
+const statusWeight = { planned: 0, dropped: 1, 'in progress': 2, completed: 3 };
+const strongerImportStatus = (currentStatus, incomingStatus) => (
+  (statusWeight[currentStatus] ?? -1) > (statusWeight[incomingStatus] ?? -1) ? currentStatus : incomingStatus
+);
+const finiteTime = value => {
+  if (value === null || value === undefined || value === '') return null;
+  const timestamp = typeof value === 'number' ? value : new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
+};
+const earliestTime = (...values) => {
+  const valid = values.map(finiteTime).filter(Number.isFinite);
+  return valid.length ? Math.min(...valid) : null;
+};
+const latestTime = (...values) => {
+  const valid = values.map(finiteTime).filter(Number.isFinite);
+  return valid.length ? Math.max(...valid) : null;
+};
+
 const processCommit = async (item, storeActions) => {
-  const { saveMediaWithLog, removeImportItem } = storeActions;
+  const { saveMediaWithLog, saveMediaItem, removeImportItem } = storeActions;
   const finalItemData = item.selected_candidate;
   const seasonOverride = item.selected_season;
   const selectedType = item.selected_type;
-  
-  const apiDataPayload = { ...finalItemData, raw: { ...(finalItemData.raw || finalItemData) } };
-  const activityAt = new Date(item.tweet_timestamp).getTime();
+  if (!finalItemData || !selectedType) throw new TypeError('Resolve this entry to a provider result before importing it.');
+
+  const currentItem = (() => {
+    try {
+      const targetKey = mediaKeyFor(finalItemData, selectedType);
+      return useMediaStore.getState().media[selectedType]?.find(existing => mediaKeyFor(existing, selectedType) === targetKey) || null;
+    } catch {
+      return null;
+    }
+  })();
+
+  const intent = item.import_intent || {};
+  const candidateApiData = finalItemData.apiData || finalItemData;
+  const providerDetails = item.provider_details || null;
+  const apiDataPayload = {
+    ...(currentItem?.apiData || {}),
+    ...candidateApiData,
+    raw: {
+      ...(currentItem?.apiData?.raw || {}),
+      ...(candidateApiData.raw || finalItemData.raw || finalItemData),
+      ...(providerDetails || {}),
+    },
+  };
+  const activityAt = finiteTime(intent.activity_at) ?? finiteTime(intent.date_completed) ?? finiteTime(item.tweet_timestamp);
+  if (!activityAt) throw new TypeError('This import entry has no valid activity or Library date.');
+  const requestedStatus = intent.library_status || 'completed';
+  const status = item.import_source
+    ? strongerImportStatus(currentItem?.status, requestedStatus)
+    : requestedStatus;
+  const importedRating = Math.min(10, Math.max(0, Number(intent.rating ?? 0) || 0));
+  const rating = importedRating > 0 ? importedRating : (Number(currentItem?.rating ?? finalItemData.rating) || 0);
+  const addedAt = earliestTime(currentItem?.addedAt, intent.added_at, finalItemData.addedAt) ?? Date.now();
+  const requestedStartedAt = Object.hasOwn(intent, 'date_started') ? finiteTime(intent.date_started) : activityAt;
+  const dateStarted = earliestTime(currentItem?.dateStarted, requestedStartedAt);
+  const dateCompleted = status === 'completed'
+    ? latestTime(currentItem?.dateCompleted, requestedStatus === 'completed' ? intent.date_completed ?? activityAt : null)
+    : null;
+  const importedReadIds = Array.isArray(intent.read_issue_ids) ? intent.read_issue_ids.map(String) : [];
+  const readIssueIds = [...new Set([...(currentItem?.readIssueIds || []).map(String), ...importedReadIds])];
   let libraryPayload = {
-    id: finalItemData.id, title: finalItemData.title, type: selectedType, subtype: getSubtype(selectedType),
-    status: 'completed', addedAt: Date.now(), dateStarted: activityAt, dateCompleted: activityAt,
-    rating: 0, image: apiDataPayload.image, apiData: apiDataPayload
+    ...finalItemData,
+    ...(currentItem || {}),
+    id: finalItemData.id,
+    title: finalItemData.title,
+    type: selectedType,
+    subtype: finalItemData.subtype || currentItem?.subtype || getSubtype(selectedType),
+    status,
+    addedAt,
+    dateStarted,
+    dateCompleted,
+    rating,
+    progress: intent.progress ?? currentItem?.progress ?? finalItemData.progress ?? null,
+    readIssueIds,
+    image: currentItem?.image || finalItemData.image || apiDataPayload.image,
+    apiData: apiDataPayload,
   };
 
   if (selectedType === 'tv' && seasonOverride) {
@@ -111,9 +184,15 @@ const processCommit = async (item, storeActions) => {
     return;
   }
 
+  if (intent.create_diary === false) {
+    await saveMediaItem(libraryPayload, selectedType);
+    removeImportItem(item.id);
+    return;
+  }
+
   const diaryLog = {
-    log_id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).substring(2), media_id: libraryPayload.id, media_type: selectedType,
-    action_type: diaryActionForType(selectedType), log_date: item.tweet_timestamp, review_text: item.extracted_note || '',
+    log_id: intent.log_id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).substring(2)), media_id: libraryPayload.id, media_type: selectedType,
+    action_type: intent.action_type || diaryActionForType(selectedType), log_date: intent.activity_at || item.tweet_timestamp, review_text: intent.review_text ?? item.extracted_note ?? '',
     image: libraryPayload.image, 
     season_label: seasonOverride ? seasonOverride.name : undefined,
     season_year: seasonOverride?.air_date ? seasonOverride.air_date.substring(0, 4) : undefined
@@ -124,7 +203,7 @@ const processCommit = async (item, storeActions) => {
 };
 
 const QueueItem = ({ item, globalIndex, totalCount }) => {
-  const { removeImportItem, updateImportItem, saveMediaWithLog, autoSearchOnTypeSelect, moveItemToPosition } = useMediaStore();
+  const { removeImportItem, updateImportItem, saveMediaWithLog, saveMediaItem, autoSearchOnTypeSelect, moveItemToPosition } = useMediaStore();
   const [editingNote, setEditingNote] = useState(false);
   const [noteText, setNoteText] = useState(item.extracted_note || '');
   const [isSearching, setIsSearching] = useState(false);
@@ -135,6 +214,7 @@ const QueueItem = ({ item, globalIndex, totalCount }) => {
   const [isEditingQuery, setIsEditingQuery] = useState(false);
   const [visibleLimit, setVisibleLimit] = useState(8);
   const [posInput, setPosInput] = useState(globalIndex);
+  const [resolutionError, setResolutionError] = useState('');
 
   React.useEffect(() => { setPosInput(globalIndex); }, [globalIndex]);
 
@@ -151,9 +231,9 @@ const QueueItem = ({ item, globalIndex, totalCount }) => {
   const selectedType = item.selected_type || ''; 
   const searchResults = item.candidates || [];
 
-  const handleSearch = async (typeOverride = selectedType, customQuery = editQuery) => {
+  const handleSearch = async (typeOverride = selectedType, customQuery = item.search_query || editQuery) => {
     if (!typeOverride) return;
-    setIsSearching(true); setSelectedParent(null); setVisibleLimit(8);
+    setIsSearching(true); setSelectedParent(null); setVisibleLimit(8); setResolutionError('');
     const trimmedQuery = (customQuery || '').trim();
     if (trimmedQuery.length < 2) { setIsSearching(false); return; }
     updateImportItem(item.id, { selected_type: typeOverride, extracted_title: trimmedQuery, has_searched: false });
@@ -175,6 +255,7 @@ const QueueItem = ({ item, globalIndex, totalCount }) => {
   };
 
   const handleSelectCandidate = async (candidate) => {
+    setResolutionError('');
     if (selectedType === 'tv') {
       setSelectedParent(candidate);
       setIsDeepFetching(true);
@@ -183,6 +264,35 @@ const QueueItem = ({ item, globalIndex, totalCount }) => {
         setParentDetails(details);
       } catch (e) { console.error(e); }
       setIsDeepFetching(false);
+    } else if (selectedType === 'comics' && item.import_source === 'comicgeeks') {
+      setIsDeepFetching(true);
+      try {
+        const details = await apiRegistry.getMediaDetails(candidate.id, selectedType);
+        if (!details) throw new Error('Metron did not return series details.');
+        const normalizedCandidate = normalizeMetron(details);
+        const completionAt = finiteTime(item.import_intent?.added_at) ?? finiteTime(item.tweet_timestamp);
+        const match = matchComicGeeksIssues(item.source_issues, details, completionAt);
+        if (item.source_read_count > 0 && match.readIssueIds.length === 0) {
+          throw new Error('None of the exported read issue numbers match this Metron series. Choose another result.');
+        }
+        updateImportItem(item.id, {
+          selected_candidate: normalizedCandidate,
+          provider_details: details,
+          import_match: match,
+          import_intent: {
+            ...(item.import_intent || {}),
+            library_status: match.status,
+            progress: match.progress,
+            read_issue_ids: match.readIssueIds,
+            date_completed: match.dateCompleted,
+          },
+          ready_to_commit: true,
+        });
+      } catch (error) {
+        setResolutionError(error.message || 'Could not match ComicGeeks issues to this series.');
+      } finally {
+        setIsDeepFetching(false);
+      }
     } else {
       updateImportItem(item.id, { selected_candidate: candidate, ready_to_commit: true });
     }
@@ -196,12 +306,19 @@ const QueueItem = ({ item, globalIndex, totalCount }) => {
              <ImageWithFallback src={item.selected_season?.poster_path ? `https://image.tmdb.org/t/p/w500${item.selected_season.poster_path}` : item.selected_candidate.image} className="w-full h-full object-cover" />
           </div>
           <div className="flex flex-col">
-            <div className="text-[10px] font-mono font-bold text-success uppercase tracking-widest mb-1 flex items-center gap-1"><Check className="w-3 h-3" /> Ready for Library</div>
+            <div className="text-[10px] font-mono font-bold text-success uppercase tracking-widest mb-1 flex items-center gap-1 flex-wrap"><Check className="w-3 h-3" /> Ready for Library {item.import_source && <span className="border border-success/40 px-1.5 py-0.5 text-[8px]">{item.import_source}</span>}</div>
             <h3 className="text-lg font-bold font-sans flex flex-wrap items-center gap-2">
               {item.selected_candidate.title}
               {item.selected_season && <span className="badge badge-outline badge-sm text-[10px] font-mono">{item.selected_season.name}</span>}
             </h3>
           <p className="text-[10px] font-mono opacity-50 mt-1">Source: {item.extracted_title}{item.parsed_year ? ` (${item.parsed_year})` : ''}{item.parsed_modifier ? ` ${item.parsed_modifier}` : ''}</p>
+          {item.import_intent && (
+            <p className="text-[10px] font-mono text-base-content/65 mt-1 uppercase tracking-wide">
+              {item.import_intent.library_status} · {item.import_intent.create_diary ? 'Library + Diary' : 'Library only'}
+              {item.import_intent.rating > 0 ? ` · ${item.import_intent.rating}/10` : ''}
+              {item.import_match ? ` · ${item.import_match.readIssueIds.length} issues matched${item.import_match.unmatchedRead ? ` · ${item.import_match.unmatchedRead} unmatched` : ''}` : ''}
+            </p>
+          )}
           </div>
         </div>
           <div className="flex gap-2 shrink-0 flex-wrap sm:flex-nowrap items-center">
@@ -218,7 +335,7 @@ const QueueItem = ({ item, globalIndex, totalCount }) => {
                  max={totalCount}
                />
              </div>
-           <button onClick={() => void processCommit(item, { saveMediaWithLog, removeImportItem }).catch(error => useUIStore.getState().addToast(`Could not save “${item.extracted_title}”: ${error.message}`, 'error'))} className="btn btn-sm btn-success rounded-none font-mono uppercase tracking-widest text-[10px] shadow-md shadow-success/20">
+           <button onClick={() => void processCommit(item, { saveMediaWithLog, saveMediaItem, removeImportItem }).catch(error => useUIStore.getState().addToast(`Could not save “${item.extracted_title}”: ${error.message}`, 'error'))} className="btn btn-sm btn-success rounded-none font-mono uppercase tracking-widest text-[10px] shadow-md shadow-success/20">
              Add Now
            </button>
            <button onClick={() => updateImportItem(item.id, { ready_to_commit: false, selected_candidate: null, selected_season: null, parent_details: null })} className="btn btn-sm btn-outline border-base-300 rounded-none font-mono uppercase tracking-widest text-[10px]">
@@ -235,7 +352,7 @@ const QueueItem = ({ item, globalIndex, totalCount }) => {
       <div className="flex justify-between items-start gap-4">
         <div className="w-full">
           <div className="text-xs font-mono text-base-content/50 uppercase tracking-widest mb-1 flex justify-between items-center w-full">
-            <span>Extracted Payload</span>
+            <span className="flex items-center gap-2">Extracted Payload {item.import_source && <span className="border border-base-content/20 px-1.5 py-0.5 text-[8px] text-primary">{item.import_source}</span>}</span>
             <div className="flex items-center gap-1 bg-base-100 px-2 py-0.5 border border-base-300 tooltip tooltip-left" data-tip="Queue Position">
                <span className="text-[9px] font-mono text-base-content/50 uppercase">Pos</span>
                <input
@@ -262,6 +379,12 @@ const QueueItem = ({ item, globalIndex, totalCount }) => {
             </h3>
           )}
           <p className="text-[10px] font-mono opacity-50 mt-1">{new Date(item.tweet_timestamp).toLocaleString()}</p>
+          {item.import_intent && (
+            <p className="text-[10px] font-mono text-base-content/65 mt-1 uppercase tracking-wide">
+              Intended: {item.import_intent.library_status} · {item.import_intent.create_diary ? 'Library + Diary' : 'Library only'}
+              {item.import_intent.rating > 0 ? ` · ${item.import_intent.rating}/10` : ''}
+            </p>
+          )}
         </div>
         <button onClick={() => removeImportItem(item.id)} className="btn btn-sm btn-square btn-ghost text-error"><X className="w-4 h-4" /></button>
       </div>
@@ -282,6 +405,13 @@ const QueueItem = ({ item, globalIndex, totalCount }) => {
         </div>
       )}
 
+      {resolutionError && (
+        <div className="border border-error/40 bg-error/10 px-3 py-2 text-xs text-error flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{resolutionError}</span>
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-2 items-center bg-base-300/50 p-2 border border-base-300">
         <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-base-content/50 mr-2">Identify As:</span>
         {['movies', 'tv', 'anime', 'manga', 'games', 'vn', 'books', 'comics'].map(t => (
@@ -294,7 +424,7 @@ const QueueItem = ({ item, globalIndex, totalCount }) => {
         ))}
       </div>
 
-      {isSearching && <div className="p-4 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>}
+      {(isSearching || (isDeepFetching && !selectedParent)) && <div className="p-4 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>}
       
       {searchResults.length > 0 && !selectedParent && (
         <div className="mt-2">
@@ -352,7 +482,7 @@ const QueueItem = ({ item, globalIndex, totalCount }) => {
 };
 
 export const ImportTerminal = () => {
-  const { authMode, importQueue, addImportBatch, addManualImportItem, updateImportItem, media, mediaLogs, restoreBackup, saveMediaWithLog, removeImportItem, isAutoProcessing, setIsAutoProcessing, isBatchCommitting, setIsBatchCommitting, clearImportQueue, clearPendingImportQueue, autoSearchOnTypeSelect, setAutoSearchOnTypeSelect } = useMediaStore();
+  const { authMode, importQueue, addImportBatch, addManualImportItem, updateImportItem, media, mediaLogs, restoreBackup, saveMediaWithLog, saveMediaItem, removeImportItem, isAutoProcessing, setIsAutoProcessing, isBatchCommitting, setIsBatchCommitting, clearImportQueue, clearPendingImportQueue, autoSearchOnTypeSelect, setAutoSearchOnTypeSelect } = useMediaStore();
   const [jsonInput, setJsonInput] = useState('');
   const [error, setError] = useState('');
   const [autoProgress, setAutoProgress] = useState({ current: 0, total: 0 });
@@ -360,11 +490,18 @@ export const ImportTerminal = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [isReadySectionOpen, setIsReadySectionOpen] = useState(true);
   const [isManualFormOpen, setIsManualFormOpen] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [externalPreview, setExternalPreview] = useState(null);
+  const [externalError, setExternalError] = useState('');
+  const [isParsingExternal, setIsParsingExternal] = useState(false);
+  const [includeExternalHistory, setIncludeExternalHistory] = useState(true);
+  const [readyVisibleLimit, setReadyVisibleLimit] = useState(50);
   const [manualEntry, setManualEntry] = useState({ title: '', year: '', timestamp: '', modifier: '', note: '', type: '', source_url: '', source_tweet_id: '', position: 'top' });
   const listRef = useRef(null);
 
   const yoinkFileRef = useRef(null);
   const restoreFileRef = useRef(null);
+  const externalFileRef = useRef(null);
   const readyItems = importQueue.filter(item => item.ready_to_commit);
   const pendingItems = importQueue.filter(item => !item.ready_to_commit);
   const rowVirtualizer = useWindowVirtualizer({
@@ -373,13 +510,13 @@ export const ImportTerminal = () => {
     overscan: 5,
   });
 
-  if (authMode !== 'admin') {
+  if (authMode !== 'admin' && authMode !== 'guest') {
     return (
       <div className="flex items-center justify-center min-h-[60vh] animate-in fade-in">
         <div className="text-center font-mono text-error uppercase tracking-widest flex flex-col items-center gap-4 border border-error/30 bg-error/5 p-10">
           <ShieldAlert className="w-12 h-12" />
           <h2 className="text-lg font-bold">403 - Restricted Access</h2>
-          <p className="text-[10px] opacity-70">The Import Terminal is restricted to Administrator use only.</p>
+          <p className="text-[10px] opacity-70">Choose Guest mode or sign in before using the Import Terminal.</p>
         </div>
       </div>
     );
@@ -452,6 +589,53 @@ export const ImportTerminal = () => {
     } else setError("Please drop a valid .json file.");
   };
 
+  const loadExternalFile = async (file) => {
+    if (!file) return;
+    setIsParsingExternal(true);
+    setExternalError('');
+    try {
+      const parsed = await parseExternalImportFile(file, { includeHistory: includeExternalHistory });
+      if (!parsed.items.length) throw new TypeError('This export contains no supported entries to import.');
+      const items = matchExternalItemsToLibrary(parsed.items, media);
+      setExternalPreview({
+        ...parsed,
+        fileName: file.name,
+        items,
+        exactLibraryMatches: items.filter(item => item.matched_from_library).length,
+      });
+    } catch (parseError) {
+      setExternalPreview(null);
+      setExternalError(parseError.message || 'This export could not be read.');
+    } finally {
+      setIsParsingExternal(false);
+    }
+  };
+
+  const handleExternalFile = async (event) => {
+    const file = event.target.files?.[0];
+    await loadExternalFile(file);
+    event.target.value = null;
+  };
+
+  const handleExternalDrop = (event) => {
+    event.preventDefault();
+    void loadExternalFile(event.dataTransfer.files?.[0]);
+  };
+
+  const handleConfirmExternal = () => {
+    if (!externalPreview?.items?.length) return;
+    const existingIds = new Set(importQueue.map(item => item.id));
+    const newItems = externalPreview.items.filter(item => !existingIds.has(item.id));
+    addImportBatch(externalPreview.items);
+    useUIStore.getState().addToast(
+      newItems.length
+        ? `${newItems.length} ${externalPreview.label} entr${newItems.length === 1 ? 'y' : 'ies'} added to the resolution queue.`
+        : `${externalPreview.label} entries are already in the queue.`,
+      'success',
+    );
+    setExternalPreview(null);
+  };
+
   const handleAddManualEntry = () => {
     if (!manualEntry.title.trim()) return;
     const parsedYear = manualEntry.year ? parseInt(manualEntry.year) : null;
@@ -478,7 +662,7 @@ export const ImportTerminal = () => {
   const handleRestoreFile = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    
+    setIsRestoring(true);
     try {
       const text = await file.text();
       const parsed = JSON.parse(text);
@@ -493,8 +677,10 @@ export const ImportTerminal = () => {
       }
     } catch (err) { 
       alert(`Import Failed: ${err.message}\n\nMake sure the file is fully downloaded to your phone's local storage.`); 
+    } finally {
+      setIsRestoring(false);
+      e.target.value = null;
     }
-    e.target.value = null;
   };
 
   const handleDragOver = (e) => { e.preventDefault(); setIsDragging(true); };
@@ -517,16 +703,31 @@ export const ImportTerminal = () => {
       }
       
       try {
+        if (item.source_provider_id && item.selected_type === 'vn') {
+          const rawDetails = await apiRegistry.getMediaDetails(item.source_provider_id, 'vn');
+          if (!rawDetails) throw new Error('VNDB did not return this exported VN ID.');
+          updateImportItem(item.id, {
+            selected_candidate: normalizeVNDB(rawDetails),
+            provider_details: rawDetails,
+            candidates: [],
+            has_searched: true,
+            ready_to_commit: true,
+          });
+          setAutoProgress({ current: i + 1, total: itemsToProcess.length });
+          await new Promise(resolve => setTimeout(resolve, 300));
+          continue;
+        }
         let response = { results: [] };
+        const query = item.search_query || item.extracted_title;
         switch (item.selected_type) {
-          case 'movies': response = await apiRegistry.searchMovies(item.extracted_title, 1); break;
-          case 'tv': response = await apiRegistry.searchTV(item.extracted_title, 1); break;
-          case 'games': response = await apiRegistry.searchGames(item.extracted_title, 1); break;
-          case 'anime': response = await apiRegistry.searchAnime(item.extracted_title, 1); break;
-          case 'manga': response = await apiRegistry.searchManga(item.extracted_title, 1); break;
-          case 'comics': response = await apiRegistry.searchComics(item.extracted_title, 1); break;
-          case 'vn': response = await apiRegistry.searchVNs(item.extracted_title, 1); break;
-          case 'books': response = await apiRegistry.searchBooks(item.extracted_title, 1); break;
+          case 'movies': response = await apiRegistry.searchMovies(query, 1); break;
+          case 'tv': response = await apiRegistry.searchTV(query, 1); break;
+          case 'games': response = await apiRegistry.searchGames(query, 1); break;
+          case 'anime': response = await apiRegistry.searchAnime(query, 1); break;
+          case 'manga': response = await apiRegistry.searchManga(query, 1); break;
+          case 'comics': response = await apiRegistry.searchComics(query, 1); break;
+          case 'vn': response = await apiRegistry.searchVNs(query, 1); break;
+          case 'books': response = await apiRegistry.searchBooks(query, 1); break;
         }
         updateImportItem(item.id, { candidates: Array.isArray(response) ? response : (response.results || []), has_searched: true });
       } catch (error) { 
@@ -550,7 +751,7 @@ export const ImportTerminal = () => {
 
     for (let i = 0; i < readyItems.length; i++) {
       try {
-        await processCommit(readyItems[i], { saveMediaWithLog, removeImportItem });
+        await processCommit(readyItems[i], { saveMediaWithLog, saveMediaItem, removeImportItem });
         setBatchCommitProgress({ current: i + 1, total: readyItems.length });
       } catch (error) {
         useUIStore.getState().addToast(`Batch paused at “${readyItems[i].extracted_title}”: ${error.message}`, 'error');
@@ -566,11 +767,104 @@ export const ImportTerminal = () => {
       
       <input type="file" accept=".json,application/json,text/plain,text/json,*/*" className="hidden" ref={yoinkFileRef} onChange={handleYoinkFile} />
       <input type="file" accept=".json,application/json,text/plain,text/json,*/*" className="hidden" ref={restoreFileRef} onChange={handleRestoreFile} />
+      <input type="file" accept=".zip,.xml,.xlsx,application/zip,application/xml,text/xml,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" ref={externalFileRef} onChange={handleExternalFile} />
 
       <div className="flex flex-col gap-2">
-        <h1 className="text-3xl font-black uppercase tracking-tight font-sans flex items-center gap-3"><Terminal className="w-8 h-8"/> Terminal Purgatory</h1>
-        <p className="font-mono text-xs opacity-60 uppercase tracking-widest">Resolution Queue • {importQueue.length} Pending</p>
+        <h1 className="text-3xl font-black uppercase tracking-tight font-sans flex items-center gap-3"><Terminal className="w-8 h-8"/> Import Terminal</h1>
+        <p className="font-mono text-xs opacity-60 uppercase tracking-widest">External archives, backups, and resolution queue • {importQueue.length} pending</p>
       </div>
+
+      {authMode === 'guest' && (
+        <div className="border border-info/40 bg-info/10 px-4 py-3 flex items-start gap-3 text-sm">
+          <ShieldAlert className="w-5 h-5 text-info shrink-0 mt-0.5" />
+          <div>
+            <div className="font-bold">Guest import sandbox</div>
+            <div className="text-xs text-base-content/65 mt-0.5">Queue and Library changes stay in this browser's Guest data. They are not uploaded or merged into a signed-in account.</div>
+          </div>
+        </div>
+      )}
+
+      <section className="border border-base-300 bg-base-200 overflow-hidden">
+        <div className="p-4 sm:p-5 border-b border-base-300 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div className="text-[10px] font-mono font-bold uppercase tracking-[0.18em] text-primary">External archive import</div>
+            <h2 className="text-xl font-black mt-1">Bring your existing history into Polyhedron</h2>
+            <p className="text-xs text-base-content/65 mt-1 max-w-2xl">Files are parsed locally first. Nothing is written until entries are matched and you commit them from the queue.</p>
+          </div>
+          <label className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest cursor-pointer shrink-0">
+            <input type="checkbox" className="toggle toggle-primary toggle-sm" checked={includeExternalHistory} onChange={event => setIncludeExternalHistory(event.target.checked)} />
+            Include dated Diary history
+          </label>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 border-b border-base-300">
+          <div className="p-4 sm:border-r border-base-300 flex gap-3 items-start">
+            <Archive className="w-5 h-5 text-primary shrink-0" />
+            <div><div className="font-bold text-sm">Letterboxd</div><div className="text-[10px] font-mono opacity-60 mt-1">ZIP export · movies, ratings, reviews, watchlist</div></div>
+          </div>
+          <div className="p-4 sm:border-r border-t sm:border-t-0 border-base-300 flex gap-3 items-start">
+            <FileCode2 className="w-5 h-5 text-primary shrink-0" />
+            <div><div className="font-bold text-sm">VNDB</div><div className="text-[10px] font-mono opacity-60 mt-1">XML export · IDs, status, votes, lifecycle dates</div></div>
+          </div>
+          <div className="p-4 border-t sm:border-t-0 border-base-300 flex gap-3 items-start">
+            <FileSpreadsheet className="w-5 h-5 text-primary shrink-0" />
+            <div><div className="font-bold text-sm">ComicGeeks</div><div className="text-[10px] font-mono opacity-60 mt-1">XLSX export · series and read issue progress</div></div>
+          </div>
+        </div>
+
+        <div className="p-4 sm:p-5">
+          <button
+            type="button"
+            onClick={() => externalFileRef.current?.click()}
+            onDragOver={event => event.preventDefault()}
+            onDrop={handleExternalDrop}
+            disabled={isParsingExternal || isBatchCommitting || isAutoProcessing}
+            className="w-full min-h-24 border border-dashed border-base-content/25 hover:border-primary hover:bg-primary/5 transition-colors flex flex-col items-center justify-center gap-2 disabled:opacity-50"
+          >
+            {isParsingExternal ? <Loader2 className="w-6 h-6 animate-spin text-primary" /> : <Upload className="w-6 h-6 text-primary" />}
+            <span className="font-bold text-sm">{isParsingExternal ? 'Reading export…' : 'Choose or drop an export'}</span>
+            <span className="font-mono text-[10px] uppercase tracking-widest opacity-55">.zip · .xml · .xlsx</span>
+          </button>
+
+          {externalError && (
+            <div className="mt-4 border border-error/40 bg-error/10 p-3 text-sm text-error flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>{externalError}</span>
+            </div>
+          )}
+
+          {externalPreview && (
+            <div className="mt-4 border border-primary/40 bg-base-100">
+              <div className="p-4 border-b border-base-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <div className="text-[10px] font-mono uppercase tracking-widest text-primary">Ready to queue · {externalPreview.label}</div>
+                  <div className="font-bold mt-1 break-all">{externalPreview.fileName}</div>
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <button onClick={() => setExternalPreview(null)} className="btn btn-sm btn-ghost rounded-none">Cancel</button>
+                  <button onClick={handleConfirmExternal} className="btn btn-sm btn-primary rounded-none">Add {externalPreview.items.length} to Queue</button>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-5 divide-x divide-y sm:divide-y-0 divide-base-300 border-b border-base-300">
+                {[
+                  ['Source rows', externalPreview.summary.sourceRecords],
+                  ['Queue items', externalPreview.summary.queueItems],
+                  ['Diary', externalPreview.summary.historyEntries],
+                  ['Library only', externalPreview.summary.libraryOnly],
+                  ['Already matched', externalPreview.exactLibraryMatches],
+                ].map(([label, value]) => (
+                  <div key={label} className="p-3"><div className="text-lg font-black">{value}</div><div className="text-[9px] font-mono uppercase tracking-widest opacity-55">{label}</div></div>
+                ))}
+              </div>
+              <div className="p-4 flex flex-col gap-2">
+                {externalPreview.warnings.map(warning => (
+                  <div key={warning} className="flex items-start gap-2 text-xs text-base-content/70"><AlertTriangle className="w-3.5 h-3.5 text-warning mt-0.5 shrink-0" /><span>{warning}</span></div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="flex flex-col gap-2 bg-base-200 border border-base-300 p-4">
@@ -677,8 +971,8 @@ export const ImportTerminal = () => {
             
             <div className="h-4 w-px bg-base-300 mx-2 hidden sm:block"></div>
             
-            <button onClick={() => restoreFileRef.current?.click()} disabled={isBatchCommitting || isAutoProcessing} className="btn btn-xs btn-outline rounded-none font-mono uppercase tracking-widest text-[10px]">
-              <Upload className="w-3 h-3 mr-1" /> Restore Library
+            <button onClick={() => restoreFileRef.current?.click()} disabled={isBatchCommitting || isAutoProcessing || isRestoring} className="btn btn-xs btn-outline rounded-none font-mono uppercase tracking-widest text-[10px]">
+              {isRestoring ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Upload className="w-3 h-3 mr-1" />} {isRestoring ? 'Restoring…' : 'Restore Library'}
             </button>
             <button onClick={handleExportLibrary} disabled={isBatchCommitting || isAutoProcessing} className="btn btn-xs btn-outline rounded-none font-mono uppercase tracking-widest text-[10px]">
               <Save className="w-3 h-3 mr-1" /> Backup Library
@@ -722,7 +1016,7 @@ export const ImportTerminal = () => {
                 </button>
                 {isReadySectionOpen && (
                   <div className="p-3 sm:p-4 flex flex-col gap-4 bg-base-100">
-                    {readyItems.map(item => (
+                    {readyItems.slice(0, readyVisibleLimit).map(item => (
                       <div key={item.id} className="transition-all duration-200">
                         <QueueItem 
                           item={item} 
@@ -731,6 +1025,11 @@ export const ImportTerminal = () => {
                         />
                       </div>
                     ))}
+                    {readyItems.length > readyVisibleLimit && (
+                      <button onClick={() => setReadyVisibleLimit(limit => limit + 50)} className="btn btn-sm btn-outline rounded-none w-full font-mono uppercase tracking-widest text-[10px]">
+                        Show {Math.min(50, readyItems.length - readyVisibleLimit)} more ready entries
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

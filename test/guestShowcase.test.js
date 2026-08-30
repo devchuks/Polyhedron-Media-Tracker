@@ -194,7 +194,9 @@ test('guest to authenticated transition begins from an isolated empty owner snap
 
 test('authenticated to guest transition restores guest state without exposing private media', () => {
   const guest = createGuestShowcaseSnapshot();
+  guest.importQueue.push({ id: 'guest-import', extracted_title: 'Guest Queue Item' });
   const privateState = createEmptyGuestSnapshot(); privateState.media.movies.push({ title: 'PRIVATE', type: 'movies' });
   const result = resolveGuestInitialization({ currentOwnerId: 'user-a', currentState: privateState, savedGuestSnapshot: snapshotGuestState(guest), seededVersion: GUEST_SHOWCASE_VERSION });
   assert.equal(byTitle(result.snapshot, 'PRIVATE'), undefined); assert.equal(items(result.snapshot).length, 8);
+  assert.deepEqual(result.snapshot.importQueue.map(item => item.id), ['guest-import']);
 });

@@ -188,7 +188,7 @@ const logs = [
 const clone = value => structuredClone(value);
 export const createEmptyGuestSnapshot = () => ({
   media: Object.fromEntries(MEDIA_TYPES.map(type => [type, []])),
-  mediaLogs: [], deletedMediaKeys: {}, deletedLogIds: {},
+  mediaLogs: [], deletedMediaKeys: {}, deletedLogIds: {}, importQueue: [],
 });
 export const createIsolatedAuthenticatedSnapshot = createEmptyGuestSnapshot;
 
@@ -204,6 +204,7 @@ export const snapshotGuestState = state => ({
   mediaLogs: clone(state?.mediaLogs || []),
   deletedMediaKeys: clone(state?.deletedMediaKeys || {}),
   deletedLogIds: clone(state?.deletedLogIds || {}),
+  importQueue: clone(state?.importQueue || []),
 });
 
 export const resolveGuestInitialization = ({ currentOwnerId, currentState, savedGuestSnapshot, seededVersion = 0 }) => {

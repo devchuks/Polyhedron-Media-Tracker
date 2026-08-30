@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getCachedValue, mapWithConcurrency, setCachedValue } from '../src/utils/boundedAsync.js';
+import { collectPaginatedResults, getCachedValue, mapWithConcurrency, setCachedValue } from '../src/utils/boundedAsync.js';
 
 test('session cache entries expire and remain bounded', () => {
   const cache = new Map();
@@ -24,4 +24,19 @@ test('bounded mapper never exceeds its concurrency limit', async () => {
   });
   assert.deepEqual(result, [2, 4, 6, 8, 10]);
   assert.equal(maximum, 2);
+});
+
+test('paginated collection scans every provider issue and removes page overlap', async () => {
+  const requestedPages = [];
+  const pages = {
+    1: [{ id: 1 }, { id: 2 }],
+    2: [{ id: 2 }, { id: 3 }],
+    3: [{ id: 4 }],
+  };
+  const result = await collectPaginatedResults(async page => {
+    requestedPages.push(page);
+    return { count: 4, results: pages[page] || [] };
+  }, { pageSize: 2, expectedCount: 4 });
+  assert.deepEqual(result.map(item => item.id), [1, 2, 3, 4]);
+  assert.deepEqual(requestedPages, [1, 2, 3]);
 });

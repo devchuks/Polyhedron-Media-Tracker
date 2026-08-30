@@ -141,8 +141,8 @@ export const Header = ({ onSearch, theme, setTheme }) => {
         <ul tabIndex={0} className="dropdown-content z-[60] menu p-2 shadow-2xl bg-base-100 border border-base-300 w-56 mt-0 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest max-h-[85vh] overflow-y-auto overscroll-contain custom-scrollbar flex-nowrap">
           <li className="menu-title text-[9px] opacity-50 px-4 py-2 border-b border-base-300 mb-1">Account</li>
           <li><Link to="/settings" onClick={() => document.activeElement.blur()} className="py-1.5 px-3 min-h-0 text-[10px] leading-tight">Settings</Link></li>
-        {authMode === 'admin' && (
-          <li><Link to="/import" onClick={() => document.activeElement.blur()} className="text-primary py-1.5 px-3 min-h-0 text-[10px] leading-tight">Terminal (Import)</Link></li>
+        {(authMode === 'admin' || authMode === 'guest') && (
+          <li><Link to="/import" onClick={() => document.activeElement.blur()} className="text-primary py-1.5 px-3 min-h-0 text-[10px] leading-tight">Import Terminal</Link></li>
         )}
           <li><a onClick={async () => { await supabase.auth.signOut(); useMediaStore.getState().setAuthMode(null); navigate('/'); document.activeElement.blur(); }} className="text-error mt-2 py-1.5 px-3 min-h-0 text-[10px] leading-tight">Logout</a></li>
           <div className="divider my-0 opacity-50"></div>
