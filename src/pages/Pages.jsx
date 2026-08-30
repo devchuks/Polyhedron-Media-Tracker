@@ -202,7 +202,7 @@ export const Dashboard = () => {
         <div className="bg-info/5 border border-info/20 p-6 flex flex-col gap-4 items-start">
           <div>
             <h2 className="text-sm font-black uppercase tracking-widest text-info mb-1">Guest Mode Playground</h2>
-            <p className="text-xs font-mono text-base-content/70">This local showcase demonstrates every Polyhedron media type. Edit or delete anything safely; authenticated libraries stay separate. Add more demo data below, or clear this guest data from Settings.</p>
+            <p className="text-xs font-mono text-base-content/70">This local showcase shows off every Polyhedron media type. Edit or delete anything safely. Add more demo data below, visit the Discovery page to see more entries or clear this guest data from Settings.</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <Link
