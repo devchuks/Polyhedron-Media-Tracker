@@ -116,9 +116,6 @@ Unified media tracker. Log and keep track of movies, TV shows, games, anime, man
                 <LogIn className="w-5 h-5" />
                 Admin Login (no try am)
               </button>
-              <p className="text-[10px] text-center text-base-content/50 mt-4 leading-relaxed font-mono uppercase tracking-widest">
-                Guest mode opens with a local sample library you can safely edit or clear. It never syncs with authenticated data.
-              </p>
             </div>
           ) : (
             <form onSubmit={handleAdminLogin} className="flex flex-col gap-4 animate-in slide-in-from-right-4 fade-in duration-300">
