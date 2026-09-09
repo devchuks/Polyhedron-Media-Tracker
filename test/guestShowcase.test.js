@@ -3,11 +3,14 @@ import test from 'node:test';
 
 import {
   GUEST_SHOWCASE_VERSION,
+  clearGuestShowcaseMarker,
   createEmptyGuestSnapshot,
   createGuestShowcaseSnapshot,
   createIsolatedAuthenticatedSnapshot,
   guestShowcaseLogs,
   guestShowcaseMedia,
+  markGuestShowcaseInitialized,
+  readGuestShowcaseVersion,
   resolveGuestInitialization,
   snapshotGuestState,
 } from '../src/domain/guestShowcase.js';
@@ -200,3 +203,17 @@ test('authenticated to guest transition restores guest state without exposing pr
   assert.equal(byTitle(result.snapshot, 'PRIVATE'), undefined); assert.equal(items(result.snapshot).length, 8);
   assert.deepEqual(result.snapshot.importQueue.map(item => item.id), ['guest-import']);
 });
+
+test('clearGuestShowcaseMarker removes the version marker from storage', () => {
+  const mockStorage = new Map();
+  const storage = {
+    getItem: key => mockStorage.get(key),
+    setItem: (key, val) => mockStorage.set(key, val),
+    removeItem: key => mockStorage.delete(key),
+  };
+  markGuestShowcaseInitialized(storage);
+  assert.equal(readGuestShowcaseVersion(storage), GUEST_SHOWCASE_VERSION);
+  clearGuestShowcaseMarker(storage);
+  assert.equal(readGuestShowcaseVersion(storage), 0);
+});
+

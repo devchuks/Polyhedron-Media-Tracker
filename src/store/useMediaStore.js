@@ -14,6 +14,7 @@ import { createSingleFlight } from '../utils/singleFlight';
 import { readLibraryViewMode, writeLibraryViewMode } from '../domain/libraryContext';
 import {
   GUEST_SHOWCASE_VERSION,
+  clearGuestShowcaseMarker,
   createIsolatedAuthenticatedSnapshot,
   markGuestShowcaseInitialized,
   readGuestShowcaseVersion,
@@ -244,7 +245,8 @@ export const useMediaStore = create(
           const { data, error } = authResult;
           if (error || !data?.user || generation !== authGeneration) {
             if (get().clearRealtimeSubscription) get().clearRealtimeSubscription();
-            set({ authMode: null, ownerId: null, guestSnapshot, storageEpoch: nextStorageEpoch(get().storageEpoch), isCloudSyncing: false, isLoading: false, media: freshMediaState(), mediaLogs: [], deletedMediaKeys: {}, deletedLogIds: {}, importQueue: [] });
+            clearGuestShowcaseMarker(browserLocalStorage());
+            set({ authMode: null, ownerId: null, guestSnapshot: null, guestSeedVersion: 0, storageEpoch: nextStorageEpoch(get().storageEpoch), isCloudSyncing: false, isLoading: false, media: freshMediaState(), mediaLogs: [], deletedMediaKeys: {}, deletedLogIds: {}, importQueue: [] });
             return false;
           }
           const ownerChanged = get().ownerId !== data.user.id;
@@ -271,8 +273,11 @@ export const useMediaStore = create(
           if (get().clearRealtimeSubscription) get().clearRealtimeSubscription();
           const nextOwner = mode === 'guest' ? 'guest' : null;
           const ownerChanged = get().ownerId !== nextOwner || mode === null;
-          const previousGuestSnapshot = get().ownerId === 'guest' ? snapshotGuestState(get()) : get().guestSnapshot;
-          const seededVersion = Math.max(get().guestSeedVersion || 0, readGuestShowcaseVersion(browserLocalStorage()));
+          if (mode === null) {
+            clearGuestShowcaseMarker(browserLocalStorage());
+          }
+          const previousGuestSnapshot = mode === null ? null : (get().ownerId === 'guest' ? snapshotGuestState(get()) : get().guestSnapshot);
+          const seededVersion = mode === null ? 0 : Math.max(get().guestSeedVersion || 0, readGuestShowcaseVersion(browserLocalStorage()));
           const guestResolution = mode === 'guest' ? resolveGuestInitialization({
             currentOwnerId: get().ownerId,
             currentState: get(),
@@ -283,8 +288,8 @@ export const useMediaStore = create(
           set({
             authMode: mode,
             ownerId: nextOwner,
-            guestSnapshot: mode === 'guest' ? guestResolution.snapshot : previousGuestSnapshot,
-            guestSeedVersion: mode === 'guest' ? GUEST_SHOWCASE_VERSION : get().guestSeedVersion,
+            guestSnapshot: mode === 'guest' ? guestResolution.snapshot : (mode === null ? null : previousGuestSnapshot),
+            guestSeedVersion: mode === 'guest' ? GUEST_SHOWCASE_VERSION : (mode === null ? 0 : get().guestSeedVersion),
             storageEpoch: ownerChanged ? nextStorageEpoch(get().storageEpoch) : get().storageEpoch,
             media: mode === 'guest' ? guestResolution.snapshot.media : freshMediaState(),
             mediaLogs: mode === 'guest' ? guestResolution.snapshot.mediaLogs : [],

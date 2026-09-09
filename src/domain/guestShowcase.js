@@ -13,6 +13,11 @@ export const markGuestShowcaseInitialized = storage => {
   catch { /* IndexedDB remains the durable fallback when localStorage is unavailable. */ }
 };
 
+export const clearGuestShowcaseMarker = storage => {
+  try { storage?.removeItem(GUEST_SHOWCASE_MARKER); }
+  catch { /* IndexedDB remains the durable fallback when localStorage is unavailable. */ }
+};
+
 const at = value => Date.parse(`${value}T20:00:00.000Z`);
 const fixture = (type, item) => canonicalizeMediaItem({
   ...item,
@@ -174,15 +179,15 @@ const log = (mediaItem, suffix, entry) => canonicalizeLog({
 
 const byTitle = title => media.find(item => item.title === title);
 const logs = [
-  log(byTitle('Interstellar'), 'watched-2025-01-11', { action_type: 'WATCHED', log_date: '2025-01-11T20:00:00.000Z', review_text: 'Vast, intimate, and even better on a quiet night.' }),
-  log(byTitle('Barry'), 'season-1-2025-02-09', { action_type: 'WATCHED', log_date: '2025-02-09T20:00:00.000Z', season_label: 'Season 1', season_year: '2018', review_text: 'The comedy and dread sharpen each other.' }),
-  log(byTitle('Barry'), 'season-2-2025-02-16', { action_type: 'WATCHED', log_date: '2025-02-16T20:00:00.000Z', season_label: 'Season 2', season_year: '2019', review_text: 'A darker, stranger second act.' }),
-  log(byTitle('Neon Genesis Evangelion'), 'watched-2025-03-20', { action_type: 'WATCHED', log_date: '2025-03-20T20:00:00.000Z', review_text: 'A raw character study inside a giant-robot apocalypse.' }),
-  log(byTitle('Fire Punch'), 'note-2025-04-10', { action_type: 'LOGGED', log_date: '2025-04-10T20:00:00.000Z', review_text: 'The frozen-world premise keeps mutating in unsettling ways.' }),
-  log(byTitle('House of Leaves'), 'read-2025-05-28', { action_type: 'READ', log_date: '2025-05-28T20:00:00.000Z', review_text: 'The page itself becomes part of the labyrinth.' }),
-  log(byTitle('The Hundred Line: Last Defense Academy'), 'note-2025-06-15', { action_type: 'LOGGED', log_date: '2025-06-15T20:00:00.000Z', review_text: 'The branching school defense is starting to open up.' }),
-  log(byTitle('Alan Wake 2'), 'played-2025-07-20', { action_type: 'PLAYED', log_date: '2025-07-20T20:00:00.000Z', review_text: 'Bold, strange, and confident about making horror theatrical.' }),
-  log(byTitle('The Power Fantasy'), 'note-2025-08-18', { action_type: 'LOGGED', log_date: '2025-08-18T20:00:00.000Z', review_text: 'Five issues in, every conversation feels world-ending.' }),
+  log(byTitle('Interstellar'), 'watched-2025-01-11', { action_type: 'WATCHED', log_date: '2025-01-11T20:00:00.000Z', review_text: 'That docking sequence still makes my heart pound no matter how many times I watch it. Hans Zimmer going crazy on the organ never gets old.' }),
+  log(byTitle('Barry'), 'season-1-2025-02-09', { action_type: 'WATCHED', log_date: '2025-02-09T20:00:00.000Z', season_label: 'Season 1', season_year: '2018', review_text: 'NoHo Hank offering people juice boxes had me rolling. The jump from goofy acting exercises to cold-blooded hits shouldn\'t work this well, but Hader nails it.' }),
+  log(byTitle('Barry'), 'season-2-2025-02-16', { action_type: 'WATCHED', log_date: '2025-02-16T20:00:00.000Z', season_label: 'Season 2', season_year: '2019', review_text: 'The ronny/lily episode is absolute fever-dream television. Fuches is such an unbearable menace and Barry\'s spiral gets so much more chaotic.' }),
+  log(byTitle('Neon Genesis Evangelion'), 'watched-2025-03-20', { action_type: 'WATCHED', log_date: '2025-03-20T20:00:00.000Z', review_text: 'Came for cool giant robots, left staring at my ceiling having an existential crisis. The psychological unraveling at the end is something else.' }),
+  log(byTitle('Fire Punch'), 'note-2025-04-10', { action_type: 'LOGGED', log_date: '2025-04-10T20:00:00.000Z', review_text: 'Fujimoto is completely unhinged and I love it. Goes from brutal frozen apocalypse to Togata directing a movie about a guy constantly on fire.' }),
+  log(byTitle('House of Leaves'), 'read-2025-05-28', { action_type: 'READ', log_date: '2025-05-28T20:00:00.000Z', review_text: 'Had me physically turning the book upside down in bed at 1 AM. The hallway measuring five minutes longer on the inside than the outside still creeps me out.' }),
+  log(byTitle('The Hundred Line: Last Defense Academy'), 'note-2025-06-15', { action_type: 'LOGGED', log_date: '2025-06-15T20:00:00.000Z', review_text: 'Kodaka and Uchikoshi craziness in full effect. Half these classmates are suspicious as hell and the mascot makes Monokuma look tame.' }),
+  log(byTitle('Alan Wake 2'), 'played-2025-07-20', { action_type: 'PLAYED', log_date: '2025-07-20T20:00:00.000Z', review_text: 'Dropping a full-blown playable rock-opera musical right into a survival horror game is pure genius. Loved every second of the Dark Place.' }),
+  log(byTitle('The Power Fantasy'), 'note-2025-08-18', { action_type: 'LOGGED', log_date: '2025-08-18T20:00:00.000Z', review_text: 'Treating superpowered people like Cold War nuclear deterrents is such a cool angle. The boardroom standoff in issue 5 was ridiculously tense.' }),
 ];
 
 const clone = value => structuredClone(value);

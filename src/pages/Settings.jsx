@@ -3,7 +3,6 @@ import { Trash2, Download, Loader2, AlertTriangle } from 'lucide-react';
 import { useMediaStore } from '../store/useMediaStore';
 import { apiRegistry } from '../services/apiRegistry';
 import { mediaKeyFor } from '../domain/mediaIdentity';
-import { markGuestShowcaseInitialized } from '../domain/guestShowcase';
 
 const DEMO_QUERIES = {
   movies: [
@@ -72,15 +71,15 @@ const DEMO_QUERIES = {
   ],
 
   vn: [
-    "Wonderful Everyday", "Tsui no Sora", "Muramasa", "White Album 2", "Tsukihime -A piece of blue glass moon-",
-    "Mahoutsukai no Yoru", "Full Metal Daemon Muramasa", "Subahibi", "Raging Loop", "428: Shibuya Scramble",
-    "The Sekimeiya", "PARANORMASIGHT", "Slow Damage", "Ever17", "Hashihime of the Old Book Town",
+    "Phoenix Wright: Ace Attorney", "Ghost Trick: Phantom Detective", "Steins;Gate", "White Album 2", "Tsukihime -A piece of blue glass moon-",
+    "Mahoutsukai no Yoru", "Nine Hours, Nine Persons, Nine Doors", "AI: The Somnium Files", "Raging Loop", "428: Shibuya Scramble",
+    "The Sekimeiya", "PARANORMASIGHT", "AI: The Somnium Files - nirvanA Initiative", "Ever17", "Hashihime of the Old Book Town",
     "Flowers", "SeaBed", "Adabana Odd Tales", "Aokana", "Cyanotype Daydream",
-    "Danganronpa", "Nukitashi", "Meteor World Actor", "Hello Lady!", "Aiyoku no Eustia",
-    "Virtue's Last Reward", "Tokyo Necro", "Sorcery Jokers", "Dies irae", "Kajiri Kamui Kagura",
-    "Kikokugai", "Saya no Uta", "Chaos;Child", "Steins;Gate 0", "Anonymous;Code",
-    "MAMIYA", "Fatal Twelve", "The Shell Part I: Inferno", "Cartagra", "Kara no Shoujo 2",
-    "Muv-Luv", "Totono", "YOU and ME and HER", "ATRI", "Harmonia",
+    "Danganronpa", "Gnosia", "Umineko: When They Cry", "Higurashi: When They Cry", "Clannad",
+    "Virtue's Last Reward", "VA-11 Hall-A", "Coffee Talk", "Dies irae", "Your Turn to Die",
+    "The Great Ace Attorney Chronicles", "Danganronpa 2: Goodbye Despair", "Chaos;Child", "Steins;Gate 0", "Anonymous;Code",
+    "MAMIYA", "Fatal Twelve", "Danganronpa V3: Killing Harmony", "Root Double -Before Crime * After Days-", "fault - milestone one",
+    "Muv-Luv", "Bustafellows", "Taisho x Alice", "ATRI", "Harmonia",
     "Planetarian", "Loopers", "Marco & The Galaxy Dragon", "Slay the Princess", "Class of '09"
   ],
 
@@ -228,7 +227,6 @@ const Settings = () => {
       sessionStorage.clear();
       try {
         await useMediaStore.persist.clearStorage();
-        markGuestShowcaseInitialized(localStorage);
         window.location.reload();
       } catch (error) {
         console.error('Local clear failed:', error);
