@@ -132,6 +132,138 @@ const DashSection = ({ title, items, isLoading, headerRight, horizontalMobile, i
   );
 };
 
+const TimelineSection = ({ recentActivity, hasJumpBackIn }) => {
+  const scrollRef = useRef(null);
+  const [showUpArrow, setShowUpArrow] = useState(false);
+  const [showDownArrow, setShowDownArrow] = useState(false);
+
+  const handleScroll = () => {
+    if (scrollRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+      setShowUpArrow(scrollTop > 5);
+      setShowDownArrow(Math.ceil(scrollTop + clientHeight) < scrollHeight - 2);
+    }
+  };
+
+  useEffect(() => {
+    handleScroll();
+    const t1 = setTimeout(handleScroll, 100);
+    const t2 = setTimeout(handleScroll, 500);
+
+    let observer;
+    if (scrollRef.current && window.ResizeObserver) {
+      observer = new ResizeObserver(() => handleScroll());
+      observer.observe(scrollRef.current);
+    }
+
+    window.addEventListener('resize', handleScroll);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      window.removeEventListener('resize', handleScroll);
+      if (observer) observer.disconnect();
+    };
+  }, [recentActivity]);
+
+  const scroll = (direction) => {
+    if (scrollRef.current) {
+      const scrollAmount = direction === 'up' ? -180 : 180;
+      scrollRef.current.scrollBy({ top: scrollAmount, behavior: 'smooth' });
+    }
+  };
+
+  const getMaskStyle = () => {
+    if (showDownArrow && showUpArrow) {
+      return {
+        WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 12%, black 85%, transparent 100%)',
+        maskImage: 'linear-gradient(to bottom, transparent 0%, black 12%, black 85%, transparent 100%)',
+      };
+    }
+    if (showDownArrow) {
+      return {
+        WebkitMaskImage: 'linear-gradient(to bottom, black 85%, transparent 100%)',
+        maskImage: 'linear-gradient(to bottom, black 85%, transparent 100%)',
+      };
+    }
+    if (showUpArrow) {
+      return {
+        WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 15%)',
+        maskImage: 'linear-gradient(to bottom, transparent 0%, black 15%)',
+      };
+    }
+    return {};
+  };
+
+  return (
+    <div className={`order-3 xl:order-2 xl:col-start-2 xl:row-start-1 w-full shrink-0 flex flex-col mt-2 xl:mt-0 border-t border-base-300 xl:border-none pt-4 xl:pt-0 ${hasJumpBackIn ? 'xl:self-stretch xl:h-full min-h-0' : 'xl:row-span-2'}`}>
+      <h2 className="text-sm font-black uppercase tracking-widest flex items-center gap-2 border-b border-base-300 pb-2 text-base-content xl:mt-1">
+        <CalendarDays className="w-4 h-4 text-primary" /> Timeline
+      </h2>
+
+      <div className="relative group/timeline flex-1 min-h-0 mt-3 flex flex-col">
+        {showUpArrow && (
+          <button
+            type="button"
+            onClick={() => scroll('up')}
+            aria-label="Scroll timeline up"
+            className="absolute top-2 left-1/2 -translate-x-1/2 z-40 bg-base-100/90 hover:bg-primary text-base-content hover:text-primary-content w-9 h-9 items-center justify-center hidden md:group-hover/timeline:flex backdrop-blur-md transition-all border border-base-300 shadow-xl rounded-full"
+          >
+            <ChevronUp className="w-5 h-5" />
+          </button>
+        )}
+
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          className="flex-1 min-h-0 overflow-y-auto max-h-[380px] xl:max-h-none flex flex-col gap-3 pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          style={getMaskStyle()}
+        >
+          {recentActivity.map(log => {
+            const colors = getMediaTypeColors(log.media_type);
+            return (
+              <Link
+                to={`/media/${log.media_type}/${log.mediaItem.id}`}
+                key={log.log_id}
+                className={`bg-base-100 border border-base-300 p-3 hover:border-primary transition-colors border-l-2 shrink-0 ${colors.border}`}
+              >
+                <div className="text-[9px] font-mono font-bold opacity-50 uppercase tracking-widest mb-1">
+                  {formatFancyDate(log.log_date)} • {log.action_type || 'LOGGED'}
+                </div>
+                <div className="font-bold text-sm leading-tight truncate text-base-content">
+                  {log.mediaItem.title}
+                </div>
+                {log.review_text && (
+                  <div className="text-xs mt-1.5 opacity-70 line-clamp-2 italic text-base-content/80">
+                    "{log.review_text}"
+                  </div>
+                )}
+              </Link>
+            );
+          })}
+        </div>
+
+        {showDownArrow && (
+          <button
+            type="button"
+            onClick={() => scroll('down')}
+            aria-label="Scroll timeline down"
+            className="absolute bottom-2 left-1/2 -translate-x-1/2 z-40 bg-base-100/90 hover:bg-primary text-base-content hover:text-primary-content w-9 h-9 items-center justify-center hidden md:group-hover/timeline:flex backdrop-blur-md transition-all border border-base-300 shadow-xl rounded-full"
+          >
+            <ChevronDown className="w-5 h-5" />
+          </button>
+        )}
+      </div>
+
+      <Link
+        to="/diary"
+        className="btn btn-sm btn-ghost bg-base-200 rounded-none font-mono text-[9px] uppercase tracking-widest mt-2 shrink-0 text-base-content"
+      >
+        View Full Diary <ChevronRight className="w-3 h-3" />
+      </Link>
+    </div>
+  );
+};
+
 export const Dashboard = () => {
   const authMode = useMediaStore((state) => state.authMode);
   const media = useMediaStore((state) => state.media);
@@ -161,7 +293,7 @@ export const Dashboard = () => {
         return { ...log, mediaItem };
       })
       .filter(log => log.mediaItem)
-      .slice(0, 3);
+      .slice(0, 5);
 
     return { recentlyAddedItems: recent, inProgress: active, recentActivity: recentLogs };
   }, [media, mediaLogs, searchQuery, filter]);
@@ -245,22 +377,7 @@ export const Dashboard = () => {
         )}
 
         {hasTimeline && (
-          <div className={`order-3 xl:order-2 xl:col-start-2 xl:row-start-1 w-full shrink-0 flex flex-col mt-2 xl:mt-0 border-t border-base-300 xl:border-none pt-4 xl:pt-0 ${hasJumpBackIn ? 'xl:self-stretch xl:h-full' : 'xl:row-span-2'}`}>
-            <h2 className="text-sm font-black uppercase tracking-widest flex items-center gap-2 border-b border-base-300 pb-2 text-base-content xl:mt-1"><CalendarDays className="w-4 h-4 text-primary" /> Timeline</h2>
-            <div className="flex flex-col gap-3 flex-1 mt-3">
-              {recentActivity.map(log => {
-                const colors = getMediaTypeColors(log.media_type);
-                return (
-                  <Link to={`/media/${log.media_type}/${log.mediaItem.id}`} key={log.log_id} className={`bg-base-100 border border-base-300 p-3 hover:border-primary transition-colors border-l-2 ${colors.border}`}>
-                    <div className="text-[9px] font-mono font-bold opacity-50 uppercase tracking-widest mb-1">{formatFancyDate(log.log_date)} • {log.action_type || 'LOGGED'}</div>
-                    <div className="font-bold text-sm leading-tight truncate text-base-content">{log.mediaItem.title}</div>
-                    {log.review_text && <div className="text-xs mt-1.5 opacity-70 line-clamp-2 italic text-base-content/80">"{log.review_text}"</div>}
-                  </Link>
-                );
-              })}
-              <Link to="/diary" className="btn btn-sm btn-ghost bg-base-200 rounded-none font-mono text-[9px] uppercase tracking-widest mt-auto text-base-content">View Full Diary <ChevronRight className="w-3 h-3"/></Link>
-            </div>
-          </div>
+          <TimelineSection recentActivity={recentActivity} hasJumpBackIn={hasJumpBackIn} />
         )}
 
         <div className={`order-2 xl:order-3 min-w-0 w-full ${hasTimeline && !hasJumpBackIn ? 'xl:col-start-1 xl:row-start-1 xl:col-span-1' : 'xl:col-span-full'}`}>
