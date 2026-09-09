@@ -155,10 +155,13 @@ export const Dashboard = () => {
       .sort((a, b) => (b.updatedAt || b.addedAt || 0) - (a.updatedAt || a.addedAt || 0))
       .slice(0, 20);
 
-    const recentLogs = (mediaLogs || []).slice(0, 5).map(log => {
-      const mediaItem = findMediaForLog(media, log);
-      return { ...log, mediaItem };
-    }).filter(log => log.mediaItem);
+    const recentLogs = (mediaLogs || [])
+      .map(log => {
+        const mediaItem = findMediaForLog(media, log);
+        return { ...log, mediaItem };
+      })
+      .filter(log => log.mediaItem)
+      .slice(0, 3);
 
     return { recentlyAddedItems: recent, inProgress: active, recentActivity: recentLogs };
   }, [media, mediaLogs, searchQuery, filter]);
@@ -242,9 +245,9 @@ export const Dashboard = () => {
         )}
 
         {hasTimeline && (
-          <div className={`order-3 xl:order-2 xl:col-start-2 xl:row-start-1 w-full shrink-0 flex flex-col gap-4 mt-2 xl:mt-0 border-t border-base-300 xl:border-none pt-4 xl:pt-0 ${!hasJumpBackIn ? 'xl:row-span-2' : ''}`}>
+          <div className={`order-3 xl:order-2 xl:col-start-2 xl:row-start-1 w-full shrink-0 flex flex-col mt-2 xl:mt-0 border-t border-base-300 xl:border-none pt-4 xl:pt-0 ${hasJumpBackIn ? 'xl:self-stretch xl:h-full' : 'xl:row-span-2'}`}>
             <h2 className="text-sm font-black uppercase tracking-widest flex items-center gap-2 border-b border-base-300 pb-2 text-base-content xl:mt-1"><CalendarDays className="w-4 h-4 text-primary" /> Timeline</h2>
-            <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-3 flex-1 mt-3">
               {recentActivity.map(log => {
                 const colors = getMediaTypeColors(log.media_type);
                 return (
@@ -255,7 +258,7 @@ export const Dashboard = () => {
                   </Link>
                 );
               })}
-              <Link to="/diary" className="btn btn-sm btn-ghost bg-base-200 rounded-none font-mono text-[9px] uppercase tracking-widest mt-2 text-base-content">View Full Diary <ChevronRight className="w-3 h-3"/></Link>
+              <Link to="/diary" className="btn btn-sm btn-ghost bg-base-200 rounded-none font-mono text-[9px] uppercase tracking-widest mt-auto text-base-content">View Full Diary <ChevronRight className="w-3 h-3"/></Link>
             </div>
           </div>
         )}
