@@ -810,8 +810,10 @@ export const MediaQuickActions = ({ item, compact = false }) => {
               {Array.from({ length: 10 }, (_, index) => index + 1).map(value => <option key={value} value={value}>{value} / 10</option>)}
             </select>
           </label>
-          {QUICK_PROGRESS_TYPES.has(item.type) && <button type="button" role="menuitem" onClick={() => openMode('library')} className="mt-2 block w-full border-t border-base-300 px-2 py-2 text-left font-mono text-[10px] font-bold uppercase tracking-widest hover:bg-base-200">Update progress</button>}
-          <button type="button" role="menuitem" onClick={() => openMode('log')} className="block w-full px-2 py-2 text-left font-mono text-[10px] font-bold uppercase tracking-widest text-primary hover:bg-base-200">Log activity</button>
+          <div className="mt-3 px-2 pb-2 pt-3 border-t border-base-300 flex flex-col gap-2">
+            {QUICK_PROGRESS_TYPES.has(item.type) && <button type="button" role="menuitem" onClick={() => openMode('library')} className="w-full h-8 flex items-center justify-center border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 hover:border-primary/50 font-mono text-[9px] font-bold uppercase tracking-widest transition-colors rounded-none">Update progress</button>}
+            <button type="button" role="menuitem" onClick={() => openMode('log')} className="w-full h-8 flex items-center justify-center bg-primary hover:bg-primary/90 text-primary-content font-mono text-[9px] font-bold uppercase tracking-widest transition-colors rounded-none">Log activity</button>
+          </div>
         </div>
       )}
     </div>

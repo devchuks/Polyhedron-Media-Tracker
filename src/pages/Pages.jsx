@@ -195,63 +195,65 @@ const TimelineSection = ({ recentActivity, hasJumpBackIn }) => {
   };
 
   return (
-    <div className={`order-3 xl:order-2 xl:col-start-2 xl:row-start-1 w-full shrink-0 flex flex-col mt-2 xl:mt-0 border-t border-base-300 xl:border-none pt-4 xl:pt-0 ${hasJumpBackIn ? 'xl:self-stretch xl:h-full min-h-0' : 'xl:row-span-2'}`}>
+    <div className={`order-3 xl:order-2 xl:col-start-2 xl:row-start-1 w-full shrink-0 flex flex-col mt-2 xl:mt-0 border-t border-base-300 xl:border-none pt-4 xl:pt-0 ${hasJumpBackIn ? 'xl:self-stretch xl:h-full min-h-0 xl:mb-4' : 'xl:row-span-2'}`}>
       <h2 className="text-sm font-black uppercase tracking-widest flex items-center gap-2 border-b border-base-300 pb-2 text-base-content xl:mt-1">
         <CalendarDays className="w-4 h-4 text-primary" /> Timeline
       </h2>
 
-      <div className="relative group/timeline flex-1 min-h-0 mt-3 flex flex-col">
-        {showUpArrow && (
-          <button
-            type="button"
-            onClick={() => scroll('up')}
-            aria-label="Scroll timeline up"
-            className="absolute top-2 left-1/2 -translate-x-1/2 z-40 bg-base-100/90 hover:bg-primary text-base-content hover:text-primary-content w-9 h-9 items-center justify-center hidden md:group-hover/timeline:flex backdrop-blur-md transition-all border border-base-300 shadow-xl rounded-full"
-          >
-            <ChevronUp className="w-5 h-5" />
-          </button>
-        )}
+      <div className="relative group/timeline flex-1 min-h-0 mt-3">
+        <div className="absolute inset-0 flex flex-col">
+          {showUpArrow && (
+            <button
+              type="button"
+              onClick={() => scroll('up')}
+              aria-label="Scroll timeline up"
+              className="absolute top-2 left-1/2 -translate-x-1/2 z-40 bg-base-100/90 hover:bg-primary text-base-content hover:text-primary-content w-9 h-9 items-center justify-center hidden md:group-hover/timeline:flex backdrop-blur-md transition-all border border-base-300 shadow-xl rounded-full"
+            >
+              <ChevronUp className="w-5 h-5" />
+            </button>
+          )}
 
-        <div
-          ref={scrollRef}
-          onScroll={handleScroll}
-          className="flex-1 min-h-0 overflow-y-auto max-h-[380px] xl:max-h-none flex flex-col gap-3 pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-          style={getMaskStyle()}
-        >
-          {recentActivity.map(log => {
-            const colors = getMediaTypeColors(log.media_type);
-            return (
-              <Link
-                to={`/media/${log.media_type}/${log.mediaItem.id}`}
-                key={log.log_id}
-                className={`bg-base-100 border border-base-300 p-3 hover:border-primary transition-colors border-l-2 shrink-0 ${colors.border}`}
-              >
-                <div className="text-[9px] font-mono font-bold opacity-50 uppercase tracking-widest mb-1">
-                  {formatFancyDate(log.log_date)} • {log.action_type || 'LOGGED'}
-                </div>
-                <div className="font-bold text-sm leading-tight truncate text-base-content">
-                  {log.mediaItem.title}
-                </div>
-                {log.review_text && (
-                  <div className="text-xs mt-1.5 opacity-70 line-clamp-2 italic text-base-content/80">
-                    "{log.review_text}"
+          <div
+            ref={scrollRef}
+            onScroll={handleScroll}
+            className="flex-1 min-h-0 overflow-y-auto max-h-[380px] xl:max-h-none flex flex-col gap-3 pb-6 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            style={getMaskStyle()}
+          >
+            {recentActivity.map(log => {
+              const colors = getMediaTypeColors(log.media_type);
+              return (
+                <Link
+                  to={`/media/${log.media_type}/${log.mediaItem.id}`}
+                  key={log.log_id}
+                  className={`bg-base-100 border border-base-300 p-3 hover:border-primary transition-colors border-l-2 shrink-0 ${colors.border}`}
+                >
+                  <div className="text-[9px] font-mono font-bold opacity-50 uppercase tracking-widest mb-1">
+                    {formatFancyDate(log.log_date)} • {log.action_type || 'LOGGED'}
                   </div>
-                )}
-              </Link>
-            );
-          })}
-        </div>
+                  <div className="font-bold text-sm leading-tight truncate text-base-content">
+                    {log.mediaItem.title}
+                  </div>
+                  {log.review_text && (
+                    <div className="text-xs mt-1.5 opacity-70 line-clamp-2 italic text-base-content/80">
+                      "{log.review_text}"
+                    </div>
+                  )}
+                </Link>
+              );
+            })}
+          </div>
 
-        {showDownArrow && (
-          <button
-            type="button"
-            onClick={() => scroll('down')}
-            aria-label="Scroll timeline down"
-            className="absolute bottom-2 left-1/2 -translate-x-1/2 z-40 bg-base-100/90 hover:bg-primary text-base-content hover:text-primary-content w-9 h-9 items-center justify-center hidden md:group-hover/timeline:flex backdrop-blur-md transition-all border border-base-300 shadow-xl rounded-full"
-          >
-            <ChevronDown className="w-5 h-5" />
-          </button>
-        )}
+          {showDownArrow && (
+            <button
+              type="button"
+              onClick={() => scroll('down')}
+              aria-label="Scroll timeline down"
+              className="absolute bottom-2 left-1/2 -translate-x-1/2 z-40 bg-base-100/90 hover:bg-primary text-base-content hover:text-primary-content w-9 h-9 items-center justify-center hidden md:group-hover/timeline:flex backdrop-blur-md transition-all border border-base-300 shadow-xl rounded-full"
+            >
+              <ChevronDown className="w-5 h-5" />
+            </button>
+          )}
+        </div>
       </div>
 
       <Link
@@ -293,7 +295,7 @@ export const Dashboard = () => {
         return { ...log, mediaItem };
       })
       .filter(log => log.mediaItem)
-      .slice(0, 5);
+      .slice(0, 20);
 
     return { recentlyAddedItems: recent, inProgress: active, recentActivity: recentLogs };
   }, [media, mediaLogs, searchQuery, filter]);
@@ -363,7 +365,7 @@ export const Dashboard = () => {
         </div>
       )}
       
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] 2xl:grid-cols-[1fr_384px] gap-x-6 gap-y-2 xl:gap-y-6 items-start">
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] 2xl:grid-cols-[1fr_384px] gap-x-6 gap-y-2 xl:gap-y-6">
         
         {hasJumpBackIn && (
           <div className="order-1 xl:col-start-1 xl:row-start-1 min-w-0 w-full">
