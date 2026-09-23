@@ -6,6 +6,7 @@
 /dist-ssr/
 /coverage/
 /.vite/
+/test/
 
 # Environment, credentials, and machine-local configuration
 .env

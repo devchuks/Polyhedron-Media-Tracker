@@ -200,7 +200,7 @@ const TimelineSection = ({ recentActivity, hasJumpBackIn }) => {
         <CalendarDays className="w-4 h-4 text-primary" /> Timeline
       </h2>
 
-      <div className="relative group/timeline flex-1 min-h-0 mt-3">
+      <div className="relative group/timeline h-[380px] xl:h-auto xl:flex-1 min-h-0 mt-3">
         <div className="absolute inset-0 flex flex-col">
           {showUpArrow && (
             <button

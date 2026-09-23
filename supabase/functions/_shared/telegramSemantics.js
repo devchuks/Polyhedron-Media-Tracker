@@ -193,14 +193,12 @@ export const progressForTelegramIntent = ({ type, intent, season, progressNumber
     if (type === 'anime') return `${Math.floor(value)} Episodes`;
     if (type === 'manga' || type === 'books') return `${Math.floor(value)} Chapters`;
     if (type === 'comics') return `${Math.floor(value)} Issues`;
-    if (type === 'games' || type === 'vn') return `${Math.min(100, value)}%`;
   }
   if ((intent === 'COMPLETE_ITEM' || intent === 'REWATCH_ITEM') && Number(total) > 0) {
     if (type === 'anime') return `${Math.floor(total)} Episodes`;
     if (type === 'manga' || type === 'books') return `${Math.floor(total)} Chapters`;
     if (type === 'comics') return `${Math.floor(total)} Issues`;
   }
-  if ((intent === 'COMPLETE_ITEM' || intent === 'REWATCH_ITEM') && ['games', 'vn'].includes(type)) return '100%';
   return null;
 };
 

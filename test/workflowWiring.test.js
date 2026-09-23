@@ -92,6 +92,11 @@ test('detail view resolves images from the complete stored row', async () => {
   assert.doesNotMatch(sourcePages, /rawDetails\.image \|\| targetItem\.image \|\| previewItem\?\.image/);
 });
 
+test('mobile timeline reserves a visible scroll area for its absolutely positioned content', async () => {
+  const sourcePages = await readFile(new URL('../src/pages/Pages.jsx', import.meta.url), 'utf8');
+  assert.match(sourcePages, /group\/timeline h-\[380px\] xl:h-auto xl:flex-1 min-h-0/);
+});
+
 test('detail routes remount by canonical route identity and season requests use a latest-request gate', async () => {
   const sourceApp = await readFile(new URL('../src/App.jsx', import.meta.url), 'utf8');
   const sourcePages = await readFile(new URL('../src/pages/Pages.jsx', import.meta.url), 'utf8');

@@ -51,6 +51,11 @@ test('progress-only TV initializes Started without diary or whole-series complet
   assert.equal(lifecycle.shouldLog, false);
 });
 
+test('Telegram game and visual-novel updates do not create percentage progress', () => {
+  assert.equal(progressForTelegramIntent({ type: 'games', intent: 'UPDATE_PROGRESS', progressNumber: 45 }), null);
+  assert.equal(progressForTelegramIntent({ type: 'vn', intent: 'COMPLETE_ITEM', progressNumber: 100 }), null);
+});
+
 test('season completion creates exactly one selected-season activity and keeps release year metadata separate', () => {
   const progress = progressForTelegramIntent({ type: 'tv', intent: 'COMPLETE_SEASON', season: 2, episodeCount: 10 });
   const lifecycle = buildTelegramLifecycle({ intent: 'COMPLETE_SEASON', type: 'tv', activityAt: 300, progress, season: 2, seasonYear: 2024 });
