@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { corsHeaders } from "../_shared/cors.ts"
+import { finishEntryForReview } from "../_shared/diaryMerge.js"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.42.0"
 import { assertGraphqlSuccess, enforceRateLimit, escapeTelegramHtml, readBoundedJson, safeHttpUrl, verifyTelegramWebhookSecret } from "../_shared/validation.js"
 import {
@@ -967,8 +968,26 @@ for (let i = 0; i < items.length; i++) {
         }
       };
 
+      // A review for a title with a recent finish entry (no review yet) is added to that entry
+      // instead of becoming a separate one, e.g. a manga finished via AniList, reviewed here later.
+      let reviewMergeTarget: any = null;
+      if (intent === 'NOTE' && String(reviewText || '').trim()) {
+        const { data: titleLogs, error: titleLogsError } = await supabaseAdmin
+          .from('media_logs')
+          .select('log_id, media_key, action_type, log_date, review_text, season_label')
+          .eq('user_id', userId)
+          .eq('media_key', mediaKey);
+        if (titleLogsError) throw new Error('Existing diary lookup failed');
+        reviewMergeTarget = finishEntryForReview(titleLogs || [], {
+          mediaKey,
+          reviewAt: timestampMs,
+          seasonLabel: lifecycle.seasonLabel || '',
+          reviewText,
+        });
+      }
+
       let logPayload = null;
-      if (shouldLogToDiary) {
+      if (shouldLogToDiary && !reviewMergeTarget) {
         const logId = `telegram:${body.update_id}:${i}`;
 
         logPayload = {
@@ -997,6 +1016,15 @@ for (let i = 0; i < items.length; i++) {
         p_log: logPayload,
       });
       if (transactionError) throw new Error(`Telegram media transaction failed: ${transactionError.code || 'unknown'}`);
+      if (reviewMergeTarget) {
+        // Owner-scoped and repeat-safe: only fills an empty review (or rewrites the same text).
+        const { error: mergeError } = await supabaseAdmin
+          .from('media_logs')
+          .update({ review_text: String(reviewText).trim(), updated_at: new Date().toISOString() })
+          .eq('user_id', userId)
+          .eq('log_id', reviewMergeTarget.log_id);
+        if (mergeError) throw new Error('Review could not be added to the diary entry');
+      }
       if (!applied) {
         console.log(`Ignored duplicate Telegram event ${eventId}.`);
         await clearPendingResolution(item._pendingEventId);
@@ -1015,10 +1043,10 @@ for (let i = 0; i < items.length; i++) {
         type,
         intent,
         lifecycle,
-        activityAt: timestampMs,
+        activityAt: reviewMergeTarget ? Date.parse(reviewMergeTarget.log_date) : timestampMs,
       });
       const messageHtml = `
-<b>✅ ${escapeTelegramHtml(confirmation.headline)}</b>${posterLink}
+<b>${escapeTelegramHtml(confirmation.headline)}</b>${posterLink}
 ${confirmation.lines.map((line: string) => escapeTelegramHtml(line)).join('\n')}
       `.trim();
 

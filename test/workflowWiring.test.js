@@ -202,3 +202,26 @@ test('re-selecting the current status is a no-op and planned TV quick status cle
   assert.match(source, /String\(item\.status \|\| ''\)\.toLowerCase\(\) === String\(newStatus \|\| ''\)\.toLowerCase\(\)\) return item;/);
   assert.match(source, /category === 'tv' && targetItem\.status === 'planned' && targetItem\.progress/);
 });
+
+test('deletes and other destructive actions confirm in-app instead of with blocked browser dialogs', async () => {
+  const { readdir } = await import('node:fs/promises');
+  const files = [];
+  const walk = async dir => {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const path = new URL(`${entry.name}${entry.isDirectory() ? '/' : ''}`, dir);
+      if (entry.isDirectory()) await walk(path);
+      else if (/\.(jsx?|tsx?)$/u.test(entry.name)) files.push(path);
+    }
+  };
+  await walk(new URL('../src/', import.meta.url));
+  for (const file of files) {
+    const source = (await readFile(file, 'utf8')).replace(/\/\/.*$/gmu, '');
+    assert.doesNotMatch(source, /window\.confirm\(|[^.\w]alert\(/u, file.pathname);
+  }
+  const store = await readFile(new URL('../src/store/useMediaStore.js', import.meta.url), 'utf8');
+  assert.match(store, /export const confirmAction = \(options\) => useUIStore\.getState\(\)\.requestConfirm\(options\);/);
+  const diary = await readFile(new URL('../src/pages/Diary.jsx', import.meta.url), 'utf8');
+  assert.match(diary, /const confirmed = await confirmAction\(\{\s*\n\s*title: 'Delete diary entry\?'/);
+  const layout = await readFile(new URL('../src/components/Layout.jsx', import.meta.url), 'utf8');
+  assert.match(layout, /<ConfirmDialog \/>/);
+});

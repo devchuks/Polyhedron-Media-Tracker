@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { Star, StarHalf, X, Loader2, ChevronLeft, ChevronRight, ChevronDown, Trash2, PlayCircle, CheckCircle, EyeOff, AlertCircle, Info, ExternalLink, Save, Edit3, Calendar, Plus, MoreHorizontal } from 'lucide-react';
-import { useMediaStore, useUIStore } from '../store/useMediaStore';
+import { confirmAction, useMediaStore, useUIStore } from '../store/useMediaStore';
 import { apiRegistry } from '../services/apiRegistry';
 import { extractMetronStaff } from '../utils/normalizers';
 import { formatSafeMarkup } from '../utils/safeMarkup';
@@ -16,6 +16,8 @@ import { TV_WHOLE_SHOW, buildTvDiaryEntry, completeTvSeries, defaultTvDiaryTarge
 import { applyActivityLifecycle, diaryActionForType, isMeaningfulProgress } from '../domain/activityLifecycle';
 import { mediaStatusActionLabel, mediaStatusLabel, ratingForInteraction } from '../domain/mediaTerminology';
 import { lifecycleDateFields, persistStateOrActivity, statusForStateActivityIntent } from '../domain/stateActivityModal';
+import { mediaKeyFor } from '../domain/mediaIdentity';
+import { finishEntryForReview } from '../../supabase/functions/_shared/diaryMerge.js';
 
 // --- Restored Helpers ---
 export const formatFancyDate = (dateInput) => {
@@ -126,6 +128,7 @@ export const GlobalDiaryModal = () => {
   const closeDiaryModal = useMediaStore((state) => state.closeDiaryModal);
   const addMediaItem = useMediaStore((state) => state.addMediaItem);
   const saveMediaWithLog = useMediaStore((state) => state.saveMediaWithLog);
+  const updateDiaryLog = useMediaStore((state) => state.updateDiaryLog);
   const removeMediaItem = useMediaStore((state) => state.removeMediaItem);
   const navigate = useNavigate();
 
@@ -380,6 +383,31 @@ export const GlobalDiaryModal = () => {
       } : {}),
     });
 
+    // A review for a title with a recent finish entry (no review yet) is added to that entry,
+    // so a finish synced from elsewhere and the review written later read as one diary entry.
+    const persistWithReviewMerge = async (libraryPayload) => {
+      const log = isActivityIntent ? buildDiaryLog(libraryPayload) : null;
+      let mergeTarget = null;
+      if (log && explicitAction === 'NOTE ADDED' && log.review_text) {
+        try {
+          mergeTarget = finishEntryForReview(useMediaStore.getState().mediaLogs, {
+            mediaKey: mediaKeyFor(libraryPayload, type),
+            reviewAt: activityAt,
+            seasonLabel: log.season_label || '',
+            reviewText: log.review_text,
+          });
+        } catch {
+          mergeTarget = null;
+        }
+      }
+      if (mergeTarget) {
+        await persistStateOrActivity({ intent: 'library', media: libraryPayload, type, log: null, saveLibrary: addMediaItem, saveWithLog: saveMediaWithLog });
+        updateDiaryLog(mergeTarget.log_id, { review_text: log.review_text });
+        return;
+      }
+      await persistStateOrActivity({ intent, media: libraryPayload, type, log, saveLibrary: addMediaItem, saveWithLog: saveMediaWithLog });
+    };
+
     setIsSubmitting(true);
     try {
     if (type === 'tv') {
@@ -412,14 +440,7 @@ export const GlobalDiaryModal = () => {
           ? startTvRewatch(baseTvItem, command)
           : saveTvLibraryState(baseTvItem, command);
 
-      await persistStateOrActivity({
-        intent,
-        media: libraryPayload,
-        type,
-        log: isActivityIntent ? buildDiaryLog(libraryPayload) : null,
-        saveLibrary: addMediaItem,
-        saveWithLog: saveMediaWithLog,
-      });
+      await persistWithReviewMerge(libraryPayload);
     } else {
       let finalProgress = progress;
       if (effectiveStatus === 'completed' && maxProgress && !String(finalProgress).includes('S')) {
@@ -453,14 +474,7 @@ export const GlobalDiaryModal = () => {
         ),
       });
 
-      await persistStateOrActivity({
-        intent,
-        media: libraryPayload,
-        type,
-        log: isActivityIntent ? buildDiaryLog(libraryPayload) : null,
-        saveLibrary: addMediaItem,
-        saveWithLog: saveMediaWithLog,
-      });
+      await persistWithReviewMerge(libraryPayload);
     }
 
       closeDiaryModal();
@@ -472,12 +486,17 @@ export const GlobalDiaryModal = () => {
     }
   };
 
-  const handleDelete = (e) => {
+  const handleDelete = async (e) => {
     if (e) {
       e.preventDefault();
       e.stopPropagation();
     }
-    if (window.confirm(`Permanently delete ${titleToSave || targetItem.title} from your library and diary?`)) {
+    const confirmed = await confirmAction({
+      title: 'Delete from library?',
+      message: `${titleToSave || targetItem.title} and all its diary entries will be permanently deleted.`,
+      confirmLabel: 'Delete',
+    });
+    if (confirmed) {
       removeMediaItem(targetItem.id, type);
       setTimeout(() => {
         closeDiaryModal();
@@ -758,6 +777,48 @@ export const GlobalDiaryModal = () => {
   );
 };
 
+
+// The in-app replacement for window.confirm(), opened with confirmAction() from the store.
+export const ConfirmDialog = () => {
+  const request = useUIStore(state => state.confirmRequest);
+  const resolveConfirm = useUIStore(state => state.resolveConfirm);
+  const confirmRef = useRef(null);
+
+  useEffect(() => {
+    if (!request) return undefined;
+    confirmRef.current?.focus();
+    const onKey = event => {
+      if (event.key === 'Escape') { event.preventDefault(); resolveConfirm(false); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [request, resolveConfirm]);
+
+  if (!request) return null;
+  const danger = request.danger !== false;
+  return createPortal(
+    <div className="fixed inset-0 z-[100001] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150" onClick={() => resolveConfirm(false)}>
+      <div role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message" className="w-full max-w-sm bg-base-100 border border-base-300 shadow-2xl p-5 flex flex-col gap-4" onClick={event => event.stopPropagation()}>
+        <div className="flex items-start gap-3">
+          <AlertCircle className={`w-5 h-5 shrink-0 mt-0.5 ${danger ? 'text-error' : 'text-primary'}`} />
+          <div className="flex flex-col gap-1.5 min-w-0">
+            <h2 id="confirm-title" className="text-sm font-black uppercase tracking-widest">{request.title || 'Are you sure?'}</h2>
+            {request.message && <p id="confirm-message" className="text-xs font-mono text-base-content/70 leading-relaxed">{request.message}</p>}
+          </div>
+        </div>
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={() => resolveConfirm(false)} className="h-10 px-4 border border-base-300 bg-base-100 hover:bg-base-200 font-mono font-bold text-[10px] uppercase tracking-widest">
+            {request.cancelLabel || 'Cancel'}
+          </button>
+          <button ref={confirmRef} type="button" onClick={() => resolveConfirm(true)} className={`h-10 px-4 border font-mono font-black text-[10px] uppercase tracking-widest ${danger ? 'bg-error border-error text-error-content hover:bg-error/90' : 'bg-primary border-primary text-primary-content hover:bg-primary/90'}`}>
+            {request.confirmLabel || 'Confirm'}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+};
 
 export const ToastContainer = () => {
   const toasts = useUIStore(state => state.toasts);

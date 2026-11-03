@@ -160,35 +160,62 @@ test('ambiguity replies select identity while preserving the entire original act
   });
 });
 
-test('Telegram confirmations use labelled fields and omit only absent values', () => {
-  const activityAt = Date.parse('2026-08-25T12:00:00.000Z');
-  const lifecycle = buildTelegramLifecycle({ intent: 'UPDATE_PROGRESS', type: 'tv', activityAt, progress: 'S02 E04' });
-  const confirmation = telegramConfirmation({ title: 'Foundation', year: 2021, type: 'tv', intent: 'UPDATE_PROGRESS', lifecycle, activityAt });
-  assert.equal(confirmation.headline, 'Updated Foundation (2021)');
-  assert.deepEqual(confirmation.lines, [
-    'Type: TV Show',
-    'Date Added: August 25th, 2026',
-    'Status: Watching',
-    'Progress: S02 E04',
-  ]);
-  assert.doesNotMatch(confirmation.lines.join('\n'), /Diary|none/iu);
+const replyFor = ({ title, year, type, intent, existing = null, ...rest }) => {
+  const activityAt = Date.parse('2026-11-03T20:00:00.000Z');
+  const lifecycle = buildTelegramLifecycle({ existing, intent, type, activityAt, ...rest });
+  return telegramConfirmation({ title, year, type, intent, lifecycle, activityAt });
+};
+const addedOct12 = (status, extra = {}) => ({
+  status, addedAt: Date.parse('2026-10-12T18:00:00.000Z'), dateStarted: status === 'planned' ? null : 1, dateCompleted: null, rating: 0, ...extra,
 });
 
-test('Telegram confirmations show a real activity only when one was persisted', () => {
-  const activityAt = Date.parse('2026-08-25T12:00:00.000Z');
-  const lifecycle = buildTelegramLifecycle({ intent: 'COMPLETE_ITEM', type: 'movies', activityAt, rating: 8 });
-  const confirmation = telegramConfirmation({ title: 'The Matrix', year: 1999, type: 'movies', intent: 'COMPLETE_ITEM', lifecycle, activityAt });
-  assert.deepEqual(confirmation.lines, [
-    'Type: Movie',
-    'Date Added: August 25th, 2026',
-    'Status: Watched',
-    'Activity: Watched',
-    'Diary Date: August 25th, 2026',
-    'Rating: 8/10',
-  ]);
-  assert.equal(formatTelegramDate(activityAt), 'August 25th, 2026');
+test('Telegram replies show the diary date for logged entries and the added date otherwise', () => {
+  const movie = replyFor({ title: 'The Matrix', year: 1999, type: 'movies', intent: 'COMPLETE_ITEM', rating: 9 });
+  assert.equal(movie.headline, '✅ Watched The Matrix (1999)');
+  assert.deepEqual(movie.lines, ['🎬 Movie · in your diary for Nov 3, 2026', '⭐ Your rating: 9/10', '📍 Watched']);
+
+  const planned = replyFor({ title: 'Hollow Knight: Silksong', year: 2025, type: 'games', intent: 'ADD_PLANNED' });
+  assert.equal(planned.headline, '📌 Added Hollow Knight: Silksong (2025) to your backlog');
+  assert.deepEqual(planned.lines, ['🎮 Game · added Nov 3, 2026', '📍 Planned']);
+
+  const progress = replyFor({ title: 'Severance', year: 2022, type: 'tv', intent: 'UPDATE_PROGRESS', existing: addedOct12('in progress'), progress: 'S02 E04' });
+  assert.equal(progress.headline, '⏩ Updated progress on Severance (2022)');
+  assert.deepEqual(progress.lines, ['📺 TV Show · added Oct 12, 2026', '📍 Watching · on S02 E04']);
+
+  const all = [movie, planned, progress].flatMap(reply => [reply.headline, ...reply.lines]).join('\n');
+  assert.doesNotMatch(all, /new in your library|Activity|Diary:|Now:|Currently:|up to/u);
+  assert.equal(formatTelegramDate(Date.parse('2026-08-25T12:00:00.000Z')), 'August 25th, 2026');
   assert.equal(telegramStatusLabel('books', 'completed'), 'Read');
   assert.equal(telegramStatusLabel('games', 'in progress'), 'Playing');
+});
+
+test('a repeat shows when it was first added and when this viewing went into the diary', () => {
+  const rewatch = replyFor({ title: 'Heat', year: 1995, type: 'movies', intent: 'REWATCH_ITEM', existing: addedOct12('completed', { rating: 10 }), rating: 10 });
+  assert.equal(rewatch.headline, '🔁 Rewatched Heat (1995)');
+  assert.deepEqual(rewatch.lines, ['🎬 Movie · added Oct 12, 2026 · in your diary for Nov 3, 2026', '⭐ Your rating: 10/10', '📍 Watched']);
+  const reread = replyFor({ title: 'Saga', year: 2012, type: 'comics', intent: 'REWATCH_ITEM', existing: addedOct12('completed') });
+  assert.equal(reread.headline, '🔁 Reread Saga (2012)');
+  assert.equal(reread.lines[0], '💥 Comic · added Oct 12, 2026 · in your diary for Nov 3, 2026');
+});
+
+test('each media type has its own icon and progress reads as a position', () => {
+  const season = replyFor({ title: 'Severance', year: 2022, type: 'tv', intent: 'COMPLETE_SEASON', existing: addedOct12('in progress'), season: 2, seasonYear: 2025, progress: 'S02 E10', rating: 9 });
+  assert.equal(season.headline, '✅ Logged Season 2 of Severance (2022)');
+  assert.deepEqual(season.lines, ['📺 TV Show · in your diary for Nov 3, 2026', '⭐ Your rating: 9/10', '📍 Watching · on S02 E10']);
+
+  assert.deepEqual(replyFor({ title: 'Frieren', type: 'anime', intent: 'UPDATE_PROGRESS', existing: addedOct12('in progress'), progress: '12 Episodes' }).lines,
+    ['🍥 Anime · added Oct 12, 2026', '📍 Watching · on Episode 12']);
+  assert.deepEqual(replyFor({ title: 'Chainsaw Man', type: 'manga', intent: 'UPDATE_PROGRESS', existing: addedOct12('in progress'), progress: '140 Chapters' }).lines,
+    ['📚 Manga · added Oct 12, 2026', '📍 Reading · on Chapter 140']);
+  assert.equal(replyFor({ title: 'Steins;Gate', type: 'vn', intent: 'START' }).lines[0], '💬 Visual novel · added Nov 3, 2026');
+  assert.equal(replyFor({ title: 'Dune', type: 'books', intent: 'COMPLETE_ITEM' }).lines[0], '📖 Book · in your diary for Nov 3, 2026');
+
+  // A finished item shows only its status, never a stale position.
+  const finished = replyFor({ title: 'Barry', year: 2018, type: 'tv', intent: 'COMPLETE_ITEM', existing: addedOct12('in progress', { progress: 'S04 E08' }) });
+  assert.equal(finished.lines.at(-1), '📍 Watched');
+  // Games and visual novels never show a position, even when one is stored.
+  const game = replyFor({ title: 'Hades II', type: 'games', intent: 'UPDATE_PROGRESS', existing: addedOct12('in progress', { progress: '100%' }) });
+  assert.equal(game.lines.at(-1), '📍 Playing');
 });
 
 test('Telegram percentage progress never becomes an episode or chapter count', () => {

@@ -149,3 +149,29 @@ test('a one-time catch-up re-downloads unchanged TV rows whose cache lost the se
   const needsFullRow = item => item.type === 'tv' && !Array.isArray(item.apiData?.raw?.seasons);
   assert.deepEqual(rowsNeedingFullFetch(light, local, { needsFullRow }), ['r0']);
 });
+
+test('starting, finishing, or logging an item moves it up; episode progress and addedAt rewrites do not', async () => {
+  const { lastActivityTime, latestLogTimeByMediaKey, readLibrarySort } = await import('../src/domain/libraryContext.js');
+  const added = Date.parse('2026-01-01T00:00:00Z');
+  const show = { media_key: 'tmdb:tv:1', addedAt: added, dateStarted: null, dateCompleted: null, progress: 'S01 E05', updatedAt: added + 999_999_999 };
+  // A later episode update (updatedAt) is not activity.
+  assert.equal(lastActivityTime(show), added);
+  // Starting, finishing, or a newer diary entry is.
+  assert.equal(lastActivityTime({ ...show, dateStarted: added + 10 }), added + 10);
+  assert.equal(lastActivityTime({ ...show, dateCompleted: added + 20 }), added + 20);
+  const logs = latestLogTimeByMediaKey([
+    { media_key: 'tmdb:tv:1', log_date: '2026-03-01T00:00:00Z' },
+    { media_key: 'tmdb:tv:1', log_date: '2026-02-01T00:00:00Z' },
+    { media_key: 'tmdb:tv:2', log_date: '2026-04-01T00:00:00Z' },
+  ]);
+  assert.equal(lastActivityTime(show, logs), Date.parse('2026-03-01T00:00:00Z'));
+  assert.equal(show.addedAt, added);
+
+  // The old per-category key stored 'dateAdded' on every visit; the new default applies regardless.
+  const legacy = { getItem: key => (key === 'polyhedron-library-sort' ? JSON.stringify({ tv: 'dateAdded' }) : null) };
+  assert.equal(readLibrarySort(legacy, 'tv'), 'recentActivity');
+
+  const pages = await readFile(new URL('../src/pages/Pages.jsx', import.meta.url), 'utf8');
+  assert.match(pages, /title=\{searchQuery\.trim\(\) \? "Search Results" : "Recently Updated"\}/);
+  assert.match(pages, /recentActivity: 'Recently Updated'/);
+});

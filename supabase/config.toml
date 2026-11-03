@@ -29,3 +29,6 @@ verify_jwt = true
 
 [functions.vn]
 verify_jwt = true
+
+[functions.letterboxd]
+verify_jwt = true

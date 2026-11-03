@@ -263,28 +263,70 @@ export const buildTelegramLifecycle = ({
   };
 };
 
+const READ_MEDIA = new Set(['books', 'manga', 'comics']);
+const PLAY_MEDIA = new Set(['games', 'vn']);
+const consumedVerb = type => (READ_MEDIA.has(type) ? 'Read' : PLAY_MEDIA.has(type) ? 'Played' : 'Watched');
+const activeVerb = type => (READ_MEDIA.has(type) ? 'reading' : PLAY_MEDIA.has(type) ? 'playing' : 'watching');
+const repeatVerb = type => (READ_MEDIA.has(type) ? 'Reread' : PLAY_MEDIA.has(type) ? 'Replayed' : 'Rewatched');
+const planList = type => (READ_MEDIA.has(type) ? 'reading list' : PLAY_MEDIA.has(type) ? 'backlog' : 'watchlist');
+const MEDIA_ICON = { tv: '📺', anime: '🍥', movies: '🎬', games: '🎮', vn: '💬', books: '📖', manga: '📚', comics: '💥' };
+const REPEAT_INTENTS = new Set(['REWATCH_ITEM', 'REWATCH_SEASON']);
+
+// Short date for chat replies, e.g. "Oct 30, 2026".
+export const formatTelegramShortDate = value => {
+  const timestamp = finiteNumber(value);
+  if (timestamp === null) return null;
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+};
+
+// "12 Episodes" -> "Episode 12"; "S02 E10" stays as it is.
+export const telegramPositionLabel = progress => {
+  const text = String(progress || '').trim();
+  const count = text.match(/^(\d+)\s*(episode|chapter|issue)s?$/iu);
+  if (count) return `${count[2].charAt(0).toUpperCase()}${count[2].slice(1).toLowerCase()} ${count[1]}`;
+  return text || null;
+};
+
+// A chat-style reply: what happened, then the type with its library/diary dates, the rating,
+// and where the item stands (with the current position only while it is still under way).
 export const telegramConfirmation = ({ title, year, type, intent, lifecycle, activityAt }) => {
-  const verb = ({
-    ADD_PLANNED: 'Added', START: 'Started', UPDATE_PROGRESS: 'Updated', COMPLETE_ITEM: 'Completed',
-    COMPLETE_SEASON: 'Completed & logged', REWATCH_ITEM: 'Rewatched', REWATCH_SEASON: 'Rewatched & logged',
-    RATE: 'Rated', NOTE: 'Logged',
-  })[intent] || 'Updated';
-  const activity = lifecycle.actionType
-    ? lifecycle.actionType.toLowerCase().replace(/(^|-)\w/gu, value => value.toUpperCase())
+  const name = `${title}${year ? ` (${year})` : ''}`;
+  const season = lifecycle.seasonLabel;
+  const headline = ({
+    ADD_PLANNED: `📌 Added ${name} to your ${planList(type)}`,
+    START: `▶️ Started ${activeVerb(type)} ${name}`,
+    UPDATE_PROGRESS: `⏩ Updated progress on ${name}`,
+    COMPLETE_ITEM: `✅ ${consumedVerb(type)} ${name}`,
+    COMPLETE_SEASON: season ? `✅ Logged ${season} of ${name}` : `✅ ${consumedVerb(type)} ${name}`,
+    REWATCH_ITEM: `🔁 ${repeatVerb(type)} ${name}`,
+    REWATCH_SEASON: season ? `🔁 ${repeatVerb(type)} ${season} of ${name}` : `🔁 ${repeatVerb(type)} ${name}`,
+    RATE: `⭐ Rated ${name}`,
+    NOTE: `📝 Added a review of ${name}${season ? ` (${season})` : ''}`,
+  })[intent] || `✏️ Updated ${name}`;
+
+  // A diary entry shows its diary date; a repeat also shows when the item was first added.
+  // Without a diary entry, the line shows when the item was added to the library.
+  const addedOn = formatTelegramShortDate(lifecycle.addedAt);
+  const diaryOn = lifecycle.shouldLog ? formatTelegramShortDate(activityAt) : null;
+  const dates = diaryOn
+    ? [REPEAT_INTENTS.has(intent) && addedOn ? `added ${addedOn}` : null, `in your diary for ${diaryOn}`]
+    : [addedOn ? `added ${addedOn}` : null];
+  const typeLine = [`${MEDIA_ICON[type] || '🗂️'} ${telegramMediaTypeLabel(type)}`, ...dates].filter(Boolean).join(' · ');
+
+  const status = String(lifecycle.status || '').toLowerCase();
+  const position = ['in progress', 'dropped'].includes(status) && !PLAY_MEDIA.has(type)
+    ? telegramPositionLabel(lifecycle.progress)
     : null;
-  const titleWithYear = `${title}${year ? ` (${year})` : ''}`;
-  const dateAdded = formatTelegramDate(lifecycle.addedAt);
-  const activityDate = formatTelegramDate(activityAt);
+  const standing = `📍 ${telegramStatusLabel(type, lifecycle.status)}${position ? ` · on ${position}` : ''}`;
+
   return {
-    headline: `${verb} ${titleWithYear}${lifecycle.seasonLabel ? ` — ${lifecycle.seasonLabel}` : ''}`,
+    headline,
     lines: [
-      `Type: ${telegramMediaTypeLabel(type)}`,
-      dateAdded ? `Date Added: ${dateAdded}` : null,
-      `Status: ${telegramStatusLabel(type, lifecycle.status)}`,
-      lifecycle.progress ? `Progress: ${lifecycle.progress}` : null,
-      lifecycle.shouldLog && activity ? `Activity: ${activity}` : null,
-      lifecycle.shouldLog && activityDate ? `Diary Date: ${activityDate}` : null,
-      lifecycle.rating ? `Rating: ${lifecycle.rating}/10` : null,
+      typeLine,
+      lifecycle.rating ? `⭐ Your rating: ${lifecycle.rating}/10` : null,
+      standing,
     ].filter(Boolean),
   };
 };

@@ -23,9 +23,10 @@ test('Library presentation preferences persist only valid view and sort values',
 test('Library URL context is validated and default values stay out of the URL', () => {
   const parsed = parseLibraryContext('q=alien&status=in%20progress&sort=title&page=3');
   assert.deepEqual(parsed, { search: 'alien', status: 'in progress', sort: 'title', page: 3 });
-  assert.equal(updateLibraryContext(new URLSearchParams('q=alien&page=2'), { search: '', status: 'all', sort: 'dateAdded', page: 1 }).toString(), '');
-  assert.equal(updateLibraryContext(new URLSearchParams('sort=rating'), { sort: 'dateAdded', page: 1 }).toString(), 'sort=dateAdded');
-  assert.deepEqual(parseLibraryContext('status=watched&sort=bad&page=-4'), { search: '', status: 'all', sort: 'dateAdded', page: 1 });
+  assert.equal(updateLibraryContext(new URLSearchParams('q=alien&page=2'), { search: '', status: 'all', sort: 'recentActivity', page: 1 }).toString(), '');
+  assert.equal(updateLibraryContext(new URLSearchParams('sort=rating'), { sort: 'recentActivity', page: 1 }).toString(), 'sort=recentActivity');
+  assert.equal(updateLibraryContext(new URLSearchParams(''), { sort: 'dateAdded', page: 1 }).toString(), 'sort=dateAdded');
+  assert.deepEqual(parseLibraryContext('status=watched&sort=bad&page=-4'), { search: '', status: 'all', sort: 'recentActivity', page: 1 });
 });
 
 test('Discovery includes all supported media and constructs defensible date/rating queries', () => {
@@ -71,4 +72,19 @@ test('TV quick progress retains state-only semantics and explicit season logging
   assert.doesNotMatch(sourceStore.match(/updateMediaProgress:[\s\S]*?toggleIssueRead:/)?.[0] || '', /addDiaryLog|saveMediaWithLog/);
   // Season history is logged only through the explicit Add to Diary command.
   assert.match(sourceUI, /buildTvDiaryEntry\(baseTvItem/);
+});
+
+test('choosing the default sort works on the first click even when another sort was remembered', async () => {
+  const { chooseLibrarySort } = await import('../src/domain/libraryContext.js');
+  const storage = memoryStorage();
+  writeLibrarySort(storage, 'tv', 'rating');
+  // No sort in the URL, remembered sort is Rating: the page shows Rating.
+  assert.equal(parseLibraryContext('', readLibrarySort(storage, 'tv')).sort, 'rating');
+  // One click on the default sort must take effect immediately.
+  const params = chooseLibrarySort(storage, new URLSearchParams(''), 'tv', 'recentActivity');
+  assert.equal(parseLibraryContext(params, readLibrarySort(storage, 'tv')).sort, 'recentActivity');
+  // And any other sort still works, with the page reset.
+  const titled = chooseLibrarySort(storage, new URLSearchParams('page=3'), 'tv', 'title');
+  assert.equal(parseLibraryContext(titled, readLibrarySort(storage, 'tv')).sort, 'title');
+  assert.equal(titled.get('page'), null);
 });

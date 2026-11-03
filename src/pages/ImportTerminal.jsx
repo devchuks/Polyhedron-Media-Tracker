@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { useMediaStore, useUIStore } from '../store/useMediaStore';
+import { confirmAction, useMediaStore, useUIStore } from '../store/useMediaStore';
 import { apiRegistry } from '../services/apiRegistry';
 import { Loader2, Check, X, Edit3, Save, Terminal, Play, Upload, FileJson, ChevronUp, ChevronDown, Plus, ShieldAlert, Archive, FileSpreadsheet, FileCode2, AlertTriangle } from 'lucide-react';
 import { ImageWithFallback, getSubtype } from '../components/UI';
@@ -700,15 +700,20 @@ export const ImportTerminal = () => {
       const parsed = JSON.parse(text);
       
       if (parsed.media && parsed.mediaLogs) {
-        if (window.confirm("This will overwrite your current library with the backup. Proceed?")) {
+        const confirmed = await confirmAction({
+          title: 'Restore backup?',
+          message: 'This overwrites your current library and diary with the backup file.',
+          confirmLabel: 'Restore',
+        });
+        if (confirmed) {
           await restoreBackup(parsed);
-          alert("Library Restored Successfully!");
+          useUIStore.getState().addToast('Library restored from backup.', 'success');
         }
       } else {
-        alert('Invalid backup file. Missing media or mediaLogs.');
+        useUIStore.getState().addToast('Invalid backup file: it has no media or diary data.', 'error');
       }
-    } catch (err) { 
-      alert(`Import Failed: ${err.message}\n\nMake sure the file is fully downloaded to your phone's local storage.`); 
+    } catch (err) {
+      useUIStore.getState().addToast(`Import failed: ${err.message}. Make sure the file is fully downloaded to this device.`, 'error');
     } finally {
       setIsRestoring(false);
       e.target.value = null;
@@ -1015,12 +1020,12 @@ export const ImportTerminal = () => {
               </button>
             )}
             {pendingItems.length > 0 && (
-              <button onClick={() => { if (window.confirm("Are you sure you want to clear all pending items? Ready items will be kept.")) clearPendingImportQueue(); }} disabled={isBatchCommitting || isAutoProcessing} className="btn btn-xs btn-outline border-warning text-warning hover:bg-warning hover:text-warning-content rounded-none font-mono uppercase tracking-widest text-[10px]">
+              <button onClick={async () => { if (await confirmAction({ title: 'Clear pending items?', message: 'Pending items are removed. Ready items are kept.', confirmLabel: 'Clear pending' })) clearPendingImportQueue(); }} disabled={isBatchCommitting || isAutoProcessing} className="btn btn-xs btn-outline border-warning text-warning hover:bg-warning hover:text-warning-content rounded-none font-mono uppercase tracking-widest text-[10px]">
                 <X className="w-3 h-3 mr-1" /> Clear Pending
               </button>
             )}
             {importQueue.length > 0 && (
-              <button onClick={() => { if (window.confirm("Are you sure you want to permanently clear the entire queue?")) clearImportQueue(); }} disabled={isBatchCommitting || isAutoProcessing} className="btn btn-xs btn-outline border-error text-error hover:bg-error hover:text-error-content rounded-none font-mono uppercase tracking-widest text-[10px]">
+              <button onClick={async () => { if (await confirmAction({ title: 'Clear the whole queue?', message: 'Every item in the import queue is permanently removed.', confirmLabel: 'Clear queue' })) clearImportQueue(); }} disabled={isBatchCommitting || isAutoProcessing} className="btn btn-xs btn-outline border-error text-error hover:bg-error hover:text-error-content rounded-none font-mono uppercase tracking-widest text-[10px]">
                 <X className="w-3 h-3 mr-1" /> Clear Queue
               </button>
             )}

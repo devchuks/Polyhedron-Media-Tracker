@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { Trash2, Download, Loader2, AlertTriangle } from 'lucide-react';
-import { useMediaStore } from '../store/useMediaStore';
+import { confirmAction, useMediaStore, useUIStore } from '../store/useMediaStore';
+import { AniListLink } from '../components/AniListLink';
+import { LetterboxdLink } from '../components/LetterboxdLink';
 import { apiRegistry } from '../services/apiRegistry';
 import { mediaKeyFor } from '../domain/mediaIdentity';
 
@@ -220,7 +222,7 @@ const Settings = () => {
   const store = useMediaStore();
 
   const handleClearStorage = async () => {
-    if (window.confirm('Delete ALL local data? This cannot be undone.')) {
+    if (await confirmAction({ title: 'Delete all local data?', message: 'Everything stored in this browser is removed. This cannot be undone.', confirmLabel: 'Delete local data' })) {
       setIsClearing(true);
       localStorage.clear();
       sessionStorage.clear();
@@ -229,22 +231,22 @@ const Settings = () => {
         window.location.reload();
       } catch (error) {
         console.error('Local clear failed:', error);
-        alert('Local data could not be fully cleared. Please retry.');
+        useUIStore.getState().addToast('Local data could not be fully cleared. Please retry.', 'error');
         setIsClearing(false);
       }
     }
   };
 
   const handleNukeCloudData = async () => {
-    if (window.confirm('WARNING: This will permanently delete your entire library and all diary logs from the cloud. Are you sure?')) {
-      if (window.confirm('FINAL WARNING: This action cannot be undone!')) {
+    if (await confirmAction({ title: 'Delete your cloud library?', message: 'Your entire library and all diary entries are permanently deleted from the cloud.', confirmLabel: 'Continue' })) {
+      if (await confirmAction({ title: 'Final warning', message: 'This cannot be undone.', confirmLabel: 'Delete everything' })) {
         setIsNuking(true);
         try {
           await store.nukeCloudData();
-          alert('Your databank has been completely wiped.');
+          useUIStore.getState().addToast('Your cloud library has been completely deleted.', 'success');
         } catch (error) {
           console.error('Cloud reset failed:', error);
-          alert('Cloud reset failed. Your local data was not cleared.');
+          useUIStore.getState().addToast('Cloud reset failed. Your local data was not cleared.', 'error');
         } finally {
           setIsNuking(false);
         }
@@ -255,6 +257,9 @@ const Settings = () => {
   return (
     <div className="max-w-2xl mx-auto flex flex-col gap-6 animate-in fade-in duration-300">
       <h1 className="text-2xl font-black uppercase tracking-widest font-sans border-b border-base-300 pb-2">Settings</h1>
+
+      {store.authMode === 'admin' && <AniListLink />}
+      {store.authMode === 'admin' && <LetterboxdLink />}
 
       <div className="bg-base-100 border border-base-300 p-6 flex flex-col gap-4">
         <h2 className="text-sm font-black uppercase tracking-widest text-error">Danger Zone</h2>

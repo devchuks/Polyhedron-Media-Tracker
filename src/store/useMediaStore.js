@@ -1234,6 +1234,19 @@ export const useUIStore = create((set) => ({
   removeToast: (id) => set((state) => ({
     toasts: state.toasts.filter((t) => t.id !== id)
   })),
+  // In-app confirmation. Browser confirm() is silently blocked in some embedded/in-app browsers,
+  // which made every delete cancel itself; this dialog works everywhere.
+  confirmRequest: null,
+  requestConfirm: (options) => new Promise(resolve => {
+    set((state) => {
+      state.confirmRequest?.resolve(false);
+      return { confirmRequest: { ...options, resolve } };
+    });
+  }),
+  resolveConfirm: (answer) => set((state) => {
+    state.confirmRequest?.resolve(Boolean(answer));
+    return { confirmRequest: null };
+  }),
   viewMode: readLibraryViewMode(browserLocalStorage()),
   setViewMode: (mode) => {
     if (writeLibraryViewMode(browserLocalStorage(), mode)) set({ viewMode: mode });
@@ -1247,3 +1260,6 @@ if (typeof window !== 'undefined') {
     }
   });
 }
+
+// Resolves true only when the user confirms in the in-app dialog.
+export const confirmAction = (options) => useUIStore.getState().requestConfirm(options);

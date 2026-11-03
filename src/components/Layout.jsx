@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Menu, Search, User, Home, Tv, Film, Gamepad2, Eye, Star, BookOpen, Book, Image as ImageIcon, CalendarDays, X, Loader2, Compass } from 'lucide-react';
-import { SearchModal, ToastContainer, GlobalDiaryModal } from './UI'; // Added GlobalDiaryModal
+import { SearchModal, ToastContainer, GlobalDiaryModal, ConfirmDialog } from './UI'; // Added GlobalDiaryModal
 import { apiRegistry } from '../services/apiRegistry';
 import { useMediaStore } from '../store/useMediaStore';
 import { prefetchDiscovery } from '../services/discoveryLoader';
+import { syncAniListOnOpen } from '../services/anilistSync';
+import { syncLetterboxdOnOpen } from '../services/letterboxdSync';
 import { Gate } from '../pages/Gate';
 import { supabase } from '../services/supabase';
 import { appEnvironment, showEnvironmentBadge } from '../config/environment';
@@ -211,7 +213,7 @@ export const Sidebar = () => {
 
 export const AppLayout = () => {
   const navigate = useNavigate();
-  const { authMode, _hasHydrated, isLoading, initAuthSubscription } = useMediaStore();
+  const { authMode, _hasHydrated, isLoading, initAuthSubscription, isCloudSyncing, ownerId } = useMediaStore();
 
   const [searchState, setSearchState] = useState({
     isOpen: false, isLoading: false, query: '', type: 'movies', results: [], page: 1, totalPages: 1, error: null
@@ -235,6 +237,12 @@ export const AppLayout = () => {
   useEffect(() => {
     if (authMode === 'admin' || authMode === 'guest') void prefetchDiscovery();
   }, [authMode]);
+
+  // Once the cloud library is current, pull anything new from linked AniList and Letterboxd accounts.
+  useEffect(() => {
+    if (authMode !== 'admin' || !ownerId || isCloudSyncing) return;
+    void syncAniListOnOpen(ownerId).then(() => syncLetterboxdOnOpen(ownerId));
+  }, [authMode, ownerId, isCloudSyncing]);
 
   // Prevent native pull-to-refresh on mobile browsers
   useEffect(() => {
@@ -328,6 +336,7 @@ export const AppLayout = () => {
           onSelect={handleSelectItem} onPageChange={handlePageChange}
         />
         <ToastContainer />
+        <ConfirmDialog />
         <GlobalLightbox />
         
         {/* NEW: Global Logging Modal Mounted Here */}

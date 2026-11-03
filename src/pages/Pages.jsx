@@ -17,7 +17,7 @@ import { isDetailEnrichmentPending, previewItemForRoute, resolveDetailTitle, run
 import { firstUsableImageUrl } from '../domain/mediaImages';
 import { createLatestRequestGate } from '../utils/latestRequest';
 import { formatSeasonNumber, mediaStatusLabel } from '../domain/mediaTerminology';
-import { parseLibraryContext, readLibrarySort, updateLibraryContext, writeLibrarySort } from '../domain/libraryContext';
+import { chooseLibrarySort, parseLibraryContext, readLibrarySort, updateLibraryContext, writeLibrarySort, lastActivityTime, latestLogTimeByMediaKey } from '../domain/libraryContext';
 
 const VALID_CATEGORIES = ['tv', 'movies', 'games', 'vn', 'anime', 'manga', 'books', 'comics'];
 
@@ -279,11 +279,12 @@ export const Dashboard = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const { recentlyAddedItems, inProgress, recentActivity } = React.useMemo(() => {
     const allItems = Object.values(media).flat();
-    const getAddedTime = (item) => item.addedAt || item.dateAdded || 0;
+    const latestLogs = latestLogTimeByMediaKey(mediaLogs);
     
     const filtered = filterDashboardItems(allItems, filter, searchQuery);
     
-    const recent = filtered.sort((a, b) => getAddedTime(b) - getAddedTime(a));
+    // Starting, finishing or logging something moves it back to the top.
+    const recent = filtered.sort((a, b) => lastActivityTime(b, latestLogs) - lastActivityTime(a, latestLogs));
     
     // A show parked on a season finale is waiting for its next season, not something to jump back into.
     const active = allItems
@@ -387,7 +388,7 @@ export const Dashboard = () => {
 
         <div className={`order-2 xl:order-3 min-w-0 w-full ${hasTimeline && !hasJumpBackIn ? 'xl:col-start-1 xl:row-start-1 xl:col-span-1' : 'xl:col-span-full'}`}>
           <DashSection 
-            title={searchQuery.trim() ? "Search Results" : "Recently Added"} 
+            title={searchQuery.trim() ? "Search Results" : "Recently Updated"}
             items={paginatedItems} 
             isLoading={isLoading || isPopulating} 
             viewMode={viewMode}
@@ -443,6 +444,7 @@ export const MediaCategory = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const isValidCategory = VALID_CATEGORIES.includes(category);
   const items = useMediaStore((state) => state.media[category]) || [];
+  const mediaLogs = useMediaStore((state) => state.mediaLogs);
   const isLoading = useMediaStore((state) => state.isLoading);
   const isCloudSyncing = useMediaStore((state) => state.isCloudSyncing);
   const viewMode = useUIStore((state) => state.viewMode);
@@ -480,7 +482,11 @@ export const MediaCategory = () => {
       return 0;
     };
 
-    if (sort === 'dateAdded') displayItems.sort((a,b) => (b.addedAt || b.dateAdded || 0) - (a.addedAt || a.dateAdded || 0));
+    if (sort === 'recentActivity') {
+      const latestLogs = latestLogTimeByMediaKey(mediaLogs);
+      displayItems.sort((a, b) => lastActivityTime(b, latestLogs) - lastActivityTime(a, latestLogs));
+    }
+    else if (sort === 'dateAdded') displayItems.sort((a,b) => (b.addedAt || b.dateAdded || 0) - (a.addedAt || a.dateAdded || 0));
     else if (sort === 'dateStarted') displayItems.sort((a,b) => (b.dateStarted || 0) - (a.dateStarted || 0));
     else if (sort === 'dateFinished') displayItems.sort((a,b) => (b.dateCompleted || 0) - (a.dateCompleted || 0));
     else if (sort === 'releaseYear') displayItems.sort((a,b) => getYear(b) - getYear(a));
@@ -489,9 +495,10 @@ export const MediaCategory = () => {
     else if (sort === 'title') displayItems.sort((a,b) => String(a.title || '').localeCompare(String(b.title || '')));
     
     return displayItems;
-  }, [items, filter, sort, searchQuery]);
+  }, [items, filter, sort, searchQuery, mediaLogs]);
 
   const sortLabels = {
+    recentActivity: 'Recently Updated',
     dateAdded: 'Date Added',
     dateStarted: 'Date Started',
     dateFinished: 'Date Finished',
@@ -556,7 +563,7 @@ export const MediaCategory = () => {
             </label>
             <label className="flex-1 sm:flex-none min-w-0">
               <span className="sr-only">Sort library</span>
-              <select value={sort} onChange={event => setContext({ sort: event.target.value, page: 1 })} className="w-full sm:w-44 h-8 px-2 rounded-none border border-base-300 bg-base-100 text-[10px] font-mono uppercase font-bold tracking-widest focus:border-primary focus:outline-none">
+              <select value={sort} onChange={event => setSearchParams(chooseLibrarySort(window.localStorage, searchParams, category, event.target.value), { replace: true })} className="w-full sm:w-44 h-8 px-2 rounded-none border border-base-300 bg-base-100 text-[10px] font-mono uppercase font-bold tracking-widest focus:border-primary focus:outline-none">
                 {Object.entries(sortLabels).map(([value, label]) => <option key={value} value={value}>Sort: {label}</option>)}
               </select>
             </label>

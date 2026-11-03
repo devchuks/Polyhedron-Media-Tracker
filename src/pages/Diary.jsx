@@ -14,7 +14,7 @@ import {
 import { findMediaInIndex, indexMediaByKey } from '../domain/mediaState';
 import { shouldShowBlockingSkeleton, shouldShowUpdatingIndicator } from '../domain/loadingState';
 import { diaryActionsForMediaType } from '../domain/mediaTerminology';
-import { useMediaStore } from '../store/useMediaStore';
+import { confirmAction, useMediaStore } from '../store/useMediaStore';
 import { dateInputFromTimestamp, timestampFromDateInput } from '../utils/calendarDate';
 
 const ITEMS_PER_PAGE = 30;
@@ -182,8 +182,13 @@ export const Diary = () => {
 
   const toggleControl = control => setActiveControl(current => current === control ? null : control);
 
-  const handleDeleteLog = log => {
-    if (window.confirm(`Delete this diary entry for ${log.mediaItem.title}? This will not change current Library state.`)) {
+  const handleDeleteLog = async log => {
+    const confirmed = await confirmAction({
+      title: 'Delete diary entry?',
+      message: `This removes the entry for ${log.mediaItem.title}. Its library status stays as it is.`,
+      confirmLabel: 'Delete',
+    });
+    if (confirmed) {
       removeDiaryLog(log.log_id);
       if (paginatedLogs.length === 1 && currentPage > 1) setCurrentPage(page => page - 1);
     }
