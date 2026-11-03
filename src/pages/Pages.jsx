@@ -8,7 +8,8 @@ import { apiRegistry } from '../services/apiRegistry';
 import { normalizeProviderDetail, processDetailRaw } from '../utils/normalizers';
 import { NotFound } from './NotFound';
 import { populateDemoData } from './Settings';
-import { filterDashboardItems, findMediaForLog, normalizeProviderScore, preferredMediaImage } from '../domain/mediaState';
+import { filterDashboardItems, findMediaInIndex, indexMediaByKey, normalizeProviderScore, preferredMediaImage } from '../domain/mediaState';
+import { isAtSeasonFinale } from '../domain/tvWorkflow';
 import { canonicalizeMediaItem, mediaKeyFor } from '../domain/mediaIdentity';
 import { safeExternalUrl } from '../utils/urlSafety';
 import { shouldShowBlockingSkeleton, shouldShowUpdatingIndicator } from '../domain/loadingState';
@@ -284,18 +285,20 @@ export const Dashboard = () => {
     
     const recent = filtered.sort((a, b) => getAddedTime(b) - getAddedTime(a));
     
+    // A show parked on a season finale is waiting for its next season, not something to jump back into.
     const active = allItems
-      .filter(item => item.status === 'in progress')
+      .filter(item => item.status === 'in progress' && !(item.type === 'tv' && isAtSeasonFinale(item)))
       .sort((a, b) => (b.updatedAt || b.addedAt || 0) - (a.updatedAt || a.addedAt || 0))
       .slice(0, 20);
 
-    const recentLogs = (mediaLogs || [])
-      .map(log => {
-        const mediaItem = findMediaForLog(media, log);
-        return { ...log, mediaItem };
-      })
-      .filter(log => log.mediaItem)
-      .slice(0, 20);
+    // Only the 20 most recent entries are shown, so stop matching once they are found.
+    const mediaIndex = indexMediaByKey(media);
+    const recentLogs = [];
+    for (const log of mediaLogs || []) {
+      const mediaItem = findMediaInIndex(mediaIndex, log);
+      if (mediaItem) recentLogs.push({ ...log, mediaItem });
+      if (recentLogs.length === 20) break;
+    }
 
     return { recentlyAddedItems: recent, inProgress: active, recentActivity: recentLogs };
   }, [media, mediaLogs, searchQuery, filter]);
@@ -602,6 +605,7 @@ export const DetailView = () => {
     (type === 'comics' && String(id).startsWith('series_') && String(m.apiData?.raw?.id) === String(id).replace('series_', ''))
   ));
   const patchProviderMetadata = useMediaStore((state) => state.patchProviderMetadata);
+  const loadCloudItemDetail = useMediaStore((state) => state.loadCloudItemDetail);
   const toggleIssueRead = useMediaStore((state) => state.toggleIssueRead);
   const setGlobalLightbox = useMediaStore((state) => state.setGlobalLightbox);
   const mediaLogs = useMediaStore((state) => state.mediaLogs);
@@ -740,7 +744,11 @@ export const DetailView = () => {
       && activeFetchIdRef.current?.requestId === requestId;
 
     void runSettlingDetailRequest({
-      load: () => apiRegistry.getMediaDetails(id, type),
+      // A library row's complete provider payload usually already exists in the cloud; restoring
+      // it avoids a provider round trip and a redundant metadata write. Null settles the request.
+      load: async () => (storeItem && await loadCloudItemDetail(storeItem, type))
+        ? null
+        : apiRegistry.getMediaDetails(id, type),
       isCurrent,
       onResolved: async (rawDetails) => {
         const normalizedDetail = targetItem || normalizeProviderDetail(rawDetails, type);
@@ -762,7 +770,11 @@ export const DetailView = () => {
         // A hydrated library row may legitimately have a complete top-level image
         // while older/sparse apiData has no nested image. Provider enrichment must
         // never replace that usable source with null during the first detail open.
-        const updatedImage = firstUsableImageUrl(rawDetails.image, preferredMediaImage(storeItem || previewItem || normalizedDetail));
+        // A stored row keeps its existing poster so cards and the detail poster do not swap to a
+        // different provider rendition (e.g. VNDB thumbnail vs full-size) on the first visit.
+        const updatedImage = storeItem
+          ? firstUsableImageUrl(preferredMediaImage(storeItem), rawDetails.image)
+          : firstUsableImageUrl(rawDetails.image, preferredMediaImage(previewItem || normalizedDetail));
 
         if (isPreview) setPreviewItem(prev => ({ ...normalizedDetail, ...prev, title: updatedTitle, image: updatedImage, raw: updatedRaw, year: updatedYear, url: updatedUrl || prev?.url || normalizedDetail.url }));
         else patchProviderMetadata(storeItem, type, { title: updatedTitle, image: updatedImage, apiData: { ...storeItem.apiData, image: updatedImage, raw: updatedRaw, year: updatedYear, url: updatedUrl || storeItem.apiData.url } });
@@ -778,7 +790,7 @@ export const DetailView = () => {
         activeFetchIdRef.current = null;
       }
     };
-  }, [detailRetryKey, id, isPreview, isValidType, patchProviderMetadata, previewItem, routeKey, storeItem, type]);
+  }, [detailRetryKey, id, isPreview, isValidType, loadCloudItemDetail, patchProviderMetadata, previewItem, routeKey, storeItem, type]);
 
   useEffect(() => {
     if (!cleanId || !isValidType) return;
@@ -942,7 +954,8 @@ export const DetailView = () => {
               </h1>
               <div className={`w-fit shrink-0 inline-flex items-center px-2 py-0.5 mt-1 text-[10px] font-mono font-bold tracking-[0.15em] uppercase border border-base-300 ${typeColors.bg} ${typeColors.textContent}`}>{getSubtype(type)}</div>
             </div>
-            {isDeepFetching && !raw.deepFetched ? (
+            {/* A stored row already carries its basic metadata; only a bare preview waits on enrichment. */}
+            {isDeepFetching && !raw.deepFetched && !storeItem ? (
               <div className="flex flex-wrap items-center gap-4 border-b border-base-300 pb-3 mt-3"><div className="h-3 w-24 bg-base-300 animate-pulse"></div><div className="h-3 w-32 bg-base-300 animate-pulse"></div><div className="h-3 w-20 bg-base-300 animate-pulse"></div><div className="h-3 w-28 bg-base-300 animate-pulse"></div></div>
             ) : (
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[10px] font-mono uppercase tracking-widest text-base-content/60 border-b border-base-300 pb-3 mt-3">

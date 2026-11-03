@@ -70,3 +70,10 @@ export const sectionState = ({ loading, items, error }) => {
   if (!(items?.length)) return 'empty';
   return loading ? 'updating' : 'ready';
 };
+
+export const DISCOVERY_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+
+export const isDiscoveryCacheFresh = (cached, now = Date.now()) => Boolean(cached?.data)
+  && cached.data._version === DISCOVERY_CACHE_VERSION
+  && now - (Number(cached.timestamp) || 0) < DISCOVERY_CACHE_TTL_MS
+  && ['trending', 'upcoming', 'popular'].some(key => cached.data[key]?.length > 0);

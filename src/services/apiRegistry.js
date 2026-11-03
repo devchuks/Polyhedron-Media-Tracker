@@ -758,9 +758,8 @@ export const apiRegistry = {
         });
       }
       
-      if (result.length > 0) {
-        setSessionCache(sessionCache.recs, cacheKey, result);
-      }
+      // Empty results are cached too, so titles without recommendations do not flash skeletons on every visit.
+      setSessionCache(sessionCache.recs, cacheKey, result);
       return result;
     } catch (err) { reportApiError(err, `${type.toUpperCase()} Recommendations`); return []; }
   },

@@ -20,6 +20,16 @@ export const isJwtIssuedAtFutureError = error => {
     && message.includes('future');
 };
 
+// True only for an unreachable auth service (offline, DNS, 5xx), never for a rejected session.
+export const isRetryableAuthError = error => {
+  if (!error) return false;
+  if (error.name === 'AuthRetryableFetchError') return true;
+  const status = Number(error.status);
+  if (status >= 500) return true;
+  if (Number.isFinite(status) && status > 0) return false;
+  return /failed to fetch|networkerror|network request failed|load failed/iu.test(String(error.message || ''));
+};
+
 export const retryAfterJwtRefresh = async (operation, refreshSession) => {
   try {
     return await operation();

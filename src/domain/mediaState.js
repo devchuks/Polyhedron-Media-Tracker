@@ -51,6 +51,31 @@ export const serializeTvProgress = (status, season, episode) => {
 
 export const preferredMediaImage = item => firstUsableImageUrl(item?.image, item?.apiData?.image);
 
+// One pass over the library: canonical media key -> item (first match wins, as in findMediaForLog).
+// Matching many diary logs through this index avoids rescanning the whole library per log.
+export const indexMediaByKey = (media) => {
+  const index = new Map();
+  for (const [category, items] of Object.entries(media || {})) {
+    for (const item of items || []) {
+      try {
+        const key = mediaKeyFor(item, category);
+        if (!index.has(key)) index.set(key, item);
+      } catch {
+        // Ignore malformed legacy rows instead of attaching a log to the wrong media.
+      }
+    }
+  }
+  return index;
+};
+
+export const findMediaInIndex = (index, log) => {
+  try {
+    return index.get(mediaKeyFor(log));
+  } catch {
+    return undefined;
+  }
+};
+
 export const findMediaForLog = (media, log) => {
   let targetKey;
   try {

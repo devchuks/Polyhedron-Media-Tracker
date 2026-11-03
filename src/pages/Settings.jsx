@@ -164,7 +164,6 @@ export const populateDemoData = async (store, setPopLog, setIsPopulating) => {
             if (type === 'tv') progress = `S01 E${Math.ceil(Math.random() * 5)}`;
             else if (type === 'anime') progress = `${Math.ceil(Math.random() * 6)} Episodes`;
             else if (type === 'manga' || type === 'comics') progress = `${Math.ceil(Math.random() * 30)} Chapters`;
-            else if (type === 'games' || type === 'vn') progress = `${Math.ceil(Math.random() * 40)}%`;
           }
 
           const addedAt = Date.now() - Math.floor(Math.random() * 10000000000);

@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, Menu, Search, User, Home, Tv, Film, Gamepad2
 import { SearchModal, ToastContainer, GlobalDiaryModal } from './UI'; // Added GlobalDiaryModal
 import { apiRegistry } from '../services/apiRegistry';
 import { useMediaStore } from '../store/useMediaStore';
+import { prefetchDiscovery } from '../services/discoveryLoader';
 import { Gate } from '../pages/Gate';
 import { supabase } from '../services/supabase';
 import { appEnvironment, showEnvironmentBadge } from '../config/environment';
@@ -230,6 +231,10 @@ export const AppLayout = () => {
   useEffect(() => {
     if (_hasHydrated) initAuthSubscription();
   }, [_hasHydrated, initAuthSubscription]);
+
+  useEffect(() => {
+    if (authMode === 'admin' || authMode === 'guest') void prefetchDiscovery();
+  }, [authMode]);
 
   // Prevent native pull-to-refresh on mobile browsers
   useEffect(() => {

@@ -12,6 +12,7 @@
 .env
 .env.*
 *.local
+testfornow.env
 
 # Local operational verification and cutover tooling
 /scripts/*.mjs
@@ -21,6 +22,8 @@
 
 # Local agent instructions and internal project documentation
 /AGENTS.md
+/.claude/
+/CLAUDE.md
 /project-docs/
 
 # Supabase local CLI state and production recovery artifacts

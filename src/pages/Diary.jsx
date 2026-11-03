@@ -11,7 +11,7 @@ import {
   formatDiaryRating,
   groupDiaryLogsByDate,
 } from '../domain/diary';
-import { findMediaForLog } from '../domain/mediaState';
+import { findMediaInIndex, indexMediaByKey } from '../domain/mediaState';
 import { shouldShowBlockingSkeleton, shouldShowUpdatingIndicator } from '../domain/loadingState';
 import { diaryActionsForMediaType } from '../domain/mediaTerminology';
 import { useMediaStore } from '../store/useMediaStore';
@@ -120,10 +120,11 @@ export const Diary = () => {
   const [isJumping, setIsJumping] = useState(false);
   const [activeControl, setActiveControl] = useState(null);
 
+  const mediaIndex = useMemo(() => indexMediaByKey(media), [media]);
   const enrichedLogs = useMemo(() => mediaLogs.map(log => ({
     ...log,
-    mediaItem: findMediaForLog(media, log),
-  })).filter(log => log.mediaItem), [mediaLogs, media]);
+    mediaItem: findMediaInIndex(mediaIndex, log),
+  })).filter(log => log.mediaItem), [mediaLogs, mediaIndex]);
 
   const activityOptions = useMemo(() => diaryActivityOptions(enrichedLogs), [enrichedLogs]);
   const filteredLogs = useMemo(() => filterDiaryLogs(enrichedLogs, {
@@ -271,7 +272,7 @@ export const Diary = () => {
       ) : dateGroups.length === 0 ? (
         <div className="bg-base-100 py-16 text-center">
           <p className="font-sans text-lg font-bold">{filtersActive ? 'No matching history' : 'Your Diary is empty'}</p>
-          <p className="mx-auto mt-2 max-w-md text-sm text-base-content/55">{filtersActive ? 'Try another title, media type, or activity.' : 'Use Log Activity to add your first historical entry.'}</p>
+          <p className="mx-auto mt-2 max-w-md text-sm text-base-content/55">{filtersActive ? 'Try another title, media type, or activity.' : 'Use Log to Diary on any title to add your first entry.'}</p>
           {filtersActive && <button type="button" onClick={clearFilters} className="mt-5 h-10 border border-primary px-4 font-mono text-[10px] font-bold uppercase tracking-widest text-primary">Clear filters</button>}
         </div>
       ) : (

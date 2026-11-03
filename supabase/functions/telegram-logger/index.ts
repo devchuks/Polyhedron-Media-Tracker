@@ -457,7 +457,8 @@ for (let i = 0; i < items.length; i++) {
   const cleanTitle = typeof item.cleanTitle === 'string' ? item.cleanTitle.trim() : 'Unknown Title';
   const year = item.year !== null && item.year !== undefined ? parseInt(item.year, 10) : null;
   const explicitProviderId = item.providerId !== null && item.providerId !== undefined ? String(item.providerId).trim() : null;
-  const season = item.season !== null && item.season !== undefined ? parseInt(item.season, 10) : null;
+  // Reassigned below when a release year resolves to a specific season.
+  let season = item.season !== null && item.season !== undefined ? parseInt(item.season, 10) : null;
   const issue = item.progressNumber !== null && item.progressNumber !== undefined ? Math.floor(item.progressNumber) : null;
 
   let type = typeof item.type === 'string' ? item.type.toLowerCase() : 'unknown';
@@ -896,6 +897,7 @@ for (let i = 0; i < items.length; i++) {
         intent,
         season,
         progressNumber: issue,
+        progressUnit: item.progressUnit,
         episodeCount,
         total: authoritativeTotal,
       });

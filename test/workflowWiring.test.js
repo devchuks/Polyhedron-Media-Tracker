@@ -6,8 +6,9 @@ test('one modal exposes state-only save and atomic state-plus-activity commands'
   const source = await readFile(new URL('../src/components/UI.jsx', import.meta.url), 'utf8');
   assert.match(source, /handleSubmit\('library'/);
   assert.match(source, /handleSubmit\('activity'/);
-  assert.match(source, />\s*Save Changes\s*</);
-  assert.match(source, /Log Activity/);
+  assert.match(source, /'Save Progress' : 'Save Changes'/);
+  assert.match(source, /Log to Diary/);
+  assert.match(source, /Diary Entry Date/);
   assert.doesNotMatch(source, /Library State & Diary/);
   assert.match(source, /persistStateOrActivity\(/);
   assert.doesNotMatch(source, /addDiaryLog/);
@@ -71,9 +72,10 @@ test('TV modal routes state-only and explicit season actions through the TV work
   const source = await readFile(new URL('../src/components/UI.jsx', import.meta.url), 'utf8');
   assert.match(source, /saveTvLibraryState\(/);
   assert.match(source, /completeTvSeries\(/);
-  assert.match(source, /executeTvSeasonCompletion\(/);
-  assert.match(source, /Complete & Log Season/);
-  assert.match(source, /disabled=\{isSubmitting \|\| loadingModalEps \|\| maxEpisodesInSeason < 1\}/);
+  // One explicit diary command per season or whole show; it is disabled until the season's episode count is known.
+  assert.match(source, /buildTvDiaryEntry\(baseTvItem, \{\s*target: diaryTarget,/);
+  assert.match(source, /const canLogTvDiary = isWholeShowTarget \|\| diarySeasonEpisodes >= 1;/);
+  assert.match(source, /disabled=\{isSubmitting \|\| \(type === 'tv' && !isTvReview && !canLogTvDiary\)\}/);
   assert.match(source, /persistStateOrActivity\(/);
   assert.doesNotMatch(source, /setInputSeason\(nextSeason\)/);
 
@@ -88,7 +90,9 @@ test('detail view resolves images from the complete stored row', async () => {
 
   const sourcePages = await readFile(new URL('../src/pages/Pages.jsx', import.meta.url), 'utf8');
   assert.match(sourcePages, /resolveMediaImage\(storeItem \|\| previewItem/);
-  assert.match(sourcePages, /firstUsableImageUrl\(rawDetails\.image, preferredMediaImage\(storeItem \|\| previewItem \|\| normalizedDetail\)\)/);
+  // A stored row keeps its usable poster; only a preview takes the provider image first.
+  assert.match(sourcePages, /firstUsableImageUrl\(preferredMediaImage\(storeItem\), rawDetails\.image\)/);
+  assert.match(sourcePages, /firstUsableImageUrl\(rawDetails\.image, preferredMediaImage\(previewItem \|\| normalizedDetail\)\)/);
   assert.doesNotMatch(sourcePages, /rawDetails\.image \|\| targetItem\.image \|\| previewItem\?\.image/);
 });
 
@@ -191,4 +195,10 @@ test('direct details and Explore failures settle into retryable states without s
   assert.match(sourceExplore, /<ExploreErrorNotice[\s\S]*onRetry=/);
   assert.match(sourceApi, /reportApiError\(err, 'IGDB Discover'\); throw err/);
   assert.match(sourceApi, /reportApiError\(err, 'TMDB \(Person\)'\); throw err/);
+});
+
+test('re-selecting the current status is a no-op and planned TV quick status clears progress', async () => {
+  const source = await readFile(new URL('../src/store/useMediaStore.js', import.meta.url), 'utf8');
+  assert.match(source, /String\(item\.status \|\| ''\)\.toLowerCase\(\) === String\(newStatus \|\| ''\)\.toLowerCase\(\)\) return item;/);
+  assert.match(source, /category === 'tv' && targetItem\.status === 'planned' && targetItem\.progress/);
 });

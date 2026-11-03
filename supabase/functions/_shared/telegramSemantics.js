@@ -177,8 +177,9 @@ export const selectDeterministicProviderMatch = (candidates, requestedTitle, req
   return { match: null, ambiguous: plausible.length > 0, options: plausible };
 };
 
-export const progressForTelegramIntent = ({ type, intent, season, progressNumber, episodeCount, total }) => {
-  const value = finiteNumber(progressNumber);
+export const progressForTelegramIntent = ({ type, intent, season, progressNumber, progressUnit, episodeCount, total }) => {
+  // A percentage is not an episode/chapter/issue count; it must never become `E50` or `50 Episodes`.
+  const value = String(progressUnit || '').toLowerCase() === 'percentage' ? null : finiteNumber(progressNumber);
   const seasonNumber = finiteNumber(season);
   if (type === 'tv') {
     if (intent === 'UPDATE_PROGRESS' && seasonNumber && value && value > 0) {
@@ -282,7 +283,7 @@ export const telegramConfirmation = ({ title, year, type, intent, lifecycle, act
       `Status: ${telegramStatusLabel(type, lifecycle.status)}`,
       lifecycle.progress ? `Progress: ${lifecycle.progress}` : null,
       lifecycle.shouldLog && activity ? `Activity: ${activity}` : null,
-      lifecycle.shouldLog && activityDate ? `Activity Date: ${activityDate}` : null,
+      lifecycle.shouldLog && activityDate ? `Diary Date: ${activityDate}` : null,
       lifecycle.rating ? `Rating: ${lifecycle.rating}/10` : null,
     ].filter(Boolean),
   };

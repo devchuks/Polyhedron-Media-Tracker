@@ -89,7 +89,21 @@ const latestTime = (...values) => {
   return valid.length ? Math.max(...valid) : null;
 };
 
+// Import entries currently being committed. A second click (or the batch committer reaching an
+// entry that is already in flight) must not save the same entry twice.
+const committingImportIds = new Set();
+
 const processCommit = async (item, storeActions) => {
+  if (committingImportIds.has(item.id)) return;
+  committingImportIds.add(item.id);
+  try {
+    await commitImportItem(item, storeActions);
+  } finally {
+    committingImportIds.delete(item.id);
+  }
+};
+
+const commitImportItem = async (item, storeActions) => {
   const { saveMediaWithLog, saveMediaItem, removeImportItem } = storeActions;
   const finalItemData = item.selected_candidate;
   const seasonOverride = item.selected_season;
@@ -162,8 +176,11 @@ const processCommit = async (item, storeActions) => {
     apiDataPayload.year = pDetails.first_air_date ? pDetails.first_air_date.substring(0, 4) : finalItemData.year;
     
     apiDataPayload.raw = { ...pDetails, season_details: seasonOverride, deepFetched: true };
-    libraryPayload.status = 'in progress';
-    libraryPayload.dateCompleted = null;
+    // A season entry is history for that season: it neither completes a new show nor
+    // downgrades an already-completed one, and buildTvSeasonCompletion compares progress.
+    libraryPayload.status = currentItem?.status === 'completed' ? 'completed' : 'in progress';
+    libraryPayload.dateCompleted = currentItem?.status === 'completed' ? currentItem.dateCompleted : null;
+    libraryPayload.progress = currentItem?.progress ?? null;
 
     await executeTvSeasonCompletion({
       item: libraryPayload,
@@ -472,7 +489,7 @@ const QueueItem = ({ item, globalIndex, totalCount }) => {
             <div className="p-4 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>
           ) : parentDetails?.seasons?.length > 0 ? (
             <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-3">
-              {parentDetails.seasons.map(season => {
+              {parentDetails.seasons.filter(season => Number(season.season_number) > 0).map(season => {
                 const seasonYear = season.air_date ? season.air_date.substring(0, 4) : '----';
                 const isMatch = seasonYear === String(item.parsed_year) || (item.parsed_modifier && season.name.toLowerCase().includes(item.parsed_modifier.toLowerCase()));
                 return (

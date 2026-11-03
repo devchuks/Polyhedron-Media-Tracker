@@ -69,5 +69,6 @@ test('TV quick progress retains state-only semantics and explicit season logging
   const sourceUI = await readFile(new URL('../src/components/UI.jsx', import.meta.url), 'utf8');
   assert.match(sourceStore, /updateMediaProgress:[\s\S]*patchItemInCloud\(targetItem, type, patchPayload\)/);
   assert.doesNotMatch(sourceStore.match(/updateMediaProgress:[\s\S]*?toggleIssueRead:/)?.[0] || '', /addDiaryLog|saveMediaWithLog/);
-  assert.match(sourceUI, /Complete & Log Season/);
+  // Season history is logged only through the explicit Add to Diary command.
+  assert.match(sourceUI, /buildTvDiaryEntry\(baseTvItem/);
 });

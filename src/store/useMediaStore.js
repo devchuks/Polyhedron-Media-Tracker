@@ -6,10 +6,11 @@ import { applyStatusTransition, canonicalizeMediaCollection, mergeProviderMetada
 import { firstUsableImageUrl, normalizeImageUrl } from '../domain/mediaImages';
 import { applyActivityLifecycle, isMeaningfulProgress } from '../domain/activityLifecycle';
 import { normalizeBackup } from '../domain/backup';
-import { mergeLibraryState, mergePersistedSnapshots, nextRecordRevision } from '../domain/persistenceMerge';
+import { mergeLibraryState, mergePersistedSnapshots, nextRecordRevision, preferInMemoryRevisions } from '../domain/persistenceMerge';
+import { LIGHT_MEDIA_COLUMNS, assembleCloudRows, reuseUnchangedRecords, rowsNeedingFullFetch } from '../domain/cloudDelta';
 import { createKeyedQueue } from '../utils/keyedQueue';
 import { fetchPaginatedRows } from '../services/cloudPagination';
-import { retryAfterJwtRefresh } from '../utils/requestErrors';
+import { isRetryableAuthError, retryAfterJwtRefresh } from '../utils/requestErrors';
 import { createSingleFlight } from '../utils/singleFlight';
 import { readLibraryViewMode, writeLibraryViewMode } from '../domain/libraryContext';
 import {
@@ -303,10 +304,29 @@ export const useMediaStore = create(
         }
       },
       restoreSession: async () => {
+        // Show the cached library of the locally stored session's owner immediately instead of
+        // a blank screen during the network round trip. authMode is presentation state only:
+        // the verification below still decides the session, and cloud calls authenticate separately.
+        let showedCachedOwner = false;
+        const cachedOwnerId = get().ownerId;
+        if (!get().authMode && cachedOwnerId && cachedOwnerId !== 'guest' && hasLocalSnapshot(get())) {
+          const { data: sessionData } = await supabase.auth.getSession().catch(() => ({ data: null }));
+          if (!get().authMode && sessionData?.session?.user?.id === cachedOwnerId && get().ownerId === cachedOwnerId) {
+            set({ authMode: 'admin', isLoading: false, isCloudSyncing: true });
+            showedCachedOwner = true;
+          }
+        }
         const { data, error } = await supabase.auth.getUser();
         if (!error && data?.user) {
-          if (get().authMode === 'admin' && get().ownerId === data.user.id) return true;
+          if (!showedCachedOwner && get().authMode === 'admin' && get().ownerId === data.user.id) return true;
           return get().setAuthMode('admin', data.user);
+        }
+        if (showedCachedOwner && isRetryableAuthError(error) && get().ownerId === cachedOwnerId) {
+          // Offline or the auth service is unreachable: keep the cached library readable rather
+          // than discarding it as a sign-out. The next successful restore synchronizes it.
+          set({ isCloudSyncing: false, isLoading: false });
+          useUIStore.getState().addToast('Offline: showing your saved library. Reconnect before making changes.', 'error');
+          return true;
         }
         if (get().ownerId === 'guest') {
           set({ authMode: 'guest', isCloudSyncing: false, isLoading: false });
@@ -346,10 +366,44 @@ export const useMediaStore = create(
           try {
             if (!user || expectedGeneration !== authGeneration || get().authMode !== 'admin' || get().ownerId !== user.id) return false;
 
-            const loadSnapshot = () => Promise.all([
-              // Keep the complete application row so a fresh browser does not need N+1 detail requests.
+            const localByKey = new Map();
+            if (!replaceLocal) {
+              for (const items of Object.values(get().media || {})) {
+                for (const item of items || []) if (item?.media_key) localByKey.set(item.media_key, item);
+              }
+            }
+            // One-time catch-up: older caches stripped TV season lists, which Jump Back In and the
+            // TV log window now use; re-download those rows once, after which the compact list persists.
+            const seasonBackfillKey = `polyhedron-tv-seasons-v1:${user.id}`;
+            const needsSeasonBackfill = (() => { try { return !browserLocalStorage()?.getItem(seasonBackfillKey); } catch { return false; } })();
+            const loadMediaLibrary = async () => {
+              // A fresh browser receives complete rows so it does not need N+1 detail requests.
               // Chunking bounds each response while the lightweight revision pass validates consistency.
-              fetchCloudTable('media_library', user.id, 'library_row_id', 160_000, { pageSize: 250 }),
+              if (!localByKey.size) return fetchCloudTable('media_library', user.id, 'library_row_id', 160_000, { pageSize: 250 });
+              // A returning browser already holds unchanged provider payloads, so it fetches
+              // lightweight rows and downloads complete rows only where the revision differs.
+              const lightRows = await fetchCloudTable('media_library', user.id, 'library_row_id', 160_000, { columns: LIGHT_MEDIA_COLUMNS, pageSize: 1_000 });
+              const changedIds = rowsNeedingFullFetch(lightRows, localByKey, {
+                needsFullRow: needsSeasonBackfill
+                  ? item => item.type === 'tv' && !Array.isArray(item.apiData?.raw?.seasons)
+                  : null,
+              });
+
+              if (changedIds.length > lightRows.length / 2) {
+                return fetchCloudTable('media_library', user.id, 'library_row_id', 160_000, { pageSize: 250 });
+              }
+              const fullRows = [];
+              for (let index = 0; index < changedIds.length; index += 100) {
+                const { data, error } = await supabase.from('media_library').select('*')
+                  .eq('user_id', user.id)
+                  .in('library_row_id', changedIds.slice(index, index + 100));
+                if (error) throw error;
+                fullRows.push(...(data || []));
+              }
+              return assembleCloudRows(lightRows, fullRows, localByKey);
+            };
+            const loadSnapshot = () => Promise.all([
+              loadMediaLibrary(),
               fetchCloudTable('media_logs', user.id, 'log_id', 500_000, { pageSize: 500 }),
               fetchCloudTable('media_tombstones', user.id, 'media_key', 160_000, { pageSize: 1_000, revisionColumn: 'deleted_at' }),
               fetchCloudTable('log_tombstones', user.id, 'log_id', 500_000, { pageSize: 1_000, revisionColumn: 'deleted_at' }),
@@ -377,7 +431,10 @@ export const useMediaStore = create(
             const mergeBase = replaceLocal
               ? { media: freshMediaState(), mediaLogs: [], deletedMediaKeys: {}, deletedLogIds: {} }
               : get();
-            set(mergeLibraryState(mergeBase, cloudState));
+            set(reuseUnchangedRecords(get(), mergeLibraryState(mergeBase, cloudState)));
+            if (needsSeasonBackfill) {
+              try { browserLocalStorage()?.setItem(seasonBackfillKey, '1'); } catch { /* retried on the next sync */ }
+            }
             return true;
           } catch (error) {
             console.error('Cloud snapshot failed:', error);
@@ -730,6 +787,38 @@ export const useMediaStore = create(
         }
       },
 
+      // Restores the complete provider payload that local persistence slims away, but only
+      // when the cloud row is the same revision as the local one and was already enriched.
+      loadCloudItemDetail: async (identity, category) => {
+        const ownerId = get().ownerId;
+        if (get().authMode !== 'admin' || !ownerId || ownerId === 'guest') return false;
+        let mediaKey;
+        try { mediaKey = mediaKeyFor(identity, category); } catch { return false; }
+        const { data, error } = await supabase.from('media_library')
+          .select('"apiData",updated_at')
+          .eq('user_id', ownerId)
+          .eq('media_key', mediaKey)
+          .maybeSingle();
+        if (error || !data?.apiData?.raw?.deepFetched) return false;
+        const cloudRevision = Date.parse(data.updated_at);
+        let restored = false;
+        set(state => {
+          if (state.ownerId !== ownerId || state.authMode !== 'admin') return state;
+          const items = state.media[category] || [];
+          const index = items.findIndex(item => item.media_key === mediaKey);
+          if (index === -1 || Number(items[index].updatedAt) !== cloudRevision) return state;
+          const current = items[index];
+          const nextItems = [...items];
+          nextItems[index] = canonicalizeMediaItem({
+            ...current,
+            apiData: { ...data.apiData, image: firstUsableImageUrl(data.apiData.image, current.apiData?.image, current.image) },
+          }, category);
+          restored = true;
+          return { media: { ...state.media, [category]: nextItems } };
+        });
+        return restored;
+      },
+
       removeMediaItem: (id, category) => {
         const existing = get().media[category]?.find(item => mediaKeyFor(item, category) === mediaKeyFor(id, category));
         if (!existing) return;
@@ -764,6 +853,8 @@ export const useMediaStore = create(
             ...state.media,
             [category]: state.media[category].map((item) => {
               if (mediaKeyFor(item, category) === mediaKeyFor(id, category)) {
+                // Re-selecting the current status is not a new event; it must not rewrite completion dates.
+                if (String(item.status || '').toLowerCase() === String(newStatus || '').toLowerCase()) return item;
                 const now = nextRecordRevision(item.updatedAt, state.deletedMediaKeys[item.media_key]);
                 targetItem = { ...applyStatusTransition(item, newStatus, now), updatedAt: now };
                 patchPayload = {
@@ -771,6 +862,11 @@ export const useMediaStore = create(
                   dateStarted: targetItem.dateStarted,
                   dateCompleted: targetItem.dateCompleted,
                 };
+                // Planned TV carries no episode progress, matching saveTvLibraryState.
+                if (category === 'tv' && targetItem.status === 'planned' && targetItem.progress) {
+                  targetItem.progress = '';
+                  patchPayload.progress = null;
+                }
                 return targetItem;
               }
               return item;
@@ -1069,7 +1165,9 @@ export const useMediaStore = create(
             storageEpoch: nextStorageEpoch(Math.max(currentState.storageEpoch || 0, persistedState?.storageEpoch || 0)),
           };
         }
-        return { ...currentState, ...persistedState, authMode: currentState.authMode };
+        const merged = { ...currentState, ...persistedState, authMode: currentState.authMode };
+        if (!persistedState?.media || currentState.ownerId !== persistedState.ownerId) return merged;
+        return { ...merged, ...preferInMemoryRevisions(currentState, persistedState) };
       },
       onRehydrateStorage: () => (state) => {
         if (!state?._hasHydrated) {
@@ -1094,7 +1192,10 @@ export const useMediaStore = create(
             const slimRaw = { ...item.apiData.raw };
             if (!item.isGuestShowcase) {
               delete slimRaw.issue_details;
-              delete slimRaw.seasons;
+              // TV progress controls need season numbers and episode counts before any detail fetch.
+              if (Array.isArray(slimRaw.seasons)) {
+                slimRaw.seasons = slimRaw.seasons.map(({ id, name, season_number, episode_count, air_date }) => ({ id, name, season_number, episode_count, air_date }));
+              }
             }
             delete slimRaw.credits;
             delete slimRaw.staff;

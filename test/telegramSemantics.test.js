@@ -183,10 +183,23 @@ test('Telegram confirmations show a real activity only when one was persisted', 
     'Date Added: August 25th, 2026',
     'Status: Watched',
     'Activity: Watched',
-    'Activity Date: August 25th, 2026',
+    'Diary Date: August 25th, 2026',
     'Rating: 8/10',
   ]);
   assert.equal(formatTelegramDate(activityAt), 'August 25th, 2026');
   assert.equal(telegramStatusLabel('books', 'completed'), 'Read');
   assert.equal(telegramStatusLabel('games', 'in progress'), 'Playing');
+});
+
+test('Telegram percentage progress never becomes an episode or chapter count', () => {
+  assert.equal(progressForTelegramIntent({ type: 'tv', intent: 'UPDATE_PROGRESS', season: 2, progressNumber: 50, progressUnit: 'percentage' }), null);
+  assert.equal(progressForTelegramIntent({ type: 'anime', intent: 'UPDATE_PROGRESS', progressNumber: 40, progressUnit: 'percentage' }), null);
+  assert.equal(progressForTelegramIntent({ type: 'tv', intent: 'UPDATE_PROGRESS', season: 2, progressNumber: 5, progressUnit: 'episode' }), 'S02 E05');
+});
+
+test('a year-resolved Telegram season can be reassigned without a const TypeError', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('../supabase/functions/telegram-logger/index.ts', import.meta.url), 'utf8');
+  assert.match(source, /let season = item\.season/);
+  assert.match(source, /progressUnit: item\.progressUnit/);
 });

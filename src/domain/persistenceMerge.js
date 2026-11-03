@@ -54,6 +54,12 @@ export const mergeLibraryState = (current = {}, incoming = {}) => {
   addMedia(current.media);
   addMedia(incoming.media);
 
+  // A live record newer than its tombstone was deliberately restored; drop the tombstone, as the
+  // in-memory restore paths do, so persisted and in-memory state converge instead of differing forever.
+  for (const item of mediaByKey.values()) {
+    if (deletedMediaKeys[item.media_key] && deletedMediaKeys[item.media_key] < recordTime(item, 'addedAt')) delete deletedMediaKeys[item.media_key];
+  }
+
   const categories = new Set([...Object.keys(current.media || {}), ...Object.keys(incoming.media || {})]);
   const media = Object.fromEntries([...categories].map(category => [category, []]));
   const liveMediaKeys = new Set();
@@ -72,6 +78,10 @@ export const mergeLibraryState = (current = {}, incoming = {}) => {
     } catch {
       // Ignore malformed rows; backup import performs explicit validation and reporting.
     }
+  }
+  for (const log of logsById.values()) {
+    const logId = String(log.log_id);
+    if (deletedLogIds[logId] && deletedLogIds[logId] < recordTime(log, 'log_date')) delete deletedLogIds[logId];
   }
   const mediaLogs = [...logsById.values()]
     .filter(log => (deletedLogIds[String(log.log_id)] || 0) < recordTime(log, 'log_date'))
@@ -103,4 +113,31 @@ export const mergePersistedSnapshots = (currentValue, incomingValue) => {
   } catch {
     return incomingValue;
   }
+};
+
+// Persistence slims bulky provider fields, so a rehydrated record can be a reduced copy of the
+// in-memory one at the same revision. Keep the in-memory object in that case: replacing it
+// would drop enrichment flags, re-run provider requests, and visibly swap content.
+export const preferInMemoryRevisions = (current = {}, persisted = {}) => {
+  const sameRevision = (left, right, fallbackField) => recordTime(left, fallbackField) === recordTime(right, fallbackField);
+  const media = {};
+  for (const [category, items] of Object.entries(persisted.media || {})) {
+    const currentItems = current.media?.[category] || [];
+    const currentByKey = new Map(currentItems.map(item => [item?.media_key, item]));
+    media[category] = (items || []).map(item => {
+      const live = item?.media_key ? currentByKey.get(item.media_key) : undefined;
+      return live && sameRevision(live, item, 'addedAt') ? live : item;
+    });
+    if (media[category].length === currentItems.length && media[category].every((item, index) => item === currentItems[index])) {
+      media[category] = currentItems;
+    }
+  }
+  const currentLogs = current.mediaLogs || [];
+  const currentLogsById = new Map(currentLogs.map(log => [String(log?.log_id), log]));
+  let mediaLogs = (persisted.mediaLogs || []).map(log => {
+    const live = currentLogsById.get(String(log?.log_id));
+    return live && sameRevision(live, log, 'log_date') ? live : log;
+  });
+  if (mediaLogs.length === currentLogs.length && mediaLogs.every((log, index) => log === currentLogs[index])) mediaLogs = currentLogs;
+  return { media, mediaLogs };
 };

@@ -1,12 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { upsertDiaryLog } from '../src/domain/mediaState.js';
 import {
   buildTvSeasonCompletion,
   completeTvSeries,
   executeTvSeasonCompletion,
+  TV_WHOLE_SHOW,
+  buildTvDiaryEntry,
+  defaultTvDiaryTarget,
+  progressSeason,
   saveTvLibraryState,
   startTvRewatch,
+  tvSeasonOptions,
 } from '../src/domain/tvWorkflow.js';
 
 const baseTv = (overrides = {}) => ({
@@ -202,4 +208,146 @@ test('deleting one historical season leaves siblings and current library state u
   assert.deepEqual(remaining.map(log => log.log_id), ['s1', 's3']);
   assert.equal(media.progress, 'S03 E04');
   assert.equal(media.status, 'in progress');
+});
+
+test('editing Completed On for an already-completed show updates the completion date', () => {
+  const completed = baseTv({ status: 'completed', progress: 'S03 E10', dateStarted: 1000, dateCompleted: 5000 });
+  const unchanged = saveTvLibraryState(completed, { status: 'completed', season: 3, episode: 10, completionTimestamp: 9999 });
+  assert.equal(unchanged.dateCompleted, 5000);
+  const edited = saveTvLibraryState(completed, { status: 'completed', season: 3, episode: 10, completionTimestamp: 9999, completedDateEdited: true });
+  assert.equal(edited.dateCompleted, 9999);
+});
+
+test('logging an earlier season is history only and never rewinds later progress', () => {
+  const watching = baseTv({ status: 'in progress', progress: 'S04 E03', dateStarted: 1000 });
+  const { media, log } = buildTvSeasonCompletion(watching, seasonCommand({ season: 1, episodeCount: 8 }));
+  assert.equal(media.progress, 'S04 E03');
+  assert.equal(log.season_label, 'Season 1');
+
+  const completed = baseTv({ status: 'completed', progress: 'S03 E10', dateStarted: 1000, dateCompleted: 5000 });
+  const history = buildTvSeasonCompletion(completed, seasonCommand({ season: 1, episodeCount: 8 }));
+  assert.equal(history.media.progress, 'S03 E10');
+  assert.equal(history.media.status, 'completed');
+  assert.equal(history.media.dateCompleted, 5000);
+
+  // The current or a later season still advances progress, and a rewatch restarts the position.
+  assert.equal(buildTvSeasonCompletion(watching, seasonCommand({ season: 4, episodeCount: 9 })).media.progress, 'S04 E09');
+  assert.equal(buildTvSeasonCompletion(completed, seasonCommand({ season: 1, episodeCount: 8, isRewatch: true })).media.progress, 'S01 E08');
+});
+
+test('season choices come from provider seasons, exclude specials, and keep the stored season', () => {
+  assert.deepEqual(tvSeasonOptions([{ season_number: 0 }, { season_number: 1 }, { season_number: 2 }], 2, 1), [1, 2]);
+  assert.deepEqual(tvSeasonOptions([], undefined, 5), [1, 5]);
+  assert.deepEqual(tvSeasonOptions([], 3, 1), [1, 2, 3]);
+  assert.equal(progressSeason('S12 E03'), 12);
+  assert.equal(progressSeason(''), 0);
+});
+
+test('the TV modal shows the unset episode, blocks planned viewing logs, and passes date edits', async () => {
+  const source = await readFile(new URL('../src/components/UI.jsx', import.meta.url), 'utf8');
+  assert.match(source, /<option key="none" value=\{0\}>No episode yet<\/option>/);
+  assert.match(source, /completedDateEdited: dateCompletedDirty/);
+  assert.doesNotMatch(source, /handleQuickSeasonComplete|Complete & Log Season/);
+  // Two tabs, one primary action each: Log (diary) and Progress (library state).
+  assert.match(source, /\[\['log', 'Log'\], \['progress', 'Progress'\]\]/);
+  assert.match(source, /setTvTab\(activeDiaryModal\.mode === 'log' \|\| explicitAction === 'NOTE ADDED' \? 'log' : 'progress'\)/);
+  assert.match(source, /What did you watch\?/);
+  assert.match(source, /<option value=\{TV_WHOLE_SHOW\}>The whole show<\/option>/);
+  assert.match(source, /\{showsLibraryFields && <button type="button" onClick=\{\(event\) => handleSubmit\('library', event\)\}/);
+  assert.match(source, /\{\(type !== 'tv' \|\| showsTvLog\) && <button type="button" onClick=\{\(event\) => handleSubmit\('activity', event\)\}/);
+  assert.match(source, /setModalEpisodes\(\[\]\);\s*\n\s*setSeasonCatalog\(\[\]\);/);
+});
+
+test('import season entries cannot commit twice and skip specials', async () => {
+  const source = await readFile(new URL('../src/pages/ImportTerminal.jsx', import.meta.url), 'utf8');
+  assert.match(source, /if \(committingImportIds\.has\(item\.id\)\) return;/);
+  assert.match(source, /seasons\.filter\(season => Number\(season\.season_number\) > 0\)/);
+  assert.doesNotMatch(source, /libraryPayload\.status = 'in progress';\s*\n\s*libraryPayload\.dateCompleted = null;/);
+});
+
+test('Add to Diary for a season creates exactly that season entry and moves a planned show to watching', () => {
+  const planned = baseTv();
+  const { media, log } = buildTvDiaryEntry(planned, {
+    target: 2, episodeCount: 8, seasonYear: '2024', watchedAt: Date.parse('2026-10-01T12:00:00Z'), rating: 8, createLogId: () => 'log-s2',
+  });
+  assert.equal(log.log_id, 'log-s2');
+  assert.equal(log.season_label, 'Season 2');
+  assert.equal(log.season_year, '2024');
+  assert.equal(log.action_type, 'WATCHED');
+  assert.equal(log.rating, 8);
+  assert.equal(log.log_date, '2026-10-01T12:00:00.000Z');
+  assert.equal(media.status, 'in progress');
+  assert.equal(media.progress, 'S02 E08');
+  assert.equal(media.dateCompleted, null);
+});
+
+test('the final season completes the show only when the user asks for it', () => {
+  const watching = baseTv({ status: 'in progress', progress: 'S03 E02', dateStarted: 1000 });
+  const command = { target: 3, episodeCount: 10, watchedAt: 50_000, createLogId: () => 'log-s3' };
+  const stillWatching = buildTvDiaryEntry(watching, command);
+  assert.equal(stillWatching.media.status, 'in progress');
+  assert.equal(stillWatching.media.dateCompleted, null);
+
+  const finished = buildTvDiaryEntry(watching, { ...command, finishesShow: true });
+  assert.equal(finished.media.status, 'completed');
+  assert.equal(finished.media.dateCompleted, 50_000);
+  assert.equal(finished.media.progress, 'S03 E10');
+  assert.equal(finished.log.season_label, 'Season 3');
+  assert.equal(finished.media.dateStarted, 1000);
+});
+
+test('Add to Diary for the whole show completes it with one seasonless entry and no fabricated seasons', () => {
+  const watching = baseTv({ status: 'in progress', progress: 'S02 E04', dateStarted: 1000 });
+  const { media, log } = buildTvDiaryEntry(watching, { target: TV_WHOLE_SHOW, watchedAt: 70_000, createLogId: () => 'log-all' });
+  assert.equal(media.status, 'completed');
+  assert.equal(media.dateCompleted, 70_000);
+  assert.equal(media.progress, 'S02 E04');
+  assert.equal(log.season_label, undefined);
+  assert.equal(log.log_id, 'log-all');
+
+  const rewatch = buildTvDiaryEntry(baseTv({ status: 'completed', dateCompleted: 5000, rewatchCount: 1 }), {
+    target: TV_WHOLE_SHOW, watchedAt: 90_000, isRewatch: true, createLogId: () => 'log-again',
+  });
+  assert.equal(rewatch.log.action_type, 'RE-WATCHED');
+  assert.equal(rewatch.media.rewatchCount, 2);
+  assert.equal(rewatch.media.dateCompleted, 90_000);
+});
+
+test('the diary target opens on the current season, a preset season, or the whole show when finished', () => {
+  assert.equal(defaultTvDiaryTarget(baseTv({ status: 'in progress', progress: 'S04 E02' })), 4);
+  assert.equal(defaultTvDiaryTarget(baseTv({ status: 'planned' })), 1);
+  assert.equal(defaultTvDiaryTarget(baseTv({ status: 'completed', progress: 'S05 E10' })), TV_WHOLE_SHOW);
+  assert.equal(defaultTvDiaryTarget(baseTv({ status: 'completed' }), 2), 2);
+});
+
+test('app TV reviews carry the season they are about, like Telegram season entries', async () => {
+  const source = await readFile(new URL('../src/components/UI.jsx', import.meta.url), 'utf8');
+  assert.match(source, /\.\.\.\(type === 'tv' && !isWholeShowTarget \? \{\s*season_label: `Season \$\{diaryTarget\}`/);
+  assert.match(source, /isTvReview \? 'Review of' : 'What did you watch\?'/);
+  // "Add New Note" on TV opens the Log tab, so the review fields are always available there.
+  assert.match(source, /\{showsTvLog && \(\s*\n\s*<div className="flex flex-col gap-4">/);
+});
+
+test('game and VN cards never show a stored percentage such as an old Telegram 100%', async () => {
+  const source = await readFile(new URL('../src/components/UI.jsx', import.meta.url), 'utf8');
+  assert.match(source, /export const formatProgressLabel = \(prog, type\) => \{\n {2}if \(type === 'games' \|\| type === 'vn'\) return null;/);
+  assert.doesNotMatch(source, /return `\$\{num\}%`/);
+  const settings = await readFile(new URL('../src/pages/Settings.jsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(settings, /\(type === 'games' \|\| type === 'vn'\) progress = /);
+  const telegram = await readFile(new URL('../supabase/functions/_shared/telegramSemantics.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(telegram, /'100%'|\$\{Math\.min\(100, value\)\}%/);
+});
+
+test('a show parked on a season finale is recognised; mid-season or unknown sizes are not', async () => {
+  const { isAtSeasonFinale } = await import('../src/domain/tvWorkflow.js');
+  const withSeasons = progress => baseTv({ status: 'in progress', progress, apiData: { raw: { seasons: [{ season_number: 1, episode_count: 8 }, { season_number: 2, episode_count: 10 }] } } });
+  assert.equal(isAtSeasonFinale(withSeasons('S02 E10')), true);
+  assert.equal(isAtSeasonFinale(withSeasons('S01 E08')), true);
+  assert.equal(isAtSeasonFinale(withSeasons('S02 E09')), false);
+  assert.equal(isAtSeasonFinale(withSeasons('S03 E01')), false);
+  assert.equal(isAtSeasonFinale(baseTv({ status: 'in progress', progress: 'S02 E10' })), false);
+  assert.equal(isAtSeasonFinale(withSeasons('')), false);
+
+  const pages = await readFile(new URL('../src/pages/Pages.jsx', import.meta.url), 'utf8');
+  assert.match(pages, /item\.status === 'in progress' && !\(item\.type === 'tv' && isAtSeasonFinale\(item\)\)/);
 });
