@@ -7,6 +7,7 @@ import { useMediaStore } from '../store/useMediaStore';
 import { prefetchDiscovery } from '../services/discoveryLoader';
 import { syncAniListOnOpen } from '../services/anilistSync';
 import { syncLetterboxdOnOpen } from '../services/letterboxdSync';
+import { syncVndbOnOpen } from '../services/vndbSync';
 import { Gate } from '../pages/Gate';
 import { supabase } from '../services/supabase';
 import { appEnvironment, showEnvironmentBadge } from '../config/environment';
@@ -238,10 +239,10 @@ export const AppLayout = () => {
     if (authMode === 'admin' || authMode === 'guest') void prefetchDiscovery();
   }, [authMode]);
 
-  // Once the cloud library is current, pull anything new from linked AniList and Letterboxd accounts.
+  // Once the cloud library is current, pull anything new from linked AniList, Letterboxd and VNDB accounts.
   useEffect(() => {
     if (authMode !== 'admin' || !ownerId || isCloudSyncing) return;
-    void syncAniListOnOpen(ownerId).then(() => syncLetterboxdOnOpen(ownerId));
+    void syncAniListOnOpen(ownerId).then(() => syncLetterboxdOnOpen(ownerId)).then(() => syncVndbOnOpen(ownerId));
   }, [authMode, ownerId, isCloudSyncing]);
 
   // Prevent native pull-to-refresh on mobile browsers

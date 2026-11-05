@@ -151,17 +151,3 @@ export const planAniListEntry = ({
 
   return { media: mediaChanged || log ? media : null, log, logUpdate, snapshot };
 };
-
-// Summary shown before the first sync: what importing the whole list would do.
-export const previewAniListImport = (entries, libraryByKey, normalize) => {
-  const counts = { total: 0, inLibrary: 0, newTitles: 0, differ: 0 };
-  for (const { entry, type } of entries) {
-    counts.total += 1;
-    const local = libraryByKey.get(anilistMediaKey(type, entry.mediaId ?? entry.media?.id));
-    if (!local) { counts.newTitles += 1; continue; }
-    counts.inLibrary += 1;
-    const plan = planAniListEntry({ entry, type, localItem: local, previous: undefined, createHistory: false, normalize });
-    if (plan.media) counts.differ += 1;
-  }
-  return counts;
-};

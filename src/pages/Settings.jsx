@@ -3,6 +3,7 @@ import { Trash2, Download, Loader2, AlertTriangle } from 'lucide-react';
 import { confirmAction, useMediaStore, useUIStore } from '../store/useMediaStore';
 import { AniListLink } from '../components/AniListLink';
 import { LetterboxdLink } from '../components/LetterboxdLink';
+import { VndbLink } from '../components/VndbLink';
 import { apiRegistry } from '../services/apiRegistry';
 import { mediaKeyFor } from '../domain/mediaIdentity';
 
@@ -260,6 +261,7 @@ const Settings = () => {
 
       {store.authMode === 'admin' && <AniListLink />}
       {store.authMode === 'admin' && <LetterboxdLink />}
+      {store.authMode === 'admin' && <VndbLink />}
 
       <div className="bg-base-100 border border-base-300 p-6 flex flex-col gap-4">
         <h2 className="text-sm font-black uppercase tracking-widest text-error">Danger Zone</h2>

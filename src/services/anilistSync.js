@@ -1,8 +1,8 @@
-// Runs the one-way AniList sync: linking (with an optional first import) and the check made
-// each time the site is opened. Writes go through the store's normal owner-scoped save actions.
+// Runs the one-way AniList sync: linking (which records the current list as already seen) and the
+// check made each time the site is opened. Writes go through the store's owner-scoped save actions.
 import { useMediaStore, useUIStore } from '../store/useMediaStore';
 import { normalizeAniList } from '../utils/normalizers';
-import { anilistMediaKey, anilistSnapshot, planAniListEntry, previewAniListImport } from '../domain/anilistSync';
+import { anilistMediaKey, anilistSnapshot, planAniListEntry } from '../domain/anilistSync';
 import { fetchAniListChanges, fetchAniListLibrary } from './anilistClient';
 
 const storageKey = ownerId => `polyhedron-anilist:${ownerId}`;
@@ -21,8 +21,6 @@ const writeAniListLink = (ownerId, link) => {
 export const unlinkAniList = ownerId => {
   try { window.localStorage.removeItem(storageKey(ownerId)); } catch { /* nothing stored */ }
 };
-
-const libraryIndex = state => new Map(['anime', 'manga'].flatMap(type => (state.media[type] || []).map(item => [item.media_key, item])));
 
 let running = null;
 const exclusive = operation => {
@@ -68,31 +66,17 @@ const applyEntries = async (ownerId, link, items, { createHistory }) => {
   return { applied, failed };
 };
 
-// Fetches the whole list once and summarises what an import would do.
-export const previewAniListLink = async username => {
+// Links an AniList username: everything on the list now is recorded as already seen, so only
+// changes made on AniList afterwards sync. Returns how many existing entries were skipped.
+export const linkAniList = ({ ownerId, username }) => exclusive(async () => {
   const entries = await fetchAniListLibrary(username);
-  const counts = previewAniListImport(entries, libraryIndex(useMediaStore.getState()), normalizeAniList);
-  return { entries, counts };
-};
-
-/**
- * Links an AniList username. `mode` 'import' applies the whole list now; 'track' only records the
- * current list so later AniList changes sync. `createHistory` adds diary entries for past finishes.
- */
-export const linkAniList = ({ ownerId, username, entries, mode, createHistory = false }) => exclusive(async () => {
   const link = { username, linkedAt: Date.now(), cursor: {}, entries: {} };
-  let result = { applied: 0, failed: 0 };
-  if (mode === 'import') {
-    const ordered = [...entries].sort((a, b) => Number(a.entry.updatedAt) - Number(b.entry.updatedAt));
-    result = await applyEntries(ownerId, link, ordered, { createHistory });
-  } else {
-    for (const { type, entry } of entries) {
-      link.entries[entry.id] = anilistSnapshot(entry);
-      link.cursor[type] = Math.max(Number(link.cursor[type]) || 0, Number(entry.updatedAt) || 0);
-    }
+  for (const { type, entry } of entries) {
+    link.entries[entry.id] = anilistSnapshot(entry);
+    link.cursor[type] = Math.max(Number(link.cursor[type]) || 0, Number(entry.updatedAt) || 0);
   }
   writeAniListLink(ownerId, link);
-  return result;
+  return entries.length;
 });
 
 let checkedOwner = null;

@@ -969,8 +969,10 @@ export const MediaQuickActions = ({ item, compact = false }) => {
   );
 };
 
-export const MediaCard = ({ item, onClickOverride, onMouseEnterOverride }) => {
+export const MediaCard = ({ item, onClickOverride, onMouseEnterOverride, compact = false }) => {
   const image = resolveMediaImage(item, item.type, 'md');
+  // Compact cards (Jump Back In on phones) shrink padding and type so three fit across;
+  // from the sm breakpoint up they match regular cards. Class names stay literal for Tailwind.
   const colors = getMediaTypeColors(item.type);
   const userRating = Number(item.rating) > 0 ? Number(item.rating) : 0;
   const linkProps = onClickOverride
@@ -984,27 +986,27 @@ export const MediaCard = ({ item, onClickOverride, onMouseEnterOverride }) => {
       <Content {...linkProps} className="flex h-full w-full cursor-pointer flex-col text-left">
       <figure className="relative aspect-[2/3] w-full overflow-hidden bg-base-200 border-b border-base-300">
         <ImageWithFallback src={image} alt={item.title} className="grayscale-[15%] group-hover:grayscale-0" />
-        <div className="absolute top-0 right-0 z-10"><div className={`px-2 py-1 text-[9px] font-mono font-bold tracking-[0.15em] uppercase border-b border-l border-base-300 ${colors.bg} ${colors.textContent}`}>{item.subtype}</div></div>
+        <div className="absolute top-0 right-0 z-10"><div className={`${compact ? 'px-1 py-0.5 text-[7px] tracking-wider sm:px-2 sm:py-1 sm:text-[9px] sm:tracking-[0.15em]' : 'px-2 py-1 text-[9px] tracking-[0.15em]'} font-mono font-bold uppercase border-b border-l border-base-300 ${colors.bg} ${colors.textContent}`}>{item.subtype}</div></div>
       </figure>
-      <div className="p-3 flex flex-col flex-grow min-w-0 bg-base-100">
+      <div className={`${compact ? 'p-1.5 sm:p-3' : 'p-3'} flex flex-col flex-grow min-w-0 bg-base-100`}>
         <div className="flex flex-col mb-auto">
-          <h2 className="text-xs font-bold leading-tight line-clamp-2 uppercase tracking-wide font-sans" title={item.title}>{item.title}</h2>
+          <h2 className={`${compact ? 'text-[9px] tracking-normal sm:text-xs sm:tracking-wide' : 'text-xs tracking-wide'} font-bold leading-tight line-clamp-2 uppercase font-sans`} title={item.title}>{item.title}</h2>
           {item.apiData?.year && item.apiData.year !== '----' && <span className="text-[9px] font-mono font-bold text-base-content/40 tracking-widest mt-1">{item.apiData.year}</span>}
         </div>
         
-        <div className="flex items-end justify-between mt-3 font-mono border-t border-base-200 pt-3">
+        <div className={`flex items-end justify-between ${compact ? 'mt-1.5 pt-1.5 sm:mt-3 sm:pt-3' : 'mt-3 pt-3'} font-mono border-t border-base-200`}>
           <div className="flex flex-col text-left min-w-0 flex-1">
-            {item.status && <span className={`text-[10px] font-black uppercase tracking-widest text-left truncate flex items-center gap-1 ${getStatusColorCard(item.status)}`}>
+            {item.status && <span className={`${compact ? 'text-[7px] tracking-wider sm:text-[10px] sm:tracking-widest' : 'text-[10px] tracking-widest'} font-black uppercase text-left truncate flex items-center gap-1 ${getStatusColorCard(item.status)}`}>
               {mediaStatusLabel(item.status, item.type)}
             </span>}
             {item.roleLabel ? (
               <span className="text-[8px] font-bold text-base-content/60 uppercase tracking-widest truncate mt-0.5">{item.roleLabel}</span>
-            ) : formatProgressLabel(item.progress, item.type) ? <span className="text-[8px] font-bold text-base-content/60 uppercase tracking-widest truncate mt-0.5">{formatProgressLabel(item.progress, item.type)}</span> : null}
+            ) : formatProgressLabel(item.progress, item.type) ? <span className={`${compact ? 'text-[7px] tracking-wider sm:text-[8px] sm:tracking-widest' : 'text-[8px] tracking-widest'} font-bold text-base-content/60 uppercase truncate mt-0.5`}>{formatProgressLabel(item.progress, item.type)}</span> : null}
           </div>
           
           {userRating > 0 && (
-            <div className="flex items-center gap-1 text-[10px] font-bold text-base-content shrink-0 ml-2 bg-base-200 px-1.5 py-0.5">
-              <Star className="w-3 h-3 text-info fill-info" /><span>{userRating}.0</span>
+            <div className={`flex items-center gap-1 ${compact ? 'text-[8px] ml-1 px-1 py-0 sm:text-[10px] sm:ml-2 sm:px-1.5 sm:py-0.5' : 'text-[10px] ml-2 px-1.5 py-0.5'} font-bold text-base-content shrink-0 bg-base-200`}>
+              <Star className={`${compact ? 'w-2 h-2 sm:w-3 sm:h-3' : 'w-3 h-3'} text-info fill-info`} /><span>{userRating}<span className={compact ? 'hidden sm:inline' : ''}>.0</span></span>
             </div>
           )}
         </div>

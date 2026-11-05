@@ -9,7 +9,6 @@ import {
   anilistSnapshot,
   anilistStatus,
   planAniListEntry,
-  previewAniListImport,
 } from '../src/domain/anilistSync.js';
 import { existingFinishNear, finishEntryForReview, reviewEntryForFinish } from '../supabase/functions/_shared/diaryMerge.js';
 import { normalizeAniList } from '../src/utils/normalizers.js';
@@ -135,10 +134,6 @@ test('a new AniList title becomes a library item; the first import adds history 
   assert.equal(withoutHistory.media.addedAt, 1_780_000_000 * 1000);
   assert.equal(withoutHistory.log, null);
   assert.equal(plan({ entry: finished, localItem: undefined, previous: undefined, createHistory: true }).log.action_type, 'READ');
-
-  const counts = previewAniListImport([{ type: 'manga', entry: finished }, { type: 'manga', entry: entry({ id: 2, mediaId: 2, media: { ...media, id: 2 } }) }],
-    new Map([[key, libraryItem()]]), normalizeAniList);
-  assert.deepEqual(counts, { total: 2, inLibrary: 1, newTitles: 1, differ: 1 });
 });
 
 test('reviews from the app and Telegram are merged into a recent finish instead of a separate entry', async () => {
@@ -149,7 +144,7 @@ test('reviews from the app and Telegram are merged into a recent finish instead 
   assert.match(telegram, /if \(shouldLogToDiary && !reviewMergeTarget\)/);
   assert.match(telegram, /\.eq\('user_id', userId\)\s*\n\s*\.eq\('log_id', reviewMergeTarget\.log_id\)/);
   const layout = await readFile(new URL('../src/components/Layout.jsx', import.meta.url), 'utf8');
-  assert.match(layout, /if \(authMode !== 'admin' \|\| !ownerId \|\| isCloudSyncing\) return;\s*\n\s*void syncAniListOnOpen\(ownerId\)\.then\(\(\) => syncLetterboxdOnOpen\(ownerId\)\)/);
+  assert.match(layout, /if \(authMode !== 'admin' \|\| !ownerId \|\| isCloudSyncing\) return;\s*\n\s*void syncAniListOnOpen\(ownerId\)\.then\(\(\) => syncLetterboxdOnOpen\(ownerId\)\)\.then\(\(\) => syncVndbOnOpen\(ownerId\)\)/);
 });
 
 test('a tracked AniList title that is not yet in the library arrives with its real status, not Planned', () => {

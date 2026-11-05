@@ -80,7 +80,7 @@ const DashSection = ({ title, items, isLoading, headerRight, horizontalMobile, i
   };
 
   const scrollClass = isCarousel 
-    ? "flex overflow-x-auto gap-3 pb-2 snap-x [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+    ? "flex overflow-x-auto gap-2 sm:gap-3 pb-2 snap-x [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
     : horizontalMobile 
       ? "flex overflow-x-auto gap-3 pb-2 sm:grid sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-6 min-[2000px]:grid-cols-7 snap-x [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" 
       : "grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-7 min-[2000px]:grid-cols-8 gap-3";
@@ -113,8 +113,8 @@ const DashSection = ({ title, items, isLoading, headerRight, horizontalMobile, i
             style={(isCarousel || horizontalMobile) && showRightArrow ? { WebkitMaskImage: 'linear-gradient(to right, black 85%, transparent 100%)', maskImage: 'linear-gradient(to right, black 85%, transparent 100%)' } : {}}
           >
             {items.map(item => (
-              <div key={item.id} className={isCarousel ? "w-[calc(50vw-22px)] sm:w-36 md:w-44 lg:w-48 xl:w-48 2xl:w-52 shrink-0 snap-start" : horizontalMobile ? "w-[calc(50vw-22px)] shrink-0 sm:w-auto snap-start" : ""}>
-                <MediaCard item={item} />
+              <div key={item.id} className={isCarousel ? "w-[calc((100vw-68px)/3.25)] sm:w-36 md:w-44 lg:w-48 xl:w-48 2xl:w-52 shrink-0 snap-start" : horizontalMobile ? "w-[calc(50vw-22px)] shrink-0 sm:w-auto snap-start" : ""}>
+                <MediaCard item={item} compact={isCarousel} />
               </div>
             ))}
           </div>
@@ -414,8 +414,8 @@ export const Dashboard = () => {
                     <button onClick={() => setViewMode('grid')} className={`flex-1 px-3 ${viewMode === 'grid' ? 'bg-primary text-primary-content' : 'text-base-content/50 hover:bg-base-200'}`}><LayoutGrid className="w-4 h-4"/></button>
                     <button onClick={() => setViewMode('list')} className={`flex-1 px-3 ${viewMode === 'list' ? 'bg-primary text-primary-content' : 'text-base-content/50 hover:bg-base-200'}`}><List className="w-4 h-4"/></button>
                   </div>
-                  <div className="dropdown dropdown-bottom dropdown-end flex-1 sm:flex-none min-w-0">
-                    <div role="button" tabIndex={0} className="w-full h-8 rounded-none border border-base-300 bg-base-100 hover:bg-base-200 hover:border-primary text-[10px] font-mono uppercase font-bold tracking-widest flex px-2 sm:px-3 justify-between items-center cursor-pointer appearance-none transition-colors"><div className="flex items-center min-w-0"><Filter className="w-3 h-3 mr-1 shrink-0" /> <span className="truncate">{filter === 'all' ? 'Filter' : 'Filtered'}</span></div></div>
+                  <div className="dropdown dropdown-bottom dropdown-end flex-none">
+                    <div role="button" tabIndex={0} className="w-auto h-8 rounded-none border border-base-300 bg-base-100 hover:bg-base-200 hover:border-primary text-[10px] font-mono uppercase font-bold tracking-widest flex px-2 sm:px-3 justify-between items-center cursor-pointer appearance-none transition-colors"><div className="flex items-center min-w-0"><Filter className="w-3 h-3 mr-1 shrink-0" /> <span className="truncate">{filter === 'all' ? 'Filter' : 'Filtered'}</span></div></div>
                     <ul tabIndex={0} className="dropdown-content z-50 menu p-2 shadow-xl bg-base-100 border border-base-300 w-52 mt-1 rounded-none text-[10px] font-mono uppercase font-bold tracking-widest">
                       <li><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setFilter('all'); document.activeElement.blur(); }}>All Entries</a></li>
                       {['planned', 'in progress', 'completed', 'dropped'].map(s => (<li key={s}><a className="py-1.5 px-3 min-h-0 text-[10px] leading-tight" onClick={() => { setFilter(s); document.activeElement.blur(); }}>{mediaStatusLabel(s, null)}</a></li>))}
@@ -553,17 +553,17 @@ export const MediaCategory = () => {
               <button type="button" aria-label="Grid view" aria-pressed={viewMode === 'grid'} onClick={() => setViewMode('grid')} className={`flex-1 px-3 ${viewMode === 'grid' ? 'bg-primary text-primary-content' : 'text-base-content/50 hover:bg-base-200'}`}><LayoutGrid className="w-4 h-4"/></button>
               <button type="button" aria-label="List view" aria-pressed={viewMode === 'list'} onClick={() => setViewMode('list')} className={`flex-1 px-3 ${viewMode === 'list' ? 'bg-primary text-primary-content' : 'text-base-content/50 hover:bg-base-200'}`}><List className="w-4 h-4"/></button>
             </div>
-            <label className="relative flex-1 sm:flex-none min-w-0">
+            <label className="relative flex-none">
               <Filter className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 pointer-events-none" />
               <span className="sr-only">Status filter</span>
-              <select value={filter} onChange={event => setContext({ status: event.target.value, page: 1 })} className="w-full sm:w-36 h-8 pl-7 pr-7 rounded-none border border-base-300 bg-base-100 text-[10px] font-mono uppercase font-bold tracking-widest focus:border-primary focus:outline-none">
+              <select value={filter} onChange={event => setContext({ status: event.target.value, page: 1 })} className="w-28 sm:w-36 h-8 pl-7 pr-6 rounded-none border border-base-300 bg-base-100 text-[10px] font-mono uppercase font-bold tracking-widest focus:border-primary focus:outline-none">
                 <option value="all">All entries</option>
                 {['planned', 'in progress', 'completed', 'dropped'].map(status => <option key={status} value={status}>{mediaStatusLabel(status, category, 'option')}</option>)}
               </select>
             </label>
-            <label className="flex-1 sm:flex-none min-w-0">
+            <label className="flex-none">
               <span className="sr-only">Sort library</span>
-              <select value={sort} onChange={event => setSearchParams(chooseLibrarySort(window.localStorage, searchParams, category, event.target.value), { replace: true })} className="w-full sm:w-44 h-8 px-2 rounded-none border border-base-300 bg-base-100 text-[10px] font-mono uppercase font-bold tracking-widest focus:border-primary focus:outline-none">
+              <select value={sort} onChange={event => setSearchParams(chooseLibrarySort(window.localStorage, searchParams, category, event.target.value), { replace: true })} className="w-32 sm:w-44 h-8 px-2 rounded-none border border-base-300 bg-base-100 text-[10px] font-mono uppercase font-bold tracking-widest focus:border-primary focus:outline-none">
                 {Object.entries(sortLabels).map(([value, label]) => <option key={value} value={value}>Sort: {label}</option>)}
               </select>
             </label>
