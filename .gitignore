@@ -7,6 +7,11 @@
 /coverage/
 /.vite/
 /test/
+/tests/
+*.test.js
+*.test.jsx
+*.spec.js
+*.spec.jsx
 
 # Environment, credentials, and machine-local configuration
 .env
